@@ -1,0 +1,55 @@
+# Rogue: Assassination 259, Outlaw 260, Subtlety 261
+
+spec 259 Assassination Rogue
+buffs:
+  Deadly Poison | target=self ooc if !buff.Deadly_Poison
+  Crippling Poison | target=self ooc if !buff.Crippling_Poison
+  Stealth | target=self ooc if !buff.Stealth
+interrupt:
+  Kick | target=casting_enemy
+defensive:
+  Crimson Vial | target=self if self.hp < 60
+  Cloak of Shadows | target=self if self.hp < 30
+  Feint | offgcd if self.hp < 70
+combat:
+  Garrote | if debuff.Garrote.remains < 3
+  Rupture | if self.combo_points >= 4 && debuff.Rupture.remains < 4
+  Envenom | if self.combo_points >= 4
+  Fan of Knives | if enemies >= 3
+  Mutilate
+  Sinister Strike
+
+spec 260 Outlaw Rogue
+buffs:
+  Stealth | target=self ooc if !buff.Stealth
+interrupt:
+  Kick | target=casting_enemy
+defensive:
+  Crimson Vial | target=self if self.hp < 60
+  Cloak of Shadows | target=self if self.hp < 30
+  Feint | offgcd if self.hp < 70
+combat:
+  Roll the Bones | if !buff.Roll_the_Bones
+  Blade Flurry | if enemies >= 2 && !buff.Blade_Flurry
+  Adrenaline Rush | offgcd if target.boss || target.elite || enemies >= 3
+  Between the Eyes | if self.combo_points >= 5
+  Dispatch | if self.combo_points >= 5
+  Pistol Shot | if buff.Opportunity
+  Sinister Strike
+
+spec 261 Subtlety Rogue
+buffs:
+  Stealth | target=self ooc if !buff.Stealth
+interrupt:
+  Kick | target=casting_enemy
+defensive:
+  Crimson Vial | target=self if self.hp < 60
+  Cloak of Shadows | target=self if self.hp < 30
+  Evasion | target=self if self.hp < 45
+combat:
+  Shadow Dance | offgcd if target.boss || target.elite || enemies >= 3
+  Rupture | if self.combo_points >= 5 && debuff.Rupture.remains < 5
+  Eviscerate | if self.combo_points >= 5
+  Shuriken Storm | if enemies >= 3
+  Shadowstrike
+  Backstab

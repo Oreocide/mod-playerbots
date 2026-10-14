@@ -1,0 +1,57 @@
+# Hunter: Beast Mastery 253, Marksmanship 254, Survival 255
+
+spec 253 Beast Mastery Hunter
+buffs:
+  Call Pet 1 | target=self ooc if !pet
+  Mend Pet | target=pet ooc if pet.alive && target.hp < 70
+interrupt:
+  Counter Shot | target=casting_enemy
+defensive:
+  Exhilaration | target=self if self.hp < 40
+  Aspect of the Turtle | target=self if self.hp < 20
+combat:
+  Revive Pet | target=self if pet && !pet.alive
+  Call Pet 1 | target=self if !pet
+  Mend Pet | target=pet if pet.alive && target.hp < 50
+  Bestial Wrath | offgcd if target.boss || target.elite || enemies >= 3
+  Kill Shot | if target.hp < 20
+  Barbed Shot | if debuff.Barbed_Shot.remains < 2 || !buff.Frenzy
+  Multi-Shot | if enemies >= 3 && !buff.Beast_Cleave
+  Kill Command
+  Cobra Shot
+  Steady Shot
+
+spec 254 Marksmanship Hunter
+buffs:
+  Call Pet 1 | target=self ooc if !pet
+interrupt:
+  Counter Shot | target=casting_enemy
+defensive:
+  Exhilaration | target=self if self.hp < 40
+  Aspect of the Turtle | target=self if self.hp < 20
+combat:
+  Trueshot | offgcd if target.boss || target.elite || enemies >= 3
+  Kill Shot | if target.hp < 20
+  Rapid Fire
+  Aimed Shot | if !moving
+  Multi-Shot | if enemies >= 3
+  Arcane Shot
+  Steady Shot
+
+spec 255 Survival Hunter
+buffs:
+  Call Pet 1 | target=self ooc if !pet
+interrupt:
+  Muzzle | target=casting_enemy
+defensive:
+  Exhilaration | target=self if self.hp < 40
+  Aspect of the Turtle | target=self if self.hp < 20
+combat:
+  Kill Shot | if target.hp < 20
+  Kill Command
+  Wildfire Bomb
+  Serpent Sting | if debuff.Serpent_Sting.remains < 3
+  Butchery | if enemies >= 3
+  Raptor Strike
+  Mongoose Bite
+  Harpoon | if target.distance > 10 && target.distance < 30

@@ -1,0 +1,62 @@
+# Mage: Arcane 62, Fire 63, Frost 64
+
+spec 62 Arcane Mage
+buffs:
+  Arcane Intellect | target=self ooc if !buff.Arcane_Intellect
+interrupt:
+  Counterspell | target=casting_enemy
+defensive:
+  Ice Block | target=self if self.hp < 20
+  Prismatic Barrier | target=self if self.hp < 70 && !buff.Prismatic_Barrier
+combat:
+  Arcane Intellect | target=self if !buff.Arcane_Intellect
+  Touch of the Magi | offgcd if target.boss || target.elite
+  Arcane Surge | offgcd if target.boss || target.elite || enemies >= 3
+  Arcane Orb | if self.arcane_charges <= 2
+  Arcane Barrage | if self.arcane_charges >= 4 && self.mana < 30
+  Arcane Missiles | if buff.Clearcasting
+  Arcane Explosion | if enemies >= 4
+  Arcane Blast | if !moving
+  Arcane Barrage
+
+spec 63 Fire Mage
+buffs:
+  Arcane Intellect | target=self ooc if !buff.Arcane_Intellect
+  Blazing Barrier | target=self ooc if !buff.Blazing_Barrier
+interrupt:
+  Counterspell | target=casting_enemy
+defensive:
+  Ice Block | target=self if self.hp < 20
+  Blazing Barrier | target=self if self.hp < 70 && !buff.Blazing_Barrier
+combat:
+  Arcane Intellect | target=self if !buff.Arcane_Intellect
+  Combustion | offgcd if target.boss || target.elite
+  Pyroblast | if buff.Hot_Streak
+  Fire Blast | offgcd if buff.Heating_Up
+  Flamestrike | if enemies >= 4 && buff.Hot_Streak
+  Dragon's Breath | if enemies >= 3 && target.distance < 12
+  Phoenix Flames
+  Scorch | if moving || target.hp < 30
+  Fireball
+
+spec 64 Frost Mage
+buffs:
+  Arcane Intellect | target=self ooc if !buff.Arcane_Intellect
+  Summon Water Elemental | target=self ooc if !pet
+interrupt:
+  Counterspell | target=casting_enemy
+defensive:
+  Ice Block | target=self if self.hp < 20
+  Ice Barrier | target=self if self.hp < 70 && !buff.Ice_Barrier
+combat:
+  Arcane Intellect | target=self if !buff.Arcane_Intellect
+  Summon Water Elemental | target=self if !pet
+  Icy Veins | offgcd if target.boss || target.elite || enemies >= 3
+  Frozen Orb | if enemies >= 2 || target.boss
+  Flurry | if buff.Brain_Freeze
+  Ice Lance | if buff.Fingers_of_Frost
+  Blizzard | if enemies >= 4
+  Glacial Spike
+  Ebonbolt
+  Frostbolt
+  Ice Lance | if moving

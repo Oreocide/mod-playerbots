@@ -1,0 +1,81 @@
+# Druid: Balance 102, Feral 103, Guardian 104, Restoration 105
+
+spec 102 Balance Druid
+buffs:
+  Mark of the Wild | target=self ooc if !buff.Mark_of_the_Wild
+  Moonkin Form | target=self ooc if !buff.Moonkin_Form
+interrupt:
+  Solar Beam | target=casting_enemy
+defensive:
+  Barkskin | offgcd if self.hp < 50
+  Renewal | offgcd if self.hp < 35
+combat:
+  Moonkin Form | target=self if !buff.Moonkin_Form
+  Moonfire | if debuff.Moonfire.remains < 3
+  Sunfire | if debuff.Sunfire.remains < 3
+  Celestial Alignment | offgcd if target.boss || target.elite
+  Starfall | if enemies >= 3 && self.astral_power >= 50
+  Starsurge | if self.astral_power >= 40
+  Starfire | if enemies >= 3 && !moving
+  Wrath | if !moving
+  Moonfire | if moving
+
+spec 103 Feral Druid
+buffs:
+  Mark of the Wild | target=self ooc if !buff.Mark_of_the_Wild
+  Cat Form | target=self ooc if !buff.Cat_Form
+interrupt:
+  Skull Bash | target=casting_enemy
+defensive:
+  Barkskin | offgcd if self.hp < 50
+  Survival Instincts | offgcd if self.hp < 30
+  Regrowth | target=self if self.hp < 40 && buff.Predatory_Swiftness
+combat:
+  Cat Form | target=self if !buff.Cat_Form
+  Tiger's Fury | offgcd if self.energy < 40
+  Rake | if debuff.Rake.remains < 3
+  Rip | if self.combo_points >= 5 && debuff.Rip.remains < 4
+  Ferocious Bite | if self.combo_points >= 5
+  Thrash | if enemies >= 2 && debuff.Thrash.remains < 3
+  Swipe | if enemies >= 3
+  Shred
+
+spec 104 Guardian Druid
+buffs:
+  Mark of the Wild | target=self ooc if !buff.Mark_of_the_Wild
+  Bear Form | target=self ooc if !buff.Bear_Form
+interrupt:
+  Skull Bash | target=casting_enemy
+defensive:
+  Barkskin | offgcd if self.hp < 55
+  Survival Instincts | offgcd if self.hp < 30
+  Frenzied Regeneration | offgcd if self.hp < 60
+  Ironfur | offgcd if self.hp < 85 && self.rage >= 40
+combat:
+  Bear Form | target=self if !buff.Bear_Form
+  Growl | target=loose_enemy
+  Thrash | if debuff.Thrash.remains < 3 || enemies >= 2
+  Mangle
+  Moonfire | if debuff.Moonfire.remains < 3
+  Maul | if self.rage >= 60
+  Swipe
+
+spec 105 Restoration Druid
+buffs:
+  Mark of the Wild | target=self ooc if !buff.Mark_of_the_Wild
+interrupt:
+  Skull Bash | target=casting_enemy
+defensive:
+  Barkskin | offgcd if self.hp < 50
+heal:
+  Ironbark | offgcd target=lowest_ally if target.hp < 35
+  Swiftmend | target=lowest_ally if target.hp < 60
+  Lifebloom | target=tank if !target.buff.Lifebloom
+  Wild Growth | target=lowest_ally if group.injured >= 3
+  Rejuvenation | target=lowest_ally if target.hp < 92 && !target.buff.Rejuvenation
+  Regrowth | target=lowest_ally if target.hp < 70 && !moving
+  Rejuvenation | target=lowest_ally if target.hp < 98
+combat:
+  Moonfire | if debuff.Moonfire.remains < 3
+  Sunfire | if debuff.Sunfire.remains < 3
+  Wrath | if !moving

@@ -1,0 +1,605 @@
+###################################################################################################
+# mod-playerbots
+#
+# Copy this file to worldserver.conf.d/playerbots.conf to change the values.
+###################################################################################################
+[worldserver]
+
+#
+#    Playerbots.Enable
+#        Description: Allow players to log in characters of their own account as bots (.bot add <name>).
+#        Default:     1 - (Enabled)
+#                     0 - (Disabled)
+
+Playerbots.Enable = 1
+
+#
+#    Playerbots.MaxBotsPerPlayer
+#        Description: Maximum number of bots one player can have online.
+#        Default:     4
+
+Playerbots.MaxBotsPerPlayer = 4
+
+#
+#    Playerbots.UpdateInterval
+#        Description: Milliseconds between two AI decisions of a bot (minimum 50).
+#        Default:     250
+
+Playerbots.UpdateInterval = 250
+
+#
+#    Playerbots.Command.Prefix
+#        Description: Party chat is only a command for your bots when it starts with this text (for example "!"),
+#                     so normal conversation is ignored. Whispers to a bot never need it. Empty = every party
+#                     message is tried as a command.
+#        Default:     ""
+
+Playerbots.Command.Prefix = ""
+
+#
+#    Playerbots.Command.Separator
+#        Description: Splits one message into several commands, "@tank follow ; @dps attack". Empty = off.
+#        Default:     ";"
+
+Playerbots.Command.Separator = ";"
+
+#
+#    Playerbots.Command.NearbyDistance
+#        Description: Distance (yards) for the @nearby and @far chat filters.
+#        Default:     30
+
+Playerbots.Command.NearbyDistance = 30
+
+#
+#    Playerbots.Random.GroupInvitations
+#        Description: What a random bot does with a party invitation of a player.
+#                     0 = decline, 1 = accept if its level is within 10 of yours, 2 = always accept.
+#                     Bots in a dungeon finder or battleground queue, or already grouped, decline.
+#        Default:     2
+
+Playerbots.Random.GroupInvitations = 2
+
+#
+#    Playerbots.Random.GuildInvitations
+#        Description: Random bots without a guild join the guild of a player who invites them.
+#        Default:     1
+
+Playerbots.Random.GuildInvitations = 1
+
+#
+#    Playerbots.Random.WhisperReply
+#        Description: A random bot that is not in your group answers a whisper with a short hint how to get it
+#                     to listen (once per 20 seconds per player).
+#        Default:     1
+
+Playerbots.Random.WhisperReply = 1
+
+#
+#    Playerbots.Hotspot.Prob
+#        Description: Chance (0-1) that placing a bot, or rolling an idle bot again, sends it to a hotspot: a
+#                     town or city derived from the world's service NPCs, or an invisible marker NPC. The rest are
+#                     placed in the open world as before. 0 = no hotspots.
+#        Default:     0.35
+
+Playerbots.Hotspot.Prob = 0.35
+
+#
+#    Playerbots.Hotspot.AutoTiers
+#        Description: Which tiers of the world's service-NPC hubs become hotspots by themselves (comma list of
+#                     1 capital, 2 town, 3 outpost, 4 flight master hub, 5 transport hub). The default only
+#                     takes the capitals where players really crowd. A town worth keeping is named in
+#                     playerbots_hotspot_override with enabled = 2; markers are not affected.
+#        Default:     1
+
+Playerbots.Hotspot.AutoTiers = 1
+
+#
+#    Playerbots.Hotspot.TierWeight.1 ... 5
+#        Description: How often a tier is picked, against the others. Tiers: 1 capital (auction house, bank, inn),
+#                     2 town (inn), 3 outpost (shops), 4 flight master hub, 5 transport hub. 0 = never.
+#        Default:     5, 2, 1, 2, 1
+
+Playerbots.Hotspot.TierWeight.1 = 5
+Playerbots.Hotspot.TierWeight.2 = 2
+Playerbots.Hotspot.TierWeight.3 = 1
+Playerbots.Hotspot.TierWeight.4 = 2
+Playerbots.Hotspot.TierWeight.5 = 1
+
+#
+#    Playerbots.Hotspot.TierMaxOccupancy.1 ... 5
+#        Description: Players and bots within OccupancyRadius of a hotspot before bots stop choosing it. 0 = no limit.
+#        Default:     75, 30, 10, 20, 15
+
+Playerbots.Hotspot.TierMaxOccupancy.1 = 75
+Playerbots.Hotspot.TierMaxOccupancy.2 = 30
+Playerbots.Hotspot.TierMaxOccupancy.3 = 10
+Playerbots.Hotspot.TierMaxOccupancy.4 = 20
+Playerbots.Hotspot.TierMaxOccupancy.5 = 15
+
+#
+#    Playerbots.Hotspot.OccupancyRadius
+#        Description: Yards around a hotspot that count for its occupancy.
+#        Default:     60
+
+Playerbots.Hotspot.OccupancyRadius = 60
+
+#
+#    Playerbots.Hotspot.SpreadRadius
+#        Description: A bot arrives within this many yards of a service NPC of the hotspot, so they do not stack.
+#        Default:     15
+
+Playerbots.Hotspot.SpreadRadius = 15
+
+#
+#    Playerbots.Hotspot.WanderRadius
+#        Description: An anchored bot stays within this many yards of where it arrived (the auction house, the
+#                     bank...): it wanders there and camps at the services in reach.
+#        Default:     40
+
+Playerbots.Hotspot.WanderRadius = 40
+
+#
+#    Playerbots.Hotspot.RotateMinutes
+#        Description: About this often an idle bot (nobody near it, not questing, not grouped) rolls again for a
+#                     hotspot or the open world. Keeps cities changing. 0 = bots stay where they were placed.
+#        Default:     30
+
+Playerbots.Hotspot.RotateMinutes = 30
+
+#
+#    Playerbots.Hotspot.Markers
+#        Description: Invisible marker NPCs (.bot hotspot add) register hotspots while they are loaded.
+#        Default:     1
+
+Playerbots.Hotspot.Markers = 1
+
+#
+#    Playerbots.Travel.Enable
+#        Description: Build the travel graph at startup: towns, the flight path network and portals joined by
+#                     walking links, used to plan routes. Needed by travel planning and quests across zones.
+#        Default:     1
+
+Playerbots.Travel.Enable = 1
+
+#
+#    Playerbots.Travel.MaxRouteMinutes
+#        Description: A bot does not take a route that would take longer than this (minutes of travel time).
+#        Default:     45
+
+Playerbots.Travel.MaxRouteMinutes = 45
+
+#
+#    Playerbots.Travel.HopMinSeconds / Playerbots.Travel.HopMaxSeconds
+#        Description: A bot that no player can see does not walk, sail or fly. It jumps ahead along its route, one
+#                     stretch at a time: after the travel time of the stretch (but at least HopMin and at most
+#                     HopMax seconds) it is placed at the end of it, then the next stretch starts. Boats and
+#                     zeppelins work the same, nobody boards anything. A bot that a player can see does the real
+#                     thing, except boats: it waits at the dock and is taken across.
+#        Default:     120 and 300
+
+Playerbots.Travel.HopMinSeconds = 120
+Playerbots.Travel.HopMaxSeconds = 300
+
+#
+#    Playerbots.Travel.FreeFlights
+#        Description: A bot that boards a flight path gets the gold for it when it has too little.
+#        Default:     1
+
+Playerbots.Travel.FreeFlights = 1
+
+#
+#    Playerbots.Travel.DangerSecondsPerLevel / Playerbots.Travel.DangerBlockLevels
+#        Description: Routes avoid walking past creatures far above the bot. Beyond 3 levels above the bot each level
+#                     makes that stretch this many seconds longer in the plan; at BlockLevels above it the stretch is
+#                     not walked at all. Only creatures that attack the bot's team count, civilians and critters do not.
+#        Default:     30 and 12
+
+Playerbots.Travel.DangerSecondsPerLevel = 30
+Playerbots.Travel.DangerBlockLevels = 12
+
+#
+#    Playerbots.Quest.MaxRouteMinutes
+#        Description: A random bot takes a quest only if the route to its quest giver (walking, flight paths,
+#                     boats, portals) takes at most this many minutes. Needs the travel graph; without it quests
+#                     stay on the bot's own map.
+#        Default:     20
+
+Playerbots.Quest.MaxRouteMinutes = 20
+
+#
+#    Playerbots.Rotation.Enable
+#    Playerbots.Rotation.Path
+#        Description: Bots cast from the rotation of their specialization (text files, data/rotations/*.rot:
+#                     lists of spells with targets and conditions, one set per specialization). A specialization
+#                     without a rotation uses the generic spell picker. Path = directory of the files, empty
+#                     means modules/mod-playerbots/data/rotations of the source directory. ".bot rotation reload"
+#                     reads them again without a restart.
+#        Default:     1 and empty
+
+Playerbots.Rotation.Enable = 1
+Playerbots.Rotation.Path =
+
+#
+#    Playerbots.ScanInterval
+#        Description: Milliseconds a bot waits before it searches its surroundings again (nearby enemy,
+#                     lootable corpse) after a search found nothing. Lower reacts faster, higher costs
+#                     less with many bots. 0 = search on every AI tick.
+#        Default:     1500
+
+Playerbots.ScanInterval = 1500
+
+#
+#    Playerbots.PerfMon.Enable
+#        Description: Time the AI relevance scan and every action, read it with ".bot perf" (".bot perf reset"
+#                     clears it). Costs two clock reads per action, leave off in production.
+#        Default:     0
+
+Playerbots.PerfMon.Enable = 0
+
+#
+#    Playerbots.LoginTimeout
+#        Description: Milliseconds until a bot that did not finish logging in is dropped.
+#        Default:     60000
+
+Playerbots.LoginTimeout = 60000
+
+#
+#    Playerbots.FollowDistance
+#        Description: Distance (yards) bots keep behind their master.
+#        Default:     2.5
+
+Playerbots.FollowDistance = 2.5
+
+#
+#    Playerbots.TeleportDistance
+#        Description: Out of combat, bots further away than this (yards) or on another map
+#                     teleport to their master.
+#        Default:     100
+
+Playerbots.TeleportDistance = 100
+
+#
+#    Playerbots.RangedDistance
+#        Description: Distance (yards) ranged bots and healers keep to their target.
+#        Default:     25
+
+Playerbots.RangedDistance = 25
+
+#
+#    Playerbots.HealThreshold
+#        Description: Healer bots heal group members below this health percentage.
+#        Default:     85
+
+Playerbots.HealThreshold = 85
+
+#
+#    Playerbots.AutoResurrect
+#        Description: Dead bots resurrect in place once their master is alive and out of combat.
+#        Default:     1 - (Enabled)
+#                     0 - (Disabled, bots wait for a resurrection spell)
+
+Playerbots.AutoResurrect = 1
+
+#
+#    Playerbots.Random.Enable
+#        Description: Log in ownerless random bots on their own Battle.net accounts.
+#                     They are created through the normal character creator, leveled,
+#                     and placed in a level-appropriate outdoor graveyard.
+#        Default:     0 - (Disabled)
+#                     1 - (Enabled)
+
+Playerbots.Random.Enable = 0
+
+#
+#    Playerbots.Random.Count
+#        Description: How many random bots to keep online (maximum 2000). Around 1000 needs
+#                     several game accounts, they are created automatically (see
+#                     CharactersPerAccount and GameAccountsPerEmail).
+#        Default:     10
+
+Playerbots.Random.Count = 10
+
+#
+#    Playerbots.Random.MinLevel
+#    Playerbots.Random.MaxLevel
+#        Description: Level rolled the first time a random bot logs in.
+#                     Clamped to MaxPlayerLevel. Bots already above the creation
+#                     level are left as they are.
+#        Default:     1 and 10
+
+Playerbots.Random.MinLevel = 1
+Playerbots.Random.MaxLevel = 10
+
+#
+#    Playerbots.Random.LoginDelay
+#    Playerbots.Random.CreateDelay
+#        Description: Milliseconds between two random-bot logins, and between two
+#                     character creations. Login does many queries per character,
+#                     so keep these staggered.
+#        Default:     2000 and 1000
+
+Playerbots.Random.LoginDelay = 2000
+Playerbots.Random.CreateDelay = 1000
+
+#
+#    Playerbots.Random.LoginBatch
+#        Description: Bots logged in per LoginDelay. 1000 bots at 5 per 2 seconds
+#                     take about 7 minutes to come online.
+#        Default:     5
+
+Playerbots.Random.LoginBatch = 5
+
+#
+#    Playerbots.Random.CharactersPerAccount
+#        Description: Characters stored on one game account before another
+#                     #<index> account is created under the random-bot bnet login.
+#                     Maximum 50. Also limited by the server settings CharactersPerAccount
+#                     and CharactersPerRealm (default 60), the lowest value wins.
+#        Default:     40
+
+Playerbots.Random.CharactersPerAccount = 40
+
+#
+#    Playerbots.Random.AllianceRatio
+#    Playerbots.Random.HordeRatio
+#        Description: Online population split. 1 and 1 is half and half.
+#                     Alliance is logged in first, up to its share, then Horde.
+#        Default:     1 and 1
+
+Playerbots.Random.AllianceRatio = 1
+Playerbots.Random.HordeRatio = 1
+
+#
+#    Playerbots.Random.WanderRadius
+#        Description: Yards a random bot wanders around the spot it was placed at,
+#                     while it is not fighting.
+#        Default:     30
+
+Playerbots.Random.WanderRadius = 30
+
+#
+#    Playerbots.Random.EmailPrefix
+#    Playerbots.Random.EmailDomain
+#    Playerbots.Random.GameAccountsPerEmail
+#        Description: Random bots live on Battle.net logins named <prefix><0001..>@<domain>
+#                     (stored upper-case, do not use a real address or domain). Each
+#                     login holds GameAccountsPerEmail game accounts, a new login is
+#                     created when it is full. Passwords are random and never stored.
+#                     Defaults give 10 game accounts x 40 characters = 400 bots per email.
+#        Default:     RNDBOT, PLAYERBOTS.LOCAL and 10
+
+Playerbots.Random.EmailPrefix = RNDBOT
+Playerbots.Random.EmailDomain = PLAYERBOTS.LOCAL
+Playerbots.Random.GameAccountsPerEmail = 10
+
+#
+#    Playerbots.Random.Gear
+#    Playerbots.Random.GearMaxQuality
+#        Description: Dress random bots with level appropriate gear (checked once a minute,
+#                     so bots re-gear as they level) and give them food and drink.
+#                     Items must be usable by the bot's class, race and specialization.
+#                     Quality: 1 common, 2 uncommon, 3 rare, 4 epic, 5 legendary.
+#        Default:     1 and 3
+
+Playerbots.Random.Gear = 1
+Playerbots.Random.GearMaxQuality = 3
+
+#
+#    Playerbots.Random.Quests
+#    Playerbots.Random.QuestDistance
+#        Description: Idle random bots pick up kill quests, hunt the creatures, hand the quest in and
+#                     choose a reward they can use. Only pure kill quests are done, and never ones that
+#                     change a phase. The quest giver may be anywhere the route planner can take the bot
+#                     (see Quest.MaxRouteMinutes); QuestDistance is how far the hunting grounds of a
+#                     quest may be from its giver.
+#        Default:     1 and 600
+
+Playerbots.Random.Quests = 1
+Playerbots.Random.QuestDistance = 600
+
+#
+#    Playerbots.Random.NamePool
+#        Description: Name new random bots from the playerbots_names table (name lists per race group and
+#                     gender, from AzerothCore mod-playerbots). Falls back to the client NameGen lists
+#                     when the pool is empty or exhausted.
+#        Default:     1 - (Enabled)
+#                     0 - (Disabled)
+
+Playerbots.Random.NamePool = 1
+
+#
+#    Playerbots.Random.Lfg
+#    Playerbots.Random.Battlegrounds
+#    Playerbots.Random.Arenas
+#        Description: Bots never queue on their own. When a real player waits in a queue,
+#                     idle random bots of a fitting level join it: the missing tank / healer /
+#                     damage roles of a dungeon finder group, the players a battleground needs
+#                     per team, and a group of opponents for an arena group.
+#                     Bots accept proposals and invitations after a short delay and leave
+#                     queues that no player is in any more.
+#        Default:     1 for all
+
+Playerbots.Random.Lfg = 1
+Playerbots.Random.Battlegrounds = 1
+Playerbots.Random.Arenas = 1
+
+#
+#    Playerbots.Random.OnlyWithPlayers
+#    Playerbots.Random.PlayerLoginDelay
+#    Playerbots.Random.PlayerLogoutDelay
+#        Description: Same idea as AzerothCore AiPlayerbot.DisabledWithoutRealPlayer.
+#                     Random bots stay offline until a real player is in the world, then
+#                     wait PlayerLoginDelay seconds before the first login. After the last
+#                     real player logs out they wait PlayerLogoutDelay seconds and log out.
+#                     Character creation is also held until a player is online.
+#        Default:     1, 30 and 300
+
+Playerbots.Random.OnlyWithPlayers = 1
+Playerbots.Random.PlayerLoginDelay = 30
+Playerbots.Random.PlayerLogoutDelay = 300
+
+#
+#    Playerbots.Random.Maps
+#        Description: Comma-separated continent map ids random bots may be placed on.
+#                     Empty = every outdoor continent (Kalimdor, Eastern Kingdoms, Outland,
+#                     Northrend, Pandaria, Draenor, Broken Isles, Zandalar, Kul Tiras,
+#                     Shadowlands, Dragon Isles, Khaz Algar, ...). Chromie Time scaling
+#                     means a low-level bot in Icecrown or Silithus is valid. Dungeons,
+#                     raids and garrisons are never used.
+#        Default:     (empty)
+
+Playerbots.Random.Maps =
+
+#
+#    Playerbots.Random.MaxGrids
+#        Description: Most different 533 yard map grids the online random bots may stand in. A loaded
+#                     grid (terrain, vmaps, nav mesh, every spawn in it) costs roughly 100-175 MB of RAM,
+#                     so this is the real memory limit of the bot population. Once the limit is reached,
+#                     new placements and rotations only pick spots (and hotspots) in grids that already
+#                     have a bot. 0 = no limit.
+#        Default:     0
+
+Playerbots.Random.MaxGrids = 0
+
+#
+#    Playerbots.BotActiveAlone
+#    Playerbots.BotActiveAlone.Radius
+#    Playerbots.BotActiveAlone.Zone
+#    Playerbots.BotActiveAlone.Map
+#    Playerbots.BotActiveAlone.Friend
+#    Playerbots.BotActiveAlone.Guild
+#        Description: Same idea as AzerothCore AiPlayerbot.BotActiveAlone. Random bots
+#                     far from every real player freeze: no combat, wander, quests, gear
+#                     or spellbook work, and their WorldSession is only ticked every 5s.
+#                     They always fully simulate when they have a player master, share a
+#                     group with a player, sit in a dungeon/raid/battleground/LFG, or:
+#                       Radius yards of a player on the same map (0 disables the radius)
+#                       the same zone (if Zone = 1)
+#                       the same continent (if Map = 1)
+#                       a player on their friend list (if Friend = 1)
+#                       a player in their guild (if Guild = 1)
+#                     Of the remaining lonely bots, BotActiveAlone percent keep running
+#                     (picked from the character guid). Those still wake map grids and
+#                     creature AI around them, so 10 on a 200-bot realm is 20 hot spots
+#                     worldwide. Set 0 to only simulate bots a player can actually see.
+#                     Zone = 1 is the AzerothCore default but a retail zone is huge
+#                     (whole Icecrown, etc.). Prefer Zone = 0 and Radius.
+#                     0 = only near players, 100 = every bot (old behaviour).
+#        Default:     0, 150, 0, 0, 1, 1
+
+Playerbots.BotActiveAlone = 0
+Playerbots.BotActiveAlone.Radius = 150
+Playerbots.BotActiveAlone.Zone = 0
+Playerbots.BotActiveAlone.Map = 0
+Playerbots.BotActiveAlone.Friend = 1
+Playerbots.BotActiveAlone.Guild = 1
+
+#
+#    Playerbots.BotActiveAlone.DurationSeconds
+#    Playerbots.BotActiveAlone.ForceGraceSeconds
+#    Playerbots.BotActiveAlone.ZoneMaxActive
+#    Playerbots.BotActiveAlone.RadiusMaxActive
+#        Description: Proven AzerothCore activity mechanics. DurationSeconds: the BotActiveAlone share is not
+#                     the same bots forever, the active roster changes this often (hash of guid and time slot),
+#                     so every lonely bot gets its turn. ForceGraceSeconds: a bot a player just left stays awake
+#                     this long, so a player running past does not make bots flicker between frozen and active.
+#                     ZoneMaxActive / RadiusMaxActive: with Zone = 1 or a Radius, at most this many bots wake for
+#                     one player, nearest first (0 = no limit). SmartScale now looks at the slowest world tick of
+#                     the last 10 seconds, not at one tick.
+#        Default:     30, 10, 0, 0
+
+Playerbots.BotActiveAlone.DurationSeconds = 30
+Playerbots.BotActiveAlone.ForceGraceSeconds = 10
+Playerbots.BotActiveAlone.ZoneMaxActive = 0
+Playerbots.BotActiveAlone.RadiusMaxActive = 0
+
+#
+#    Playerbots.BotActiveAlone.SmartScale
+#    Playerbots.BotActiveAlone.SmartScaleFloor
+#    Playerbots.BotActiveAlone.SmartScaleCeiling
+#    Playerbots.BotActiveAlone.SmartScaleMinLevel
+#    Playerbots.BotActiveAlone.SmartScaleMaxLevel
+#        Description: When the world tick (DIFF) is above Floor milliseconds, shrink
+#                     BotActiveAlone linearly to 0 at Ceiling. Only bots whose level is
+#                     between MinLevel and MaxLevel are scaled. Bots near a player are
+#                     never scaled down.
+#        Default:     1, 50, 200, 1 and MaxPlayerLevel
+
+Playerbots.BotActiveAlone.SmartScale = 1
+Playerbots.BotActiveAlone.SmartScaleFloor = 50
+Playerbots.BotActiveAlone.SmartScaleCeiling = 200
+Playerbots.BotActiveAlone.SmartScaleMinLevel = 1
+Playerbots.BotActiveAlone.SmartScaleMaxLevel = 90
+
+#
+#    Playerbots.Rpg.Enable
+#        Description: AzerothCore NewRpg-style purpose for ownerless bots (quests, city
+#                     NPCs, taxis, grind, rest) instead of circling 30 yards. Combat,
+#                     follow, heal and loot stay above it. Frozen bots stay parked.
+#        Default:     1
+
+Playerbots.Rpg.Enable = 1
+
+#
+#    Playerbots.Rpg.Weight.*
+#        Description: Idle status weights (DoQuest 60, WanderNpc 20, TravelFlight 15,
+#                     GoGrind 15, GoCamp 10, Rest 5, WanderRandom 15). Capital zones
+#                     add CapitalBoost to WanderNpc and GoCamp.
+#
+
+Playerbots.Rpg.Weight.DoQuest = 60
+Playerbots.Rpg.Weight.WanderNpc = 20
+Playerbots.Rpg.Weight.TravelFlight = 15
+Playerbots.Rpg.Weight.GoGrind = 15
+Playerbots.Rpg.Weight.GoCamp = 10
+Playerbots.Rpg.Weight.Rest = 5
+Playerbots.Rpg.Weight.WanderRandom = 15
+Playerbots.Rpg.CapitalBoost = 20
+
+#
+#    Playerbots.Rpg.Weight.Gather
+#    Playerbots.Rpg.Duration.Gather
+#    Playerbots.Rpg.GatherDistance
+#        Description: Scenery only: a bot with herbalism or mining that a player can see walks to a herb or ore node
+#                     near it (at most GatherDistance yards) and kneels or mines at it for a few seconds, then
+#                     looks for the next one until the duration (ms) is over. The node is never used or looted
+#                     and nothing the bot owns depends on it. Weight 0 = bots do not do this.
+#        Default:     12, 600000 and 120
+
+Playerbots.Rpg.Weight.Gather = 12
+Playerbots.Rpg.Duration.Gather = 600000
+Playerbots.Rpg.GatherDistance = 120
+
+#
+#    Playerbots.Rpg.Duration.*
+#        Description: Milliseconds a status may last before returning to Idle.
+#
+
+Playerbots.Rpg.Duration.DoQuest = 1800000
+Playerbots.Rpg.Duration.WanderNpc = 300000
+Playerbots.Rpg.Duration.TravelFlight = 180000
+Playerbots.Rpg.Duration.GoGrind = 300000
+Playerbots.Rpg.Duration.GoCamp = 180000
+Playerbots.Rpg.Duration.Rest = 30000
+Playerbots.Rpg.Duration.WanderRandom = 300000
+Playerbots.Rpg.NpcStayTime = 8000
+Playerbots.Rpg.PoiStayTime = 300000
+Playerbots.Rpg.StuckTime = 90000
+Playerbots.Rpg.RepairDurability = 80
+Playerbots.Rpg.SellBagSpace = 80
+Playerbots.Rpg.MountMinLevel = 20
+
+#
+#    Playerbots.Remote.Port
+#    Playerbots.Remote.BindIp
+#    Playerbots.Remote.Token
+#        Description: Text control port for the random bots, for example
+#                     "status", "count 300" and "stop". Disabled while Port is 0.
+#                     The first line a client sends must be "AUTH <token>", the token
+#                     needs at least 16 characters. Traffic is not encrypted, so keep
+#                     BindIp on localhost and use an SSH tunnel for remote access.
+#        Default:     0, 127.0.0.1 and (empty)
+
+Playerbots.Remote.Port = 0
+Playerbots.Remote.BindIp = 127.0.0.1
+Playerbots.Remote.Token =

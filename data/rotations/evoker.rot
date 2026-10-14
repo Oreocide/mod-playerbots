@@ -1,0 +1,55 @@
+# Evoker: Devastation 1467, Preservation 1468, Augmentation 1473
+
+spec 1467 Devastation Evoker
+buffs:
+  Blessing of the Bronze | target=self ooc if !buff.Blessing_of_the_Bronze
+interrupt:
+  Quell | target=casting_enemy
+defensive:
+  Obsidian Scales | offgcd if self.hp < 45
+  Renewing Blaze | offgcd if self.hp < 35
+  Living Flame | target=self if self.hp < 30 && !moving
+combat:
+  Dragonrage | offgcd if target.boss || target.elite || enemies >= 3
+  Fire Breath | if !moving
+  Eternity Surge | if !moving
+  Shattering Star
+  Pyre | if enemies >= 3 && self.essence >= 3
+  Disintegrate | if !moving && self.essence >= 3
+  Azure Strike | if enemies >= 3 || moving
+  Living Flame
+
+spec 1468 Preservation Evoker
+buffs:
+  Blessing of the Bronze | target=self ooc if !buff.Blessing_of_the_Bronze
+interrupt:
+  Quell | target=casting_enemy
+defensive:
+  Obsidian Scales | offgcd if self.hp < 45
+heal:
+  Reversion | target=lowest_ally if target.hp < 90 && !target.buff.Reversion
+  Emerald Blossom | target=lowest_ally if group.injured >= 3
+  Spiritbloom | target=lowest_ally if group.injured >= 3 && !moving
+  Verdant Embrace | target=lowest_ally if target.hp < 50
+  Living Flame | target=lowest_ally if target.hp < 80 && !moving
+  Echo | target=lowest_ally if target.hp < 90
+combat:
+  Disintegrate | if !moving
+  Azure Strike
+  Living Flame | if !moving
+
+spec 1473 Augmentation Evoker
+buffs:
+  Blessing of the Bronze | target=self ooc if !buff.Blessing_of_the_Bronze
+interrupt:
+  Quell | target=casting_enemy
+defensive:
+  Obsidian Scales | offgcd if self.hp < 45
+combat:
+  Ebon Might | offgcd if target.boss || target.elite || enemies >= 2
+  Breath of Eons | offgcd if target.boss || target.elite
+  Upheaval | if !moving
+  Fire Breath | if !moving
+  Eruption | if self.essence >= 2
+  Azure Strike | if enemies >= 3
+  Living Flame

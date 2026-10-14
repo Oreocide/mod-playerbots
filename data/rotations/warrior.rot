@@ -1,0 +1,63 @@
+# Warrior: Arms 71, Fury 72, Protection 73
+
+spec 71 Arms Warrior
+buffs:
+  Battle Shout | target=self if !buff.Battle_Shout
+interrupt:
+  Pummel | target=casting_enemy
+defensive:
+  Die by the Sword | target=self if self.hp < 35
+  Rallying Cry | target=self if self.hp < 25
+combat:
+  Charge | if target.distance > 10 && target.distance < 25
+  Heroic Throw | if target.distance > 10 && target.distance < 30
+  Execute | if target.hp < 20
+  Rend | if debuff.Rend.remains < 3 && enemies < 3
+  Colossus Smash | if target.boss || target.elite
+  Warbreaker | if enemies >= 2
+  Bladestorm | if enemies >= 3
+  Whirlwind | if enemies >= 3
+  Mortal Strike
+  Overpower
+  Slam
+
+spec 72 Fury Warrior
+buffs:
+  Battle Shout | target=self if !buff.Battle_Shout
+interrupt:
+  Pummel | target=casting_enemy
+defensive:
+  Enraged Regeneration | target=self if self.hp < 40
+  Rallying Cry | target=self if self.hp < 25
+combat:
+  Charge | if target.distance > 10 && target.distance < 25
+  Heroic Throw | if target.distance > 10 && target.distance < 30
+  Recklessness | offgcd if target.boss || target.elite || enemies >= 3
+  Rampage | if self.rage >= 80
+  Execute | if target.hp < 20
+  Whirlwind | if enemies >= 2 && !buff.Meat_Cleaver
+  Raging Blow
+  Bloodthirst
+  Whirlwind | if enemies >= 2
+  Slam
+
+spec 73 Protection Warrior
+buffs:
+  Battle Shout | target=self if !buff.Battle_Shout
+interrupt:
+  Pummel | target=casting_enemy
+defensive:
+  Shield Wall | target=self if self.hp < 30
+  Last Stand | target=self if self.hp < 40
+  Shield Block | offgcd if self.hp < 80 && !buff.Shield_Block
+  Ignore Pain | offgcd if self.hp < 70 && self.rage >= 40
+combat:
+  Taunt | target=loose_enemy
+  Charge | if target.distance > 10 && target.distance < 25
+  Heroic Throw | if target.distance > 10 && target.distance < 30
+  Shield Slam
+  Thunder Clap | if enemies >= 2
+  Revenge | if enemies >= 2
+  Execute | if target.hp < 20
+  Devastate
+  Slam

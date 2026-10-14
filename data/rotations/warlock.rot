@@ -1,0 +1,54 @@
+# Warlock: Affliction 265, Demonology 266, Destruction 267
+
+spec 265 Affliction Warlock
+buffs:
+  Summon Felhunter | target=self ooc if !pet
+interrupt:
+  Spell Lock | target=casting_enemy
+defensive:
+  Unending Resolve | offgcd if self.hp < 35
+  Dark Pact | offgcd if self.hp < 45
+combat:
+  Summon Felhunter | target=self if !pet && !moving
+  Agony | if debuff.Agony.remains < 4
+  Corruption | if debuff.Corruption.remains < 3
+  Unstable Affliction | if debuff.Unstable_Affliction.remains < 3
+  Summon Darkglare | offgcd if target.boss || target.elite
+  Malefic Rapture | if self.soul_shards >= 3
+  Seed of Corruption | if enemies >= 4
+  Drain Soul | if target.hp < 20
+  Shadow Bolt
+
+spec 266 Demonology Warlock
+buffs:
+  Summon Felguard | target=self ooc if !pet
+interrupt:
+  Axe Toss | target=casting_enemy
+defensive:
+  Unending Resolve | offgcd if self.hp < 35
+  Dark Pact | offgcd if self.hp < 45
+combat:
+  Summon Felguard | target=self if !pet && !moving
+  Call Dreadstalkers
+  Summon Demonic Tyrant | offgcd if target.boss || target.elite || enemies >= 3
+  Hand of Gul'dan | if self.soul_shards >= 3
+  Demonbolt | if buff.Demonic_Core
+  Implosion | if enemies >= 4
+  Shadow Bolt
+
+spec 267 Destruction Warlock
+buffs:
+  Summon Imp | target=self ooc if !pet
+interrupt:
+  Spell Lock | target=casting_enemy
+defensive:
+  Unending Resolve | offgcd if self.hp < 35
+  Dark Pact | offgcd if self.hp < 45
+combat:
+  Summon Imp | target=self if !pet && !moving
+  Immolate | if debuff.Immolate.remains < 4
+  Summon Infernal | offgcd if target.boss || target.elite
+  Chaos Bolt | if self.soul_shards >= 2
+  Rain of Fire | if enemies >= 4 && self.soul_shards >= 3
+  Conflagrate
+  Incinerate

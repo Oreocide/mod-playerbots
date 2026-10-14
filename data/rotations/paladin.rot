@@ -1,0 +1,61 @@
+# Paladin: Holy 65, Protection 66, Retribution 70
+
+spec 65 Holy Paladin
+interrupt:
+  Rebuke | target=casting_enemy
+defensive:
+  Divine Shield | target=self if self.hp < 20
+  Divine Protection | target=self if self.hp < 40
+heal:
+  Lay on Hands | target=lowest_ally if target.hp < 20
+  Holy Shock | target=lowest_ally if target.hp < 90
+  Word of Glory | target=lowest_ally if target.hp < 70 && self.holy_power >= 3
+  Light of Dawn | target=self if group.injured >= 3 && self.holy_power >= 3
+  Flash of Light | target=lowest_ally if target.hp < 55
+  Holy Light | target=lowest_ally if target.hp < 85
+combat:
+  Judgment
+  Holy Shock
+  Crusader Strike
+  Consecration | if enemies >= 2
+
+spec 66 Protection Paladin
+interrupt:
+  Rebuke | target=casting_enemy
+defensive:
+  Divine Shield | target=self if self.hp < 15
+  Ardent Defender | target=self if self.hp < 35
+  Guardian of Ancient Kings | target=self if self.hp < 45
+  Word of Glory | target=self if self.hp < 50 && self.holy_power >= 3
+combat:
+  Hand of Reckoning | target=loose_enemy
+  Avenger's Shield
+  Shield of the Righteous | if self.holy_power >= 3
+  Judgment
+  Consecration
+  Blessed Hammer
+  Hammer of the Righteous
+  Hand of Reckoning | if !target.targeting_me
+  Crusader Strike
+
+spec 70 Retribution Paladin
+buffs:
+  Retribution Aura | target=self if !buff.Retribution_Aura
+interrupt:
+  Rebuke | target=casting_enemy
+defensive:
+  Divine Shield | target=self if self.hp < 15
+  Shield of Vengeance | target=self if self.hp < 50
+  Word of Glory | target=self if self.hp < 40 && self.holy_power >= 3
+combat:
+  Avenging Wrath | offgcd if target.boss || target.elite || enemies >= 3
+  Execution Sentence | if target.boss || target.elite
+  Wake of Ashes | if self.holy_power <= 2
+  Divine Storm | if enemies >= 3 && self.holy_power >= 3
+  Templar's Verdict | if self.holy_power >= 3
+  Final Verdict | if self.holy_power >= 3
+  Blade of Justice | if self.holy_power <= 3
+  Judgment
+  Hammer of Wrath
+  Crusader Strike
+  Consecration | if enemies >= 2

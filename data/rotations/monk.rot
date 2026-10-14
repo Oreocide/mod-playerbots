@@ -1,0 +1,51 @@
+# Monk: Brewmaster 268, Windwalker 269, Mistweaver 270
+
+spec 268 Brewmaster Monk
+interrupt:
+  Spear Hand Strike | target=casting_enemy
+defensive:
+  Fortifying Brew | offgcd if self.hp < 35
+  Purifying Brew | offgcd if self.hp < 60
+  Celestial Brew | offgcd if self.hp < 75
+  Vivify | target=self if self.hp < 40 && !moving
+combat:
+  Provoke | target=loose_enemy
+  Keg Smash
+  Breath of Fire | if enemies >= 2
+  Blackout Kick
+  Spinning Crane Kick | if enemies >= 3
+  Rising Sun Kick
+  Tiger Palm
+  Roll | if target.distance > 10 && target.distance < 25
+
+spec 269 Windwalker Monk
+interrupt:
+  Spear Hand Strike | target=casting_enemy
+defensive:
+  Fortifying Brew | offgcd if self.hp < 35
+  Touch of Karma | offgcd if self.hp < 45
+  Vivify | target=self if self.hp < 35 && !moving
+combat:
+  Roll | if target.distance > 10 && target.distance < 25
+  Invoke Xuen, the White Tiger | offgcd if target.boss || target.elite
+  Fists of Fury | if self.energy < 80
+  Rising Sun Kick
+  Spinning Crane Kick | if enemies >= 3
+  Blackout Kick
+  Tiger Palm
+
+spec 270 Mistweaver Monk
+interrupt:
+  Spear Hand Strike | target=casting_enemy
+defensive:
+  Fortifying Brew | offgcd if self.hp < 35
+heal:
+  Life Cocoon | offgcd target=lowest_ally if target.hp < 30
+  Renewing Mist | target=lowest_ally if target.hp < 95 && !target.buff.Renewing_Mist
+  Enveloping Mist | target=lowest_ally if target.hp < 60 && !moving
+  Vivify | target=lowest_ally if target.hp < 80
+combat:
+  Rising Sun Kick
+  Blackout Kick
+  Tiger Palm
+  Spinning Crane Kick | if enemies >= 3

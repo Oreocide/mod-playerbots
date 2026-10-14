@@ -1,0 +1,58 @@
+# Death Knight: Blood 250, Frost 251, Unholy 252
+
+spec 250 Blood Death Knight
+interrupt:
+  Mind Freeze | target=casting_enemy
+defensive:
+  Vampiric Blood | offgcd if self.hp < 50
+  Icebound Fortitude | offgcd if self.hp < 30
+  Dancing Rune Weapon | offgcd if self.hp < 60
+  Death Strike | if self.hp < 70
+combat:
+  Death Grip | if target.distance > 10 && target.distance < 30
+  Dark Command | target=loose_enemy
+  Marrowrend | if !buff.Bone_Shield || buff.Bone_Shield.stacks < 5
+  Death and Decay | if enemies >= 3 && !buff.Death_and_Decay
+  Blood Boil | if enemies >= 2
+  Death Strike | if self.runic_power >= 70
+  Heart Strike
+  Blood Boil
+  Death Coil
+
+spec 251 Frost Death Knight
+interrupt:
+  Mind Freeze | target=casting_enemy
+defensive:
+  Icebound Fortitude | offgcd if self.hp < 30
+  Death Strike | if self.hp < 40
+combat:
+  Death Grip | if target.distance > 10 && target.distance < 30
+  Pillar of Frost | offgcd if target.boss || target.elite || enemies >= 3
+  Remorseless Winter | if enemies >= 3
+  Howling Blast | if debuff.Frost_Fever.remains < 3
+  Frost Strike | if self.runic_power >= 50
+  Obliterate
+  Howling Blast | if buff.Rime
+  Frost Strike
+
+spec 252 Unholy Death Knight
+buffs:
+  Raise Dead | target=self ooc if !pet
+interrupt:
+  Mind Freeze | target=casting_enemy
+defensive:
+  Icebound Fortitude | offgcd if self.hp < 30
+  Death Strike | if self.hp < 40
+combat:
+  Raise Dead | target=self if !pet
+  Death Grip | if target.distance > 10 && target.distance < 30
+  Outbreak | if debuff.Virulent_Plague.remains < 3
+  Dark Transformation | if pet.alive
+  Apocalypse | if target.boss || target.elite
+  Death and Decay | if enemies >= 3
+  Epidemic | if enemies >= 3 && self.runic_power >= 30
+  Death Coil | if self.runic_power >= 70
+  Festering Strike | if debuff.Festering_Wound.stacks < 3
+  Scourge Strike
+  Clawing Shadows
+  Death Coil

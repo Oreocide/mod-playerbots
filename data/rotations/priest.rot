@@ -1,0 +1,64 @@
+# Priest: Discipline 256, Holy 257, Shadow 258
+
+spec 256 Discipline Priest
+buffs:
+  Power Word: Fortitude | target=self ooc if !buff.Power_Word:_Fortitude
+interrupt:
+  Silence | target=casting_enemy
+defensive:
+  Desperate Prayer | target=self if self.hp < 40
+  Fade | offgcd if self.hp < 30
+heal:
+  Pain Suppression | offgcd target=lowest_ally if target.hp < 30
+  Power Word: Shield | target=lowest_ally if target.hp < 90 && !target.buff.Power_Word:_Shield
+  Power Word: Radiance | target=lowest_ally if group.injured >= 3
+  Penance | target=lowest_ally if target.hp < 70
+  Flash Heal | target=lowest_ally if target.hp < 60
+  Shadow Mend | target=lowest_ally if target.hp < 70
+combat:
+  Shadow Word: Pain | if debuff.Shadow_Word:_Pain.remains < 3
+  Penance
+  Mind Blast
+  Smite
+
+spec 257 Holy Priest
+buffs:
+  Power Word: Fortitude | target=self ooc if !buff.Power_Word:_Fortitude
+interrupt:
+  Silence | target=casting_enemy
+defensive:
+  Desperate Prayer | target=self if self.hp < 40
+  Fade | offgcd if self.hp < 30
+heal:
+  Guardian Spirit | offgcd target=lowest_ally if target.hp < 30
+  Holy Word: Serenity | target=lowest_ally if target.hp < 50
+  Prayer of Mending | target=tank if !target.buff.Prayer_of_Mending
+  Circle of Healing | target=self if group.injured >= 3
+  Prayer of Healing | target=self if group.injured >= 3
+  Renew | target=lowest_ally if target.hp < 90 && !target.buff.Renew
+  Flash Heal | target=lowest_ally if target.hp < 60
+  Heal | target=lowest_ally if target.hp < 85
+combat:
+  Holy Word: Chastise
+  Shadow Word: Pain | if debuff.Shadow_Word:_Pain.remains < 3
+  Holy Fire
+  Smite
+
+spec 258 Shadow Priest
+buffs:
+  Power Word: Fortitude | target=self ooc if !buff.Power_Word:_Fortitude
+  Shadowform | target=self ooc if !buff.Shadowform
+interrupt:
+  Silence | target=casting_enemy
+defensive:
+  Desperate Prayer | target=self if self.hp < 40
+  Dispersion | target=self if self.hp < 25
+  Fade | offgcd if self.hp < 30
+combat:
+  Shadowform | target=self if !buff.Shadowform
+  Vampiric Touch | if debuff.Vampiric_Touch.remains < 4
+  Shadow Word: Pain | if debuff.Shadow_Word:_Pain.remains < 3
+  Devouring Plague | if self.insanity >= 50
+  Mind Blast
+  Shadow Word: Death | if target.hp < 20
+  Mind Flay

@@ -1,0 +1,61 @@
+# Shaman: Elemental 262, Enhancement 263, Restoration 264
+
+spec 262 Elemental Shaman
+buffs:
+  Lightning Shield | target=self ooc if !buff.Lightning_Shield
+interrupt:
+  Wind Shear | target=casting_enemy
+defensive:
+  Astral Shift | offgcd if self.hp < 40
+  Healing Surge | target=self if self.hp < 35 && !moving
+combat:
+  Lightning Shield | target=self if !buff.Lightning_Shield
+  Flame Shock | if debuff.Flame_Shock.remains < 3
+  Stormkeeper | offgcd if target.boss || target.elite
+  Chain Lightning | if enemies >= 3
+  Earthquake | if enemies >= 4 && self.maelstrom >= 60
+  Elemental Blast
+  Earth Shock | if self.maelstrom >= 60
+  Lava Burst
+  Frost Shock | if moving
+  Lightning Bolt
+
+spec 263 Enhancement Shaman
+buffs:
+  Lightning Shield | target=self ooc if !buff.Lightning_Shield
+  Windfury Weapon | target=self ooc if !buff.Windfury_Weapon
+interrupt:
+  Wind Shear | target=casting_enemy
+defensive:
+  Astral Shift | offgcd if self.hp < 40
+  Healing Surge | target=self if self.hp < 35 && !moving
+combat:
+  Lightning Shield | target=self if !buff.Lightning_Shield
+  Feral Spirit | offgcd if target.boss || target.elite || enemies >= 3
+  Flame Shock | if debuff.Flame_Shock.remains < 3
+  Crash Lightning | if enemies >= 2
+  Lightning Bolt | if buff.Maelstrom_Weapon.stacks >= 5
+  Stormstrike
+  Lava Lash
+  Ice Strike
+  Lightning Bolt | if buff.Maelstrom_Weapon.stacks >= 3
+
+spec 264 Restoration Shaman
+buffs:
+  Earth Shield | target=tank ooc if !target.buff.Earth_Shield
+  Lightning Shield | target=self ooc if !buff.Lightning_Shield
+interrupt:
+  Wind Shear | target=casting_enemy
+defensive:
+  Astral Shift | offgcd if self.hp < 40
+heal:
+  Spirit Link Totem | target=self if group.injured >= 4
+  Healing Tide Totem | target=self if group.injured >= 4
+  Riptide | target=lowest_ally if target.hp < 95 && !target.buff.Riptide
+  Chain Heal | target=lowest_ally if group.injured >= 3
+  Healing Surge | target=lowest_ally if target.hp < 50
+  Healing Wave | target=lowest_ally if target.hp < 85
+combat:
+  Flame Shock | if debuff.Flame_Shock.remains < 3
+  Lava Burst
+  Lightning Bolt
