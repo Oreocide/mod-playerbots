@@ -29,7 +29,31 @@ struct Config
     uint32 MaxBotsPerPlayer = 4;
     uint32 UpdateInterval = 250;       // ms between two AI ticks of the same bot
     uint32 ScanInterval = 1500;        // ms a bot waits after a grid search (enemy, corpse) found nothing
-    bool PerfMonEnabled = false;       // time engine ticks and actions, shown by ".bot perf"
+    bool PerfMonEnabled = false;       // time engine ticks and actions, shown by ".bot perf"; also switches on the core BotPerf probes
+    uint32 PerfMonReportSeconds = 60;  // seconds between two window reports in the perf log (Playerbots-Perf.log)
+    uint32 PerfMonSlowTickMs = 150;    // a world tick longer than this gets a full attribution dump in the report
+    uint32 PerfMonTopBots = 10;        // players listed in the slowest-tick dump
+    bool PerfMonOpcodes = true;        // count packets sent to bot sessions per opcode
+    uint32 PerfMonGridCensusSeconds = 60;   // loaded grids per map and why they are held (0 = off)
+    uint32 PerfMonMemorySeconds = 30;       // RSS and jemalloc stats line (0 = off)
+    uint32 PerfMonMemCensusSeconds = 300;   // per-bot content census: items, spells, channels... (0 = off)
+    bool PerfMonLoginDetail = false;   // one perf-log line per login phase call (per bot), for per-bot vs per-grid regressions
+    std::string PerfMonChatDriver;     // "<messages per second> <say|yell|emote|channel|guild|mix>": start the synthetic chat driver once bots are online
+    std::string WarmMaps;              // continents to create at startup, "0:-8913:554,1:1629:-4373" (mapId or mapId:x:y; x,y also loads that grid); empty = off
+    uint32 ManagerSliceMs = 0;         // frozen idle bots are visited by the manager loop once per this many ms (0 = every world tick)
+    uint32 SimVerdictCacheMs = 0;      // how long a bot's whole 'simulated or frozen' verdict is reused (0 = recompute group/LFG/instance state every call)
+    bool SleepIdleActiveObjects = false; // core: skip the cell visit of active game objects (elevators, doors) when no awake player is near
+    bool SkipBotVisibilityGridLoad = false; // core: a bot relocating does not load the grids around it (only its own grid)
+    uint32 WarmHubs = 0;               // Warm.Maps companion: pre-load the grids around this many hubs (capitals first), 0 = off
+    uint32 WarmPlayerPositions = 0;    // ... and around the last positions of this many real (non-bot) characters, 0 = off
+    bool WarmPin = true;               // keep the warmed grids loaded (no unloading after Grid cleanup delay)
+    float WarmRadius = 120.0f;         // yards around each warm point whose grids are loaded (3x3 samples at this spacing)
+    uint32 RandomCreateUpTo = 0;       // keep creating characters in the background (one per Random.CreateDelay, whatever is online) until this many exist; 0 = only to reach Random.Count
+    bool FarBotHeightNoGridLoad = false; // a ground-height query of a frozen / rotation-only bot does not load the grid it asks about
+    bool LazyMMap = false;             // core: load navmesh tiles when something first paths in them instead of with the grid
+    uint32 FrozenTickMs = 0;           // frozen bots run their AI hook at most this often (0 = every map tick)
+    bool RandomJoinChannels = false;   // join the zone channels (General, Trade, LFG...) of bots that are in none
+    uint32 RandomMaxRssMB = 0;         // stop logging in bots while the process uses more than this (0 = off)
     uint32 LoginTimeout = 60000;       // ms until a bot that has not finished logging in is dropped
     float FollowDistance = 2.5f;
     float TeleportDistance = 100.0f;   // teleport to the master when further away (out of combat)

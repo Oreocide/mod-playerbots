@@ -16,7 +16,9 @@
  */
 
 #include "PlayerbotMgr.h"
+#include "BotPerf.h"
 #include "CharacterCache.h"
+#include "Perf/BotPerfReporter.h"
 #include "Group.h"
 #include "GroupMgr.h"
 #include "Log.h"
@@ -116,6 +118,7 @@ bool PlayerbotMgr::AddRandomBot(uint32 accountId, std::string const& accountName
 
     BotHolder& holder = _bots[character];
     holder.Session = session;
+    holder.LoginStartNs = BotPerf::NowNs();
     return true;
 }
 
@@ -224,6 +227,7 @@ void PlayerbotMgr::NoteWorldTick(uint32 diff)
 
 void PlayerbotMgr::RefreshNearbyHumans()
 {
+    BotPerf::Scope perfNearby(BotPerf::M_NEARBY_REFRESH);
     auto next = std::make_shared<std::vector<NearbyHuman>>();
     {
         std::shared_lock lock(*HashMapHolder<Player>::GetLock());
@@ -253,16 +257,33 @@ bool PlayerbotMgr::HasRealPlayerOnline() const
 
 void PlayerbotMgr::Update(uint32 diff)
 {
+    uint32 const sliceMs = sPlayerbotsConfig.ManagerSliceMs;
     for (auto itr = _bots.begin(); itr != _bots.end();)
     {
         BotHolder& holder = itr->second;
         WorldSession* session = holder.Session;
 
+        // idle frozen bots are visited once per ManagerSliceMs with the time that passed (0 = every tick, as before)
+        uint32 botDiff = diff;
+        if (sliceMs && holder.Cold && !holder.Removing && holder.AI)
+        {
+            holder.ColdAccum += diff;
+            if (holder.ColdAccum < sliceMs)
+            {
+                if (BotPerf::On())
+                    BotPerf::Add(BotPerf::GATE_MGR_SLICE_SKIPPED, BotPerf::CLS_BOT_FROZEN, 0, 1);
+                ++itr;
+                continue;
+            }
+            botDiff = holder.ColdAccum;
+        }
+        holder.ColdAccum = 0;
+
         if (!holder.Removing)
         {
             if (holder.AI && !holder.Master.IsEmpty() && !ObjectAccessor::FindConnectedPlayer(holder.Master))
                 RemoveBot(itr->first);
-            else if (!holder.AI && (holder.LoginTimer += diff) > sPlayerbotsConfig.LoginTimeout)
+            else if (!holder.AI && (holder.LoginTimer += botDiff) > sPlayerbotsConfig.LoginTimeout)
             {
                 TC_LOG_ERROR("server.playerbots", "Playerbots: login of bot {} timed out", itr->first.ToString());
                 RemoveBot(itr->first);
@@ -272,22 +293,26 @@ void PlayerbotMgr::Update(uint32 diff)
         CompleteFarTeleport(session);
 
         bool runSession = holder.Removing || !holder.AI;
+        bool idleTick = false;
         if (!runSession)
         {
             Player* bot = session->GetPlayer();
             bool busy = bot && bot->IsBeingTeleported();
-            if (busy || holder.AI->IsSimulated())
+            bool hot = busy || holder.AI->IsSimulated();
+            holder.Cold = !hot;
+            if (hot)
             {
                 holder.IdleSessionAccum = 0;
                 runSession = true;
             }
             else
             {
-                holder.IdleSessionAccum += diff;
+                holder.IdleSessionAccum += botDiff;
                 if (holder.IdleSessionAccum >= 5000)
                 {
                     holder.IdleSessionAccum = 0;
                     runSession = true;
+                    idleTick = true;
                 }
             }
         }
@@ -299,7 +324,12 @@ void PlayerbotMgr::Update(uint32 diff)
         }
 
         WorldSessionFilter filter(session);
-        if (!session->Update(diff, filter))
+        bool sessionAlive;
+        {
+            BotPerf::Scope perfSession(idleTick ? BotPerf::M_IDLE_SESSION_UPDATE : BotPerf::M_BOT_SESSION_UPDATE, session->GetBotPerfClass());
+            sessionAlive = session->Update(botDiff, filter);
+        }
+        if (!sessionAlive)
         {
             holder.AI.reset();
             delete session; // logs out and saves the character
@@ -337,11 +367,21 @@ void PlayerbotMgr::OnBotLoggedIn(ObjectGuid guid, BotHolder& holder)
     Player* bot = holder.Session->GetPlayer();
     if (holder.Master.IsEmpty())
     {
+        if (BotPerf::On() && holder.LoginStartNs)
+            sBotPerfReporter->NoteLoginWall(uint32((BotPerf::NowNs() - holder.LoginStartNs) / 1000000ull));
+        BotPerf::HeapScope perfAiInit(BotPerf::M_AI_INIT, BotPerf::CLS_BOT_FROZEN);
         sRandomBotMgr->Prepare(bot);
         holder.AI = std::make_unique<PlayerbotAI>(bot, ObjectGuid::Empty, 0);
         holder.AI->AddRandomBotStrategies();
         if (Position const* home = sRandomBotMgr->GetHome(bot->GetGUID()))
             holder.AI->SetHome(*home);
+        // zone channels (General, Trade, LFG...) are joined by the core on a zone change, a bot that logged in without one has none yet
+        if (sPlayerbotsConfig.RandomJoinChannels && !bot->IsBeingTeleported() && bot->GetJoinedChannels().empty())
+        {
+            bot->UpdateLocalChannels(bot->GetZoneId());
+            if (!bot->GetJoinedChannels().empty())
+                sBotPerfReporter->NoteChannelJoin();
+        }
         TC_LOG_INFO("server.playerbots", "Playerbots: random bot {} ({}) logged in", bot->GetName(), guid.ToString());
         return;
     }

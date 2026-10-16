@@ -22,6 +22,8 @@
 #include <chrono>
 #include <mutex>
 #include <string>
+#include <memory>
+#include <string_view>
 #include <unordered_map>
 #include <vector>
 
@@ -48,8 +50,22 @@ public:
     void Reset();
 
 private:
-    mutable std::mutex _mutex; // bots tick in several map threads
-    std::unordered_map<std::string, Entry> _entries;
+    struct StringHash
+    {
+        using is_transparent = void;
+        size_t operator()(std::string_view s) const { return std::hash<std::string_view>{}(s); }
+    };
+    // one table per recording thread, each behind its own (uncontended) mutex: no global lock and, with the
+    // transparent lookup, no string allocation per call once a name is known
+    struct Local
+    {
+        std::mutex Mutex;
+        std::unordered_map<std::string, Entry, StringHash, std::equal_to<>> Entries;
+    };
+    Local& GetLocal();
+
+    mutable std::mutex _registryMutex;
+    std::vector<std::unique_ptr<Local>> _locals;
 };
 
 /// Times its scope, does nothing (no clock read) while the monitor is disabled

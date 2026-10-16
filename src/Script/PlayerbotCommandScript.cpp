@@ -22,6 +22,7 @@
 #include "ObjectMgr.h"
 #include "Player.h"
 #include "Engine/PerfMonitor.h"
+#include "Perf/BotPerfReporter.h"
 #include "PlayerbotAI.h"
 #include "PlayerbotMgr.h"
 #include "PlayerbotsConfig.h"
@@ -32,6 +33,7 @@
 #include "ScriptMgr.h"
 #include "StringFormat.h"
 #include <algorithm>
+#include <sstream>
 
 using namespace Trinity::ChatCommands;
 using namespace Playerbots;
@@ -294,8 +296,8 @@ public:
         return false;
     }
 
-    // .bot perf [reset]
-    static bool HandleBotPerfCommand(ChatHandler* handler, Optional<std::string> option)
+    // .bot perf [show|reset|report|grids|mem|chat <start rate kind|stop|status>]
+    static bool HandleBotPerfCommand(ChatHandler* handler, Optional<std::string> option, Optional<Tail> rest)
     {
         if (option && *option == "reset")
         {
@@ -304,9 +306,50 @@ public:
             return true;
         }
 
+        if (option && *option == "chat")
+        {
+            std::istringstream in(rest ? std::string(*rest) : std::string());
+            std::string verb;
+            in >> verb;
+            if (verb == "start")
+            {
+                float rate = 0.f;
+                std::string kind;
+                in >> rate >> kind;
+                std::string error;
+                if (!sBotPerfReporter->StartChat(rate, kind, error))
+                {
+                    handler->PSendSysMessage("%s (usage: .bot perf chat start <messages per second> <say|yell|emote|channel|guild|mix>)", error.c_str());
+                    handler->SetSentErrorMessage(true);
+                    return false;
+                }
+            }
+            else if (verb == "stop")
+                sBotPerfReporter->StopChat();
+            handler->SendSysMessage(sBotPerfReporter->ChatStatus().c_str());
+            return true;
+        }
+
+        if (option && (*option == "report" || *option == "grids" || *option == "mem"))
+        {
+            if (!sPlayerbotsConfig.PerfMonEnabled)
+            {
+                handler->SendSysMessage("Perf is off, set Playerbots.PerfMon.Enable = 1 and .reload config.");
+                return true;
+            }
+            if (*option == "report")
+                sBotPerfReporter->ForceReport();
+            else if (*option == "grids")
+                sBotPerfReporter->LogGridCensus();
+            else
+                sBotPerfReporter->LogMemCensus();
+            handler->SendSysMessage("Written to Playerbots-Perf.log.");
+            return true;
+        }
+
         if (!sPlayerbotsConfig.PerfMonEnabled)
         {
-            handler->SendSysMessage("Timing is off, set Playerbots.PerfMon.Enable = 1 and restart.");
+            handler->SendSysMessage("Timing is off, set Playerbots.PerfMon.Enable = 1 and .reload config.");
             return true;
         }
 

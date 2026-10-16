@@ -21,6 +21,11 @@
 #include "Player.h"
 #include "Cmd/ChatCommands.h"
 #include "Db/PlayerbotRepository.h"
+#include "BotPerf.h"
+#include "Log.h"
+#include "Map.h"
+#include "MapManager.h"
+#include "Perf/BotPerfReporter.h"
 #include "PlayerbotAI.h"
 #include "PlayerbotMgr.h"
 #include "PlayerbotsConfig.h"
@@ -30,8 +35,10 @@
 #include "Social/BotSocialMgr.h"
 #include "Travel/HotspotMgr.h"
 #include "ScriptMgr.h"
+#include "Timer.h"
 #include "Util.h"
 #include "WorldSession.h"
+#include <sstream>
 
 using namespace Playerbots;
 
@@ -42,30 +49,36 @@ public:
     {
         // OnConfigLoad(false) runs before scripts are registered
         sPlayerbotsConfig.Load();
+        sBotPerfReporter->ApplyConfig();
     }
 
     void OnConfigLoad(bool /*reload*/) override
     {
         sPlayerbotsConfig.Load();
-    }
-
-    void OnStartup() override
-    {
-        sPlayerbotRepository->Load();
-        sHotspotMgr->LoadMarkerTemplates();
-        if (sPlayerbotsConfig.RotationEnable)
-            sRotationMgr->Load();
-        sRemoteControl->Start();
+        sBotPerfReporter->ApplyConfig();
     }
 
     void OnUpdate(uint32 diff) override
     {
         sRemoteControl->Update();
         sPlayerbotMgr->NoteWorldTick(diff);
-        sRandomBotMgr->Update(diff);
-        sPlayerbotMgr->Update(diff);
-        sActivityMgr->Update(diff);
-        sBotSocialMgr->Update(diff);
+        {
+            BotPerf::Scope scope(BotPerf::M_RANDOM_MGR);
+            sRandomBotMgr->Update(diff);
+        }
+        {
+            BotPerf::Scope scope(BotPerf::M_BOTMGR_UPDATE);
+            sPlayerbotMgr->Update(diff);
+        }
+        {
+            BotPerf::Scope scope(BotPerf::M_ACTIVITY);
+            sActivityMgr->Update(diff);
+        }
+        {
+            BotPerf::Scope scope(BotPerf::M_SOCIAL);
+            sBotSocialMgr->Update(diff);
+        }
+        sBotPerfReporter->Update(diff);
     }
 
     void OnShutdown() override

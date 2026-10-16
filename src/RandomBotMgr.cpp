@@ -17,6 +17,8 @@
 
 #include "RandomBotMgr.h"
 #include "AccountMgr.h"
+#include "BotPerf.h"
+#include "Perf/BotPerfReporter.h"
 #include "BattlenetAccountMgr.h"
 #include "BotSpellBook.h"
 #include "ByteBuffer.h"
@@ -30,7 +32,16 @@
 #include "GearFactory.h"
 #include "IteratorPair.h"
 #include "Log.h"
+#include "GridDefines.h"
 #include "Map.h"
+#include "MapManager.h"
+#include "Timer.h"
+#include <algorithm>
+#include <cctype>
+#include <set>
+#include <tuple>
+#include <sstream>
+#include <unordered_set>
 #include "ObjectAccessor.h"
 #include "ObjectMgr.h"
 #include "Player.h"
@@ -259,6 +270,7 @@ void RandomBotMgr::Update(uint32 diff)
         LoadCharacters();
         BuildRaceClasses();
         BuildSpots();
+        PrepareWarm();
         HubIndex::Build();
         sHotspotMgr->BuildFromHubs();
         GatherNodes::Build();
@@ -269,13 +281,20 @@ void RandomBotMgr::Update(uint32 diff)
         if (sPlayerbotsConfig.RandomQuests)
             QuestTravel::BuildIndex();
         _prepared = true;
+        AppendExtraWarm();
         TC_LOG_INFO("server.playerbots", "Playerbots: random bots ready, {} characters on {} game accounts, {} placement spots, keeping {} online",
             _characters.size(), _accounts.size(), _spots.size(), sPlayerbotsConfig.RandomCount);
     }
 
     _active = true;
 
-    sHotspotMgr->Update(diff);
+    if (RunWarmStep())
+        return;    // bots log in once the maps are warm
+
+    {
+        BotPerf::Scope perfHotspot(BotPerf::M_HOTSPOT);
+        sHotspotMgr->Update(diff);
+    }
     _rotateTimer += diff;
     if (_rotateTimer >= RotateCheckMs)
     {
@@ -308,8 +327,8 @@ void RandomBotMgr::Update(uint32 diff)
 
             if (_creation)
                 PumpCreation(diff);
-            else
-                AdvanceRandomize();
+            else if (!AdvanceRandomize())
+                MaybeBeginCreate(diff);
             return;
         }
 
@@ -317,8 +336,8 @@ void RandomBotMgr::Update(uint32 diff)
         {
             if (_creation)
                 PumpCreation(diff);
-            else
-                AdvanceRandomize();
+            else if (!AdvanceRandomize())
+                MaybeBeginCreate(diff);
             return;
         }
     }
@@ -332,6 +351,10 @@ void RandomBotMgr::Update(uint32 diff)
         return;
     }
 
+    MaybeBeginCreate(diff);
+    if (_creation)
+        return;
+
     if (_wait > diff)
     {
         _wait -= diff;
@@ -341,6 +364,21 @@ void RandomBotMgr::Update(uint32 diff)
 
     if (sPlayerbotMgr->GetRandomBotCount() >= sPlayerbotsConfig.RandomCount)
         return;
+
+    // keeps a benchmark from pushing the host into swap (or the OOM killer into the database)
+    if (sPlayerbotsConfig.RandomMaxRssMB)
+    {
+        static bool rssGuardLogged = false;
+        uint32 rss = BotPerfReporter::ReadRssMB();
+        if (rss > sPlayerbotsConfig.RandomMaxRssMB)
+        {
+            if (!rssGuardLogged)
+                TC_LOG_ERROR("server.playerbots", "Playerbots: RSS {} MB is above Playerbots.Random.MaxRssMB {}, no more bot logins ({} online)", rss, sPlayerbotsConfig.RandomMaxRssMB, sPlayerbotMgr->GetRandomBotCount());
+            rssGuardLogged = true;
+            return;
+        }
+        rssGuardLogged = false;
+    }
 
     if (NextOfflineCharacter())
     {
@@ -584,6 +622,168 @@ void RandomBotMgr::BuildRaceClasses()
     TC_LOG_INFO("server.playerbots", "Playerbots: {} playable race/class combinations for random bots", _raceClasses.size());
 }
 
+// Playerbots.Warm.Maps: "auto" = every map the bots can stand on (one grid each, from their placement spots), plus "mapId" / "mapId:x:y" entries. The first
+// terrain query per map (VMAP tree, navmesh set-up) costs hundreds of MB and seconds of world-thread time, tens of seconds with a cold page cache; doing
+// it here pays it once, one step per world tick (so the freeze watchdog never sees one long stall), before the first bot logs in.
+// Playerbots.Random.CreateUpTo: background character creation. With OnlyWithPlayers the manager used to only finish a creation that was already running while nobody
+// was online, and in the normal path it only created when fewer bots than Random.Count were online (and then logged each new one in). This starts a creation every
+// Random.CreateDelay until CreateUpTo characters exist, whatever is online; the new characters stay offline until Random.Count asks for them.
+void RandomBotMgr::MaybeBeginCreate(uint32 diff)
+{
+    uint32 target = sPlayerbotsConfig.RandomCreateUpTo;
+    if (!target || _creation || _characters.size() >= target)
+        return;
+
+    _bgCreateTimer += diff;
+    if (_bgCreateTimer < int64(sPlayerbotsConfig.RandomCreateDelay))
+        return;
+
+    _bgCreateTimer = 0;
+    BeginCreate();
+    if (!_creation)    // no account with room, no race/class: back off instead of logging an error every CreateDelay
+        _bgCreateTimer = -int64(CreateFailurePause);
+}
+
+void RandomBotMgr::PrepareWarm()
+{
+    _warmSteps.clear();
+    if (sPlayerbotsConfig.WarmMaps.empty())
+        return;
+
+    std::unordered_set<uint32> created;
+    auto add = [this, &created](uint32 mapId, bool hasPos, float x, float y)
+    {
+        if (created.insert(mapId).second)
+            _warmSteps.push_back({ mapId, false, 0.0f, 0.0f });
+        if (hasPos)
+            _warmSteps.push_back({ mapId, true, x, y });
+    };
+
+    std::stringstream list(sPlayerbotsConfig.WarmMaps);
+    std::string token;
+    while (std::getline(list, token, ','))
+    {
+        token.erase(std::remove_if(token.begin(), token.end(), [](unsigned char c) { return std::isspace(c); }), token.end());
+        if (token == "auto")
+        {
+            std::unordered_set<uint32> seen;
+            for (Spot const& spot : _spots)
+                if (seen.insert(spot.MapId).second)
+                    add(spot.MapId, true, spot.X, spot.Y);
+            continue;
+        }
+
+        uint32 mapId = 0;
+        float x = 0.f, y = 0.f;
+        int parsed = std::sscanf(token.c_str(), "%u:%f:%f", &mapId, &x, &y);
+        if (parsed >= 1)
+            add(mapId, parsed == 3, x, y);
+    }
+}
+
+// Playerbots.Warm.Hubs / Warm.PlayerPositions: after the maps, load (with their navmesh tiles) the grids around the biggest hubs and around where the real
+// characters last logged out, and pin them. A player's arrival in a cold area costs seconds of world-thread time (about 3 s per grid with a cold page cache,
+// 29 s for nine grids in Silvermoon); this moves that cost to startup, before any bot or player is there.
+void RandomBotMgr::AppendExtraWarm()
+{
+    uint32 hubs = sPlayerbotsConfig.WarmHubs, players = sPlayerbotsConfig.WarmPlayerPositions;
+    if (!hubs && !players)
+        return;
+
+    float radius = sPlayerbotsConfig.WarmRadius;
+    bool pin = sPlayerbotsConfig.WarmPin;
+    std::unordered_set<uint32> created;
+    for (WarmStep const& s : _warmSteps)
+        if (!s.LoadGrid)
+            created.insert(s.MapId);
+
+    std::set<std::tuple<uint32, uint32, uint32>> grids;
+    auto addAround = [&](uint32 mapId, float cx, float cy)
+    {
+        if (created.insert(mapId).second)
+            _warmSteps.push_back({ mapId, false, 0.0f, 0.0f, false, false });
+        for (int dx = -1; dx <= 1; ++dx)
+            for (int dy = -1; dy <= 1; ++dy)
+            {
+                float px = cx + float(dx) * radius, py = cy + float(dy) * radius;
+                if (!Trinity::IsValidMapCoord(px, py))
+                    continue;
+                GridCoord g = Trinity::ComputeGridCoord(px, py);
+                if (grids.insert({ mapId, g.x_coord, g.y_coord }).second)
+                    _warmSteps.push_back({ mapId, true, px, py, pin, true });
+            }
+    };
+
+    uint32 hubCount = 0;
+    if (hubs)
+    {
+        std::vector<Hotspot> all = sHotspotMgr->GetRegistry().Snapshot();
+        std::stable_sort(all.begin(), all.end(), [](Hotspot const& a, Hotspot const& b) { return a.Tier != b.Tier ? a.Tier < b.Tier : a.Radius > b.Radius; });
+        for (Hotspot const& hub : all)
+        {
+            if (hubCount >= hubs)
+                break;
+            addAround(hub.Map, hub.Center.X, hub.Center.Y);
+            ++hubCount;
+        }
+    }
+
+    uint32 playerCount = 0;
+    if (players)
+    {
+        std::unordered_set<uint64> botGuids;
+        for (BotCharacter const& c : _characters)
+            botGuids.insert(c.Guid.GetCounter());
+
+        if (QueryResult result = CharacterDatabase.Query("SELECT guid, map, position_x, position_y FROM characters WHERE deleteDate IS NULL ORDER BY logout_time DESC LIMIT 400"))
+            do
+            {
+                Field* fields = result->Fetch();
+                if (botGuids.contains(fields[0].GetUInt64()))
+                    continue;
+                addAround(fields[1].GetUInt16(), fields[2].GetFloat(), fields[3].GetFloat());
+                if (++playerCount >= players)
+                    break;
+            } while (result->NextRow());
+    }
+
+    TC_LOG_INFO("server.playerbots", "Playerbots: warm-up: {} hubs and {} character positions queued, {} steps in total", hubCount, playerCount, _warmSteps.size());
+}
+
+bool RandomBotMgr::RunWarmStep()
+{
+    if (_warmSteps.empty())
+        return false;
+
+    WarmStep step = _warmSteps.front();
+    _warmSteps.pop_front();
+    uint32 start = getMSTime();
+    if (!step.LoadGrid)
+    {
+        if (sMapMgr->WarmWorldMap(step.MapId))
+            TC_LOG_INFO("server.playerbots", "Playerbots: warm-up: map {} created in {} ms", step.MapId, GetMSTimeDiffToNow(start));
+        else
+        {
+            TC_LOG_ERROR("server.playerbots", "Playerbots: warm-up: map {} cannot be created at startup (instanceable or unknown), skipping it", step.MapId);
+            std::erase_if(_warmSteps, [&step](WarmStep const& s) { return s.MapId == step.MapId; });
+        }
+    }
+    else if (Map* map = sMapMgr->FindMap(step.MapId, 0))
+    {
+        {
+            // Eager: the navmesh tile loads with the grid even with Playerbots.LazyMMap on, so the arrival of a player finds everything ready
+            BotPerf::HumanLoadScope eager(step.Eager);
+            map->LoadGrid(step.X, step.Y);
+        }
+        if (step.Pin)
+            map->SetUnloadLock(Trinity::ComputeGridCoord(step.X, step.Y), true);
+        TC_LOG_INFO("server.playerbots", "Playerbots: warm-up: map {} grid at ({:.0f}, {:.0f}) loaded in {} ms{}", step.MapId, step.X, step.Y, GetMSTimeDiffToNow(start), step.Pin ? " (pinned)" : "");
+    }
+    if (_warmSteps.empty())
+        TC_LOG_INFO("server.playerbots", "Playerbots: warm-up finished");
+    return true;
+}
+
 void RandomBotMgr::BuildSpots()
 {
     _spots.clear();
@@ -643,6 +843,7 @@ void RandomBotMgr::BuildSpots()
 
 RandomBotMgr::BotCharacter const* RandomBotMgr::NextOfflineCharacter() const
 {
+    BotPerf::Scope perfNext(BotPerf::M_NEXT_OFFLINE);
     uint32 totalRatio = sPlayerbotsConfig.RandomAllianceRatio + sPlayerbotsConfig.RandomHordeRatio;
     uint32 allowedAlliance = sPlayerbotsConfig.RandomCount * sPlayerbotsConfig.RandomAllianceRatio / totalRatio;
 
@@ -706,6 +907,7 @@ RandomBotMgr::GameAccount* RandomBotMgr::AccountWithRoom()
 
 void RandomBotMgr::LoginOne()
 {
+    BotPerf::Scope perfLogin(BotPerf::M_LOGIN_ONE);
     BotCharacter const* character = NextOfflineCharacter();
     GameAccount* account = character ? FindAccount(character->AccountId) : nullptr;
     if (!character || !account || !sPlayerbotMgr->AddRandomBot(account->Id, account->Name, account->BnetId, character->Guid))
@@ -880,7 +1082,8 @@ void RandomBotMgr::FinishCreation()
 
     delete _creation->Session;
     _creation.reset();
-    _wait = _createFailures >= 8 ? CreateFailurePause : sPlayerbotsConfig.RandomCreateDelay;
+    // Background creation (Random.CreateUpTo) paces itself with _bgCreateTimer; sharing the login timer starved logins (each creation re-armed it just as the next began)
+    _wait = _createFailures >= 8 ? CreateFailurePause : (sPlayerbotsConfig.RandomCreateUpTo ? 0 : sPlayerbotsConfig.RandomCreateDelay);
     if (_createFailures >= 8)
         _createFailures = 0;
 }
@@ -1057,6 +1260,7 @@ bool RandomBotMgr::LoadHome(ObjectGuid guid, uint32& mapId, Position& home)
 
 bool RandomBotMgr::AdvanceRandomize()
 {
+    BotPerf::Scope perfRandomize(BotPerf::M_RANDOMIZE);
     while (!_pendingRandomize.empty())
     {
         ObjectGuid guid = *_pendingRandomize.begin();
@@ -1222,6 +1426,7 @@ RandomBotMgr::Anchor const* RandomBotMgr::GetAnchor(ObjectGuid guid) const
 // anchored. Bots someone can see, bots with a job (quest, flight) and grouped bots are left alone.
 void RandomBotMgr::RotateBots()
 {
+    BotPerf::Scope perfRotate(BotPerf::M_ROTATE);
     uint32 minutes = sPlayerbotsConfig.HotspotRotateMinutes;
     if (!minutes || sPlayerbotsConfig.HotspotProb <= 0.0f || !sPlayerbotMgr->GetRandomBotCount())
         return;

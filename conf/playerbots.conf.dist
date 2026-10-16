@@ -237,6 +237,36 @@ Playerbots.ScanInterval = 1500
 Playerbots.PerfMon.Enable = 0
 
 #
+#    Playerbots.PerfMon.ReportSeconds
+#    Playerbots.PerfMon.SlowTickMs
+#    Playerbots.PerfMon.TopBots
+#    Playerbots.PerfMon.Opcodes
+#    Playerbots.PerfMon.GridCensusSeconds
+#    Playerbots.PerfMon.MemorySeconds
+#    Playerbots.PerfMon.MemCensusSeconds
+#        Description: Only used while Playerbots.PerfMon.Enable = 1, which also switches on the read-only probes in the
+#                     core (World::Update, Map::Update, packets to bot sessions, bot logins). Everything goes to the
+#                     logger server.playerbots.perf (Playerbots-Perf.log), never to Server.log.
+#                     ReportSeconds: seconds between two window reports (tick p50/p95/max, cost per bot class and
+#                     slot, opcodes sent to bots, per map cost).
+#                     SlowTickMs: a world tick above this gets a full attribution dump (slowest tick of the window,
+#                     with the TopBots most expensive players).
+#                     Opcodes: count the packets handed to bot sessions per opcode and bot class.
+#                     GridCensusSeconds: loaded grids per map and what holds them (human, simulated bot, frozen
+#                     bots only, nobody), 0 = off.
+#                     MemorySeconds: RSS and jemalloc stats line, 0 = off.
+#                     MemCensusSeconds: items, spells, auras, channels per bot class, 0 = off.
+#        Default:     60 / 150 / 10 / 1 / 60 / 30 / 300
+
+Playerbots.PerfMon.ReportSeconds = 60
+Playerbots.PerfMon.SlowTickMs = 150
+Playerbots.PerfMon.TopBots = 10
+Playerbots.PerfMon.Opcodes = 1
+Playerbots.PerfMon.GridCensusSeconds = 60
+Playerbots.PerfMon.MemorySeconds = 30
+Playerbots.PerfMon.MemCensusSeconds = 300
+
+#
 #    Playerbots.LoginTimeout
 #        Description: Milliseconds until a bot that did not finish logging in is dropped.
 #        Default:     60000
@@ -460,6 +490,112 @@ Playerbots.Random.Maps =
 #        Default:     0
 
 Playerbots.Random.MaxGrids = 0
+
+#
+#    Playerbots.Random.JoinChannels
+#        Description: Make a random bot that logged in without any chat channel join its zone channels (General,
+#                     Trade, LFG...). The core already joins them on a zone change, so bots that are teleported
+#                     at login have them; this covers the rest. See "memcensus ... avg_channels" in the perf log.
+#        Default:     0
+#
+#    Playerbots.Random.MaxRssMB
+#        Description: Stop logging in random bots while the worldserver uses more than this many MiB of RAM.
+#                     Protects a shared host from the OOM killer during large benchmarks. 0 = off.
+#        Default:     0
+
+Playerbots.Random.JoinChannels = 0
+Playerbots.Random.MaxRssMB = 0
+
+#
+#    Playerbots.PerfMon.LoginDetail
+#        Description: One perf-log line per login phase call of a bot (name, net heap, ms, grids created so far): lets a reader regress
+#                     per-bot memory against per-grid memory. Needs PerfMon.Enable. Default: 0
+#
+#    Playerbots.PerfMon.ChatDriver
+#        Description: "<messages per second> <say|yell|emote|channel|guild|mix>": start the synthetic chat driver by itself once 90% of the
+#                     bots are online (no console needed for benchmark runs). Empty = off. Default: (empty)
+#
+#    Playerbots.Warm.Maps
+#        Description: Continents to create before the first bot logs in, comma separated: "auto" (every map the bots can stand on, one grid each, from their
+#                     placement spots) and/or "mapId" or "mapId:x:y" (x,y also loads that grid), e.g. "auto,1220:-1200:3600". The first login into a
+#                     continent builds its navmesh/VMAP data (about 3 GiB; 3-5 s with a warm page cache, up to ~45 s cold, with the world thread blocked).
+#                     This pays it up front, ONE step (create a map, or load its grid) per world tick so the freeze watchdog never sees a long stall;
+#                     bot logins wait until it is done. Needs Playerbots.Random.Enable. Same memory, earlier. Default: (empty)
+#
+#    Playerbots.ManagerSliceMs
+#        Description: Idle frozen bots are visited by the manager loop once per this many ms instead of on every world tick (0 = every tick).
+#                     A far teleport of such a bot completes up to this long later. 100 is a sensible value. Default: 0
+#
+#    Playerbots.SimVerdictCacheMs
+#        Description: How long a bot's whole "simulated or frozen" verdict (group, LFG, battleground, instance, proximity) is reused. A bot that
+#                     is invited into a group or joins a queue reacts up to this long later. 250 is a sensible value. Default: 0
+#
+#    Playerbots.FrozenTickMs
+#        Description: Frozen bots run their AI hook at most this often (0 = on every map tick, ~75 per second). A frozen bot that a player
+#                     walks up to wakes up to this long later. 250 is a sensible value. Default: 0
+
+Playerbots.PerfMon.LoginDetail = 0
+Playerbots.PerfMon.ChatDriver =
+Playerbots.Warm.Maps =
+
+#
+#    Playerbots.Warm.Hubs
+#    Playerbots.Warm.PlayerPositions
+#    Playerbots.Warm.Pin
+#    Playerbots.Warm.Radius
+#        Description: Pre-load, WITH their navmesh tiles, the grids around the N biggest hubs (capitals first) and around the last logout position of the N most
+#                     recent real (non-bot) characters, and keep them loaded (Pin). A player's arrival in a cold area costs seconds of world-thread time
+#                     (about 3 s per grid with a cold page cache; 29 s for the nine grids at a Silvermoon login); this pays it at startup, one grid per tick, before any
+#                     bot or player is there. Each pinned grid stays in memory (~35 MB). Radius is the spacing (yards) of the 3x3 sample points around each spot.
+#                     0 = off. Default: 0 / 0 / 1 / 120
+
+Playerbots.Warm.Hubs = 0
+Playerbots.Warm.PlayerPositions = 0
+Playerbots.Warm.Pin = 1
+Playerbots.Warm.Radius = 120
+Playerbots.ManagerSliceMs = 0
+Playerbots.SimVerdictCacheMs = 0
+Playerbots.FrozenTickMs = 0
+
+#
+#    Playerbots.SleepIdleActiveObjects
+#        Description: Core change, NOT limited to bots: it applies to any grid where no awake player is near. Elevators and doors are "active" game objects: every tick they update all creatures in the cells around them,
+#                     even when no player is anywhere near (the grid stays loaded because bots stand in it). With this on, such an object is only
+#                     visited when an awake player (a human or a simulated bot) already marked its cell this tick. Nothing a player can see changes;
+#                     an unobserved elevator and the creatures around it simply do not advance while nobody is there. Default: 0
+#
+#    Playerbots.LazyMMap
+#        Description: Core change. A navmesh tile costs ~30 MB and ~400 ms per grid and is only used by pathfinding. With this on, a grid created for a BOT
+#                     does not load its tile; PathGenerator loads the start and end tile of a path the first time something asks. A bot nobody is near
+#                     (frozen, or simulated only by the activity rotation) does not trigger a load at all (the pathfinder falls back to a straight line
+#                     there, unseen). A grid a HUMAN loads or moves into gets its tile immediately, as without this switch. The one remaining difference
+#                     for a human: creatures that path in a tile only bots had loaded pay the ~400 ms tile load at their first path. Default: 0
+#
+#    Playerbots.SkipBotVisibilityGridLoad
+#        Description: Core change. When a player relocates the core loads every grid within its visibility range (that is what the client would see).
+#                     In the rotation benchmark 98 of 100 grid creations after login came from there, ~35 MB each (navmesh tile + terrain + objects).
+#                     With this on a BOT does not trigger that; it only keeps its own grid. A human's relocation is unchanged. Default: 0
+
+Playerbots.SleepIdleActiveObjects = 0
+Playerbots.LazyMMap = 0
+Playerbots.SkipBotVisibilityGridLoad = 0
+
+#
+#    Playerbots.FarBotHeightNoGridLoad
+#        Description: The bots' ground-height lookup (route points, wander targets, every candidate quest point) used to LOAD the grid it asked about,
+#                     ~34 MB and ~600 ms each, often far away; in the rotation benchmark that was 28% of all grids created. With this on, a bot nobody
+#                     is near (frozen, or simulated only by the activity rotation) reads the height only if the terrain is already loaded and otherwise keeps
+#                     the height it already had (route nodes carry their own Z); bots near a human, in a group or in an instance load as before. Default: 0
+
+Playerbots.FarBotHeightNoGridLoad = 0
+
+#
+#    Playerbots.Random.CreateUpTo
+#        Description: Keep creating random characters in the background, one every Random.CreateDelay and whatever is online, until this many exist.
+#                     The new characters stay offline until Random.Count asks for them. 0 = only create to reach Random.Count (and, with OnlyWithPlayers,
+#                     only while a creation is already running). Default: 0
+
+Playerbots.Random.CreateUpTo = 0
 
 #
 #    Playerbots.BotActiveAlone

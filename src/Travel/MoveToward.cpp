@@ -1,4 +1,5 @@
 #include "MoveToward.h"
+#include "BotPerf.h"
 #include "CollectionMgr.h"
 #include "DB2Stores.h"
 #include "GridDefines.h"
@@ -27,7 +28,23 @@ bool TryGetStandZ(Player* bot, float x, float y, float hintZ, float& outZ)
     if (!map)
         return false;
 
-    map->LoadGrid(x, y);
+    // Playerbots.FarBotHeightNoGridLoad: this query is made at route points, wander targets and every candidate quest point, often far away; loading
+    // the grid there costs ~34 MB and ~600 ms and was the module's own source of 28% of the grids created in the rotation benchmark. A bot nobody
+    // is near (frozen, or simulated only by the activity rotation) reads the height only if the terrain is already there; GetHeight then
+    // returns INVALID_HEIGHT and every caller falls back to its hint Z.
+    bool loadGrid = true;
+    if (sPlayerbotsConfig.FarBotHeightNoGridLoad)
+    {
+        uint8 cls = bot->GetSession()->GetBotPerfClass();
+        if ((cls == BotPerf::CLS_BOT_FROZEN || cls == BotPerf::CLS_BOT_SIM_ROTATION) && !map->IsGridLoaded(x, y))
+        {
+            loadGrid = false;
+            if (BotPerf::On())
+                BotPerf::Add(BotPerf::GATE_HEIGHT_NO_LOAD, cls, 0, 1);
+        }
+    }
+    if (loadGrid)
+        map->LoadGrid(x, y);
 
     float local = map->GetHeight(bot->GetPhaseShift(), x, y, hintZ + 2.0f, true, 50.0f);
     if (local > INVALID_HEIGHT && std::fabs(local - hintZ) <= IndoorSnapSlack)

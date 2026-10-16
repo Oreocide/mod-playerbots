@@ -27,12 +27,29 @@ PerfMonitor& PerfMonitor::Instance()
     return instance;
 }
 
+PerfMonitor::Local& PerfMonitor::GetLocal()
+{
+    static thread_local Local* local = nullptr;
+    if (!local)
+    {
+        std::lock_guard<std::mutex> lock(_registryMutex);
+        _locals.push_back(std::make_unique<Local>());
+        local = _locals.back().get();
+    }
+    return *local;
+}
+
 void PerfMonitor::Record(char const* name, uint64 microseconds)
 {
-    std::lock_guard<std::mutex> lock(_mutex);
-    Entry& entry = _entries[name];
-    if (entry.Name.empty())
-        entry.Name = name;
+    Local& local = GetLocal();
+    std::lock_guard<std::mutex> lock(local.Mutex);
+    auto it = local.Entries.find(std::string_view(name));
+    if (it == local.Entries.end())
+    {
+        it = local.Entries.emplace(name, Entry{}).first;
+        it->second.Name = name;
+    }
+    Entry& entry = it->second;
     ++entry.Calls;
     entry.TotalUs += microseconds;
     entry.MaxUs = std::max<uint32>(entry.MaxUs, uint32(std::min<uint64>(microseconds, UINT32_MAX)));
@@ -40,13 +57,26 @@ void PerfMonitor::Record(char const* name, uint64 microseconds)
 
 std::vector<PerfMonitor::Entry> PerfMonitor::Snapshot() const
 {
-    std::vector<Entry> result;
+    std::unordered_map<std::string, Entry> merged;
     {
-        std::lock_guard<std::mutex> lock(_mutex);
-        result.reserve(_entries.size());
-        for (auto const& [name, entry] : _entries)
-            result.push_back(entry);
+        std::lock_guard<std::mutex> registry(_registryMutex);
+        for (auto const& local : _locals)
+        {
+            std::lock_guard<std::mutex> lock(local->Mutex);
+            for (auto const& [name, entry] : local->Entries)
+            {
+                Entry& m = merged[name];
+                m.Name = entry.Name;
+                m.Calls += entry.Calls;
+                m.TotalUs += entry.TotalUs;
+                m.MaxUs = std::max(m.MaxUs, entry.MaxUs);
+            }
+        }
     }
+    std::vector<Entry> result;
+    result.reserve(merged.size());
+    for (auto& [name, entry] : merged)
+        result.push_back(std::move(entry));
 
     std::ranges::sort(result, std::ranges::greater(), &Entry::TotalUs);
     return result;
@@ -54,8 +84,12 @@ std::vector<PerfMonitor::Entry> PerfMonitor::Snapshot() const
 
 void PerfMonitor::Reset()
 {
-    std::lock_guard<std::mutex> lock(_mutex);
-    _entries.clear();
+    std::lock_guard<std::mutex> registry(_registryMutex);
+    for (auto const& local : _locals)
+    {
+        std::lock_guard<std::mutex> lock(local->Mutex);
+        local->Entries.clear();
+    }
 }
 
 PerfScope::PerfScope(char const* name) : _name(name), _active(sPlayerbotsConfig.PerfMonEnabled)

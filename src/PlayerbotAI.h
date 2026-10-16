@@ -66,6 +66,7 @@ public:
     void Update(uint32 diff);
     /// Full AI (combat, wander, gear). False = freeze in place like AC BotActiveAlone
     bool IsSimulated();
+    bool ComputeSimulated();
 
     BotRole GetRole() const;
     BotSpellBook& GetSpellBook() { return _spellBook; }
@@ -165,6 +166,11 @@ private:
     uint32 _activeAloneStamp = 0;
     uint32 _forcedUntil = 0;
     bool _activeAloneValid = false;
+    bool _verdictValid = false;   // Playerbots.SimVerdictCacheMs: the last IsSimulated() answer and when it was computed
+    bool _verdictSim = false;
+    uint32 _verdictStamp = 0;
+    uint32 _verdictJitter = 0;
+    uint8 _simClass = 2;       // BotPerf class while simulated alone: sim_rotation (2) or sim_near (3), for the perf log only
 };
 }
 

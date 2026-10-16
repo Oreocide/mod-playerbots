@@ -24,6 +24,7 @@
 #include <string>
 #include <unordered_map>
 #include <unordered_set>
+#include <deque>
 #include <vector>
 
 class Player;
@@ -135,6 +136,14 @@ private:
     void LoadCharacters();
     void BuildRaceClasses();
     void BuildSpots();
+    void MaybeBeginCreate(uint32 diff);
+    int64 _bgCreateTimer = 0;
+    void PrepareWarm();
+    /// One step of Playerbots.Warm.Maps (create a map, or load its grid) per call; true while steps are left (bot logins wait)
+    bool RunWarmStep();
+    struct WarmStep { uint32 MapId = 0; bool LoadGrid = false; float X = 0.0f; float Y = 0.0f; bool Pin = false; bool Eager = false; };
+    void AppendExtraWarm();
+    std::deque<WarmStep> _warmSteps;
 
     BotCharacter const* NextOfflineCharacter() const;
     bool WantAlliance() const;
