@@ -44,6 +44,7 @@ struct Config
     uint32 SimVerdictCacheMs = 0;      // how long a bot's whole 'simulated or frozen' verdict is reused (0 = recompute group/LFG/instance state every call)
     bool SleepIdleActiveObjects = false; // core: skip the cell visit of active game objects (elevators, doors) when no awake player is near
     bool SkipBotVisibilityGridLoad = false; // core: a bot relocating does not load the grids around it (only its own grid)
+    bool SleepElevators = false;       // put elevators (active game objects) to sleep so their surroundings only update near an awake player (world change, module-only)
     uint32 WarmHubs = 0;               // Warm.Maps companion: pre-load the grids around this many hubs (capitals first), 0 = off
     uint32 WarmPlayerPositions = 0;    // ... and around the last positions of this many real (non-bot) characters, 0 = off
     bool WarmPin = true;               // keep the warmed grids loaded (no unloading after Grid cleanup delay)

@@ -141,7 +141,7 @@ private:
     void PrepareWarm();
     /// One step of Playerbots.Warm.Maps (create a map, or load its grid) per call; true while steps are left (bot logins wait)
     bool RunWarmStep();
-    struct WarmStep { uint32 MapId = 0; bool LoadGrid = false; float X = 0.0f; float Y = 0.0f; bool Pin = false; bool Eager = false; };
+    struct WarmStep { uint32 MapId = 0; bool LoadGrid = false; float X = 0.0f; float Y = 0.0f; bool Pin = false; };
     void AppendExtraWarm();
     std::deque<WarmStep> _warmSteps;
 

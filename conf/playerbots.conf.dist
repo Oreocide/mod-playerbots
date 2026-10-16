@@ -577,6 +577,16 @@ Playerbots.FrozenTickMs = 0
 #                     With this on a BOT does not trigger that; it only keeps its own grid. A human's relocation is unchanged. Default: 0
 
 Playerbots.SleepIdleActiveObjects = 0
+
+#
+#    Playerbots.SleepElevators
+#        Description: Module-only replacement for the core switch SleepIdleActiveObjects. Elevators (and the doors that go with them) are created "active":
+#                     every map tick the core updates every creature in the cells around them, even when no player is anywhere near. With this on the module
+#                     calls setActive(false) on elevator-type game objects (a sweep every 5 seconds on each continent's own map thread), so they and their
+#                     surroundings are only updated while a player or simulated bot is in range. Nothing a player can see changes; an unobserved elevator just
+#                     does not advance. This is a world change for everybody, not only for bots. Default: 0
+
+Playerbots.SleepElevators = 0
 Playerbots.LazyMMap = 0
 Playerbots.SkipBotVisibilityGridLoad = 0
 

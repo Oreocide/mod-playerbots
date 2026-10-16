@@ -701,7 +701,7 @@ void RandomBotMgr::AppendExtraWarm()
     auto addAround = [&](uint32 mapId, float cx, float cy)
     {
         if (created.insert(mapId).second)
-            _warmSteps.push_back({ mapId, false, 0.0f, 0.0f, false, false });
+            _warmSteps.push_back({ mapId, false, 0.0f, 0.0f, false });
         for (int dx = -1; dx <= 1; ++dx)
             for (int dy = -1; dy <= 1; ++dy)
             {
@@ -710,7 +710,7 @@ void RandomBotMgr::AppendExtraWarm()
                     continue;
                 GridCoord g = Trinity::ComputeGridCoord(px, py);
                 if (grids.insert({ mapId, g.x_coord, g.y_coord }).second)
-                    _warmSteps.push_back({ mapId, true, px, py, pin, true });
+                    _warmSteps.push_back({ mapId, true, px, py, pin });
             }
     };
 
@@ -750,6 +750,30 @@ void RandomBotMgr::AppendExtraWarm()
     TC_LOG_INFO("server.playerbots", "Playerbots: warm-up: {} hubs and {} character positions queued, {} steps in total", hubCount, playerCount, _warmSteps.size());
 }
 
+namespace
+{
+// Creates a continent's base map before a player needs it, with public API only. MapManager::CreateMap wants a Player but reads it only for dungeons,
+// battlegrounds and maps split by faction; a continent needs none of that, so a throwaway Player on a socketless bot session is enough. It is never
+// added to the world and is deleted at once.
+Map* WarmCreateMap(uint32 mapId)
+{
+    MapEntry const* entry = sMapStore.LookupEntry(mapId);
+    if (!entry || !entry->IsWorldMap() || entry->IsSplitByFaction())
+        return nullptr;
+
+    if (Map* existing = sMapMgr->FindMap(mapId, 0))
+        return existing;
+
+    WorldSession* session = new WorldSession(0, std::string(), 0, std::string(), nullptr, SEC_PLAYER, uint8(sWorld->getIntConfig(CONFIG_EXPANSION)), 0, "Win",
+        Minutes(0), 0, ClientBuild::VariantId{}, LOCALE_enUS, 0, false, true);
+    Player* dummy = new Player(session);
+    Map* map = sMapMgr->CreateMap(mapId, dummy);
+    delete dummy;
+    delete session;
+    return map;
+}
+}
+
 bool RandomBotMgr::RunWarmStep()
 {
     if (_warmSteps.empty())
@@ -760,7 +784,7 @@ bool RandomBotMgr::RunWarmStep()
     uint32 start = getMSTime();
     if (!step.LoadGrid)
     {
-        if (sMapMgr->WarmWorldMap(step.MapId))
+        if (WarmCreateMap(step.MapId))
             TC_LOG_INFO("server.playerbots", "Playerbots: warm-up: map {} created in {} ms", step.MapId, GetMSTimeDiffToNow(start));
         else
         {
@@ -770,11 +794,7 @@ bool RandomBotMgr::RunWarmStep()
     }
     else if (Map* map = sMapMgr->FindMap(step.MapId, 0))
     {
-        {
-            // Eager: the navmesh tile loads with the grid even with Playerbots.LazyMMap on, so the arrival of a player finds everything ready
-            BotPerf::HumanLoadScope eager(step.Eager);
-            map->LoadGrid(step.X, step.Y);
-        }
+        map->LoadGrid(step.X, step.Y);
         if (step.Pin)
             map->SetUnloadLock(Trinity::ComputeGridCoord(step.X, step.Y), true);
         TC_LOG_INFO("server.playerbots", "Playerbots: warm-up: map {} grid at ({:.0f}, {:.0f}) loaded in {} ms{}", step.MapId, step.X, step.Y, GetMSTimeDiffToNow(start), step.Pin ? " (pinned)" : "");
