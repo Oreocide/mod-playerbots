@@ -209,12 +209,14 @@ GM commands (`.bot`, RBAC debug permission for most): `perf`, `rpg`, `autogear`,
   `src/Travel` (hubs, graph, routes, phase guard), `src/Rotation`, `src/Economy`, `src/Social`, `src/Spawn`, `src/Db`,
   `src/Perf`, `data/rotations`, `data/sql`.
 - Standalone tests (no TrinityCore build needed, only `Define.h` headers): `TRINITY_SRC=<TrinityCore> tests/run_engine_test.sh`.
-- Design notes and per-subsystem details: [docs/REFERENCE.md](docs/REFERENCE.md) and [NOTES.md](NOTES.md).
+- Design notes and per-subsystem details: [docs/REFERENCE.md](docs/REFERENCE.md) and [NOTES.md](NOTES.md). Roadmaps, plans
+  and test plans are in [docs/design/](docs/design/).
 - Keep module header names unique; all modules share one include path with the core, and a header called like a core header
   shadows it.
 
 ## License and credits
 
-Source files carry the TrinityCore header, GNU GPL v2 or later. Parts follow AzerothCore's mod-playerbots (also GPL v2 or
-later): the engine model, the random-bot population ideas, the NewRpg status model (`src/Strategies/Rpg/RpgInfo.h`) and the
-name pool in `data/sql/db-characters/playerbots_01_names.sql`. A `LICENSE` file has not been added yet.
+GNU GPL v2 or later, see [COPYING](COPYING). Source files carry the TrinityCore header. Parts follow AzerothCore's
+mod-playerbots (also GPL v2 or later): the engine model, the random-bot population ideas, the NewRpg status model
+(`src/Strategies/Rpg/RpgInfo.h`) and the name pool in `data/sql/db-characters/playerbots_01_names.sql`.
+[docs/design/PROVENANCE.md](docs/design/PROVENANCE.md) lists where each part came from.
