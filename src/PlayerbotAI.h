@@ -64,6 +64,17 @@ public:
     Player* GetMaster() const;
 
     void Update(uint32 diff);
+    /// Frozen bots only need a few ticks per second (Playerbots.FrozenTickMs, 0 = every map tick). Adds diff and says
+    /// whether a tick is due; `elapsed` is the time since the last one
+    bool FrozenTickDue(uint32 diff, uint32 frozenTickMs, uint32& elapsed)
+    {
+        _frozenAccum += diff;
+        if (_frozenAccum < frozenTickMs)
+            return false;
+        elapsed = _frozenAccum;
+        _frozenAccum = 0;
+        return true;
+    }
     /// Full AI (combat, wander, gear). False = freeze in place like AC BotActiveAlone
     bool IsSimulated();
     bool ComputeSimulated();
@@ -131,6 +142,7 @@ private:
     ObjectGuid _botGuid;          // _bot may be gone when the AI is destroyed
     ObjectGuid _master;
     uint8 _formationIndex;
+    uint32 _frozenAccum = 0;
     uint32 _updateTimer;
 
     AiContext _context;               // before the engine, which refers to it

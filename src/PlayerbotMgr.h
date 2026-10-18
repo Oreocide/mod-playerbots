@@ -26,6 +26,7 @@
 #include <unordered_map>
 #include <vector>
 
+class Map;
 class Player;
 class WorldSession;
 
@@ -69,6 +70,11 @@ public:
     void LogoutRandomBots();
 
     void Update(uint32 diff);
+    /// Runs the AI of the bots on a world map. Called by that map's script on the map's update thread
+    void TickMapBots(Map* map, uint32 diff);
+    /// Runs the AI of the bots in dungeons, battlegrounds and other maps that cannot have a map script of their own.
+    /// World thread, after the maps were updated
+    void TickOtherMapBots(uint32 diff);
     /// World-thread tick: records DIFF and rebuilds the nearby-player snapshot
     void NoteWorldTick(uint32 diff);
 
@@ -101,6 +107,8 @@ private:
     struct BotHolder
     {
         WorldSession* Session = nullptr;
+        ObjectGuid Character;       // the character this bot logs in
+        bool LoginStarted = false;  // account data is loaded and the stock login was started
         ObjectGuid Master;          // empty for random bots
         uint8 FormationIndex = 0;
         uint32 LoginTimer = 0;
@@ -111,6 +119,17 @@ private:
         bool Removing = false;
         std::unique_ptr<PlayerbotAI> AI;
     };
+
+    /// Bots of a player share the player's account: its online flags are set again after the bot's logout cleared them
+    struct OnlineRepair
+    {
+        uint32 AccountId;
+        ObjectGuid Master;
+        uint32 DueMs;
+    };
+    static constexpr uint32 OnlineRepairDelayMs = 3000;
+    void RunOnlineRepairs();
+    std::vector<OnlineRepair> _onlineRepairs;
 
     void OnBotLoggedIn(ObjectGuid guid, BotHolder& holder);
     static void CompleteFarTeleport(WorldSession* session);

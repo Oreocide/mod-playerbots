@@ -16,11 +16,14 @@
  */
 
 #include "ActivityMgr.h"
+#include "BotSession.h"
 #include "Strategies/Rpg/Ambient.h"
 #include "Chat.h"
 #include "Group.h"
 #include "Player.h"
 #include "Cmd/ChatCommands.h"
+#include "DB2Stores.h"
+#include "StringFormat.h"
 #include "Db/PlayerbotRepository.h"
 #include "Goal/GoalStore.h"
 #include "BotPerf.h"
@@ -75,6 +78,7 @@ public:
         }
 
         sWorldActionQueue->Drain();
+        sPlayerbotMgr->TickOtherMapBots(diff);
         sRemoteControl->Update();
         sPlayerbotMgr->NoteWorldTick(diff);
         {
@@ -110,20 +114,11 @@ class playerbots_player : public PlayerScript
 public:
     playerbots_player() : PlayerScript("playerbots_player") { }
 
-    void OnUpdate(Player* player, uint32 diff) override
-    {
-        if (!player->GetSession()->IsBot())
-            return;
-
-        if (PlayerbotAI* ai = sPlayerbotMgr->GetAI(player))
-            ai->Update(diff);
-    }
-
     // game masters are told how many random bots the server is going to log in
     void OnLogin(Player* player, bool /*firstLogin*/) override
     {
         WorldSession* session = player->GetSession();
-        if (session->IsBot() || session->GetSecurity() < SEC_GAMEMASTER)
+        if (IsBotSession(session) || session->GetSecurity() < SEC_GAMEMASTER)
             return;
 
         if (!sPlayerbotsConfig.Enabled || !sPlayerbotsConfig.RandomEnabled)
@@ -153,18 +148,18 @@ public:
 
     void OnLogout(Player* player) override
     {
-        if (!player->GetSession()->IsBot())
+        if (!IsBot(player))
             sPlayerbotMgr->RemoveBotsOf(player->GetGUID());
     }
 
     // whisper from the master to one of its bots
     void OnChat(Player* player, uint32 /*type*/, uint32 /*lang*/, std::string& msg, Player* receiver) override
     {
-        if (!receiver || !receiver->GetSession()->IsBot())
+        if (!receiver || !IsBot(receiver))
             return;
 
         PlayerbotAI* ai = sPlayerbotMgr->GetAI(receiver);
-        if (!ai || player->GetSession()->IsBot())
+        if (!ai || IsBot(player))
             return;
 
         // a random bot that does not follow this player only tells how to get it to listen
@@ -183,14 +178,14 @@ public:
     // party chat of a player is a command for the bots of that group that follow this player
     void OnChat(Player* player, uint32 /*type*/, uint32 /*lang*/, std::string& msg, Group* group) override
     {
-        if (player->GetSession()->IsBot())
+        if (IsBot(player))
             return;
 
         std::vector<ObjectGuid> leaving;
         for (GroupReference const& ref : group->GetMembers())
         {
             Player* member = ref.GetSource();
-            if (!member || member == player || !member->GetSession()->IsBot())
+            if (!member || member == player || !IsBot(member))
                 continue;
 
             PlayerbotAI* ai = sPlayerbotMgr->GetAI(member);
@@ -206,8 +201,25 @@ public:
     }
 };
 
+// The AI of the bots on a world map runs from that map's update, on the map's thread. Dungeons and battlegrounds cannot
+// get a map script of their own (theirs are bound to the database), their bots are ticked from the world update.
+class playerbots_map : public WorldMapScript
+{
+public:
+    explicit playerbots_map(uint32 mapId) : WorldMapScript(Trinity::StringFormat("playerbots_map_{}", mapId).c_str(), mapId) { }
+
+    void OnUpdate(Map* map, uint32 diff) override
+    {
+        sPlayerbotMgr->TickMapBots(map, diff);
+    }
+};
+
 void AddSC_playerbots_scripts()
 {
+    for (MapEntry const* entry : sMapStore)
+        if (entry->IsWorldMap())
+            new playerbots_map(entry->ID);
+
     new playerbots_world();
     new playerbots_player();
 }

@@ -16,10 +16,14 @@
  */
 
 #include "PlayerbotMgr.h"
+#include "BotSession.h"
 #include "Economy/BotProfessions.h"
 #include "BotPerf.h"
 #include "CharacterCache.h"
 #include "Perf/BotPerfReporter.h"
+#include "GameTime.h"
+#include "Map.h"
+#include "MapRefManager.h"
 #include "Group.h"
 #include "GroupMgr.h"
 #include "Log.h"
@@ -75,21 +79,16 @@ AddBotResult PlayerbotMgr::AddBot(Player* master, std::string const& characterNa
     if (GetBotCount(master->GetGUID()) >= sPlayerbotsConfig.MaxBotsPerPlayer)
         return AddBotResult::TooManyBots;
 
-    WorldSession* session = new WorldSession(masterSession->GetAccountId(), std::string(masterSession->GetAccountName()),
-        masterSession->GetBattlenetAccountId(), std::string(), nullptr, SEC_PLAYER, masterSession->GetAccountExpansion(), 0,
-        std::string(masterSession->GetOS()), masterSession->GetTimezoneOffset(), masterSession->GetClientBuild(),
-        masterSession->GetClientBuildVariant(), masterSession->GetSessionDbLocaleIndex(), 0, false, true);
-
-    session->LoadPermissions();
+    WorldSession* session = CreateBotSession(masterSession->GetAccountId(), std::string(masterSession->GetAccountName()),
+        masterSession->GetBattlenetAccountId(), std::string(), masterSession->GetAccountExpansion(), std::string(masterSession->GetOS()),
+        masterSession->GetTimezoneOffset(), masterSession->GetClientBuild(), masterSession->GetClientBuildVariant(),
+        masterSession->GetSessionDbLocaleIndex());
 
     ObjectGuid guid = character->Guid;
-    session->InitializeSession([session, guid]
-    {
-        session->LoginBotPlayer(guid);
-    });
 
     BotHolder& holder = _bots[guid];
     holder.Session = session;
+    holder.Character = guid;
     holder.Master = master->GetGUID();
     holder.FormationIndex = GetFreeFormationIndex(master->GetGUID());
 
@@ -102,24 +101,14 @@ bool PlayerbotMgr::AddRandomBot(uint32 accountId, std::string const& accountName
     if (!sPlayerbotsConfig.Enabled || _bots.contains(character) || ObjectAccessor::FindConnectedPlayer(character))
         return false;
 
-    WorldSession* session = new WorldSession(accountId, std::string(accountName), bnetAccountId, std::string(), nullptr, SEC_PLAYER,
-        uint8(sWorld->getIntConfig(CONFIG_EXPANSION)), 0, "Win", Minutes(0), 0, ClientBuild::VariantId{}, LOCALE_enUS, 0, false, true);
+    WorldSession* session = CreateBotSession(accountId, std::string(accountName), bnetAccountId, std::string(), uint8(sWorld->getIntConfig(CONFIG_EXPANSION)),
+        "Win", Minutes(0), 0, ClientBuild::VariantId{}, LOCALE_enUS);
 
-    session->LoadPermissions();
     BotProfessions::SeedOffline(character);
-    // What a random bot reacts to: dungeon finder proposals, and party and guild invitations of players
-    session->SetBotPacketHandler([character](WorldPacket const& packet)
-    {
-        sActivityMgr->OnBotPacket(character, packet);
-        sBotSocialMgr->OnBotPacket(character, packet);
-    });
-    session->InitializeSession([session, character]
-    {
-        session->LoginBotPlayer(character);
-    });
 
     BotHolder& holder = _bots[character];
     holder.Session = session;
+    holder.Character = character;
     holder.LoginStartNs = BotPerf::NowNs();
     return true;
 }
@@ -179,7 +168,6 @@ bool PlayerbotMgr::RemoveBot(ObjectGuid bot)
         if (Group* group = player->GetGroup())
             group->RemoveMember(player->GetGUID());
 
-    holder.Session->KickPlayer("Playerbots: bot removed");
     return true;
 }
 
@@ -235,7 +223,7 @@ void PlayerbotMgr::RefreshNearbyHumans()
         std::shared_lock lock(*HashMapHolder<Player>::GetLock());
         for (auto const& [guid, player] : ObjectAccessor::GetPlayers())
         {
-            if (!player || !player->IsInWorld() || !player->GetSession() || player->GetSession()->IsBot())
+            if (!player || !player->IsInWorld() || !player->GetSession() || IsBotSession(player->GetSession()))
                 continue;
 
             NearbyHuman& h = next->emplace_back();
@@ -260,10 +248,22 @@ bool PlayerbotMgr::HasRealPlayerOnline() const
 void PlayerbotMgr::Update(uint32 diff)
 {
     uint32 const sliceMs = sPlayerbotsConfig.ManagerSliceMs;
+    RunOnlineRepairs();
     for (auto itr = _bots.begin(); itr != _bots.end();)
     {
         BotHolder& holder = itr->second;
         WorldSession* session = holder.Session;
+
+        if (holder.Removing)
+        {
+            // deleting the session logs the player out and saves it
+            holder.AI.reset();
+            if (!holder.Master.IsEmpty())
+                _onlineRepairs.push_back({ session->GetAccountId(), holder.Master, GameTime::GetGameTimeMS() + OnlineRepairDelayMs });
+            delete session;
+            itr = _bots.erase(itr);
+            continue;
+        }
 
         // idle frozen bots are visited once per ManagerSliceMs with the time that passed (0 = every tick, as before)
         uint32 botDiff = diff;
@@ -325,18 +325,18 @@ void PlayerbotMgr::Update(uint32 diff)
             continue;
         }
 
-        WorldSessionFilter filter(session);
-        bool sessionAlive;
+        bool ready;
         {
             BotPerf::Scope perfSession(idleTick ? BotPerf::M_IDLE_SESSION_UPDATE : BotPerf::M_BOT_SESSION_UPDATE, session->GetBotPerfClass());
-            sessionAlive = session->Update(botDiff, filter);
+            ready = UpdateBotSession(session, botDiff);
         }
-        if (!sessionAlive)
+
+        // the account data is loaded: log the character in with the stock handlers
+        if (ready && !holder.LoginStarted && !holder.Removing)
         {
-            holder.AI.reset();
-            delete session; // logs out and saves the character
-            itr = _bots.erase(itr);
-            continue;
+            holder.LoginStarted = true;
+            if (!StartBotLogin(session, holder.Character))
+                RemoveBot(itr->first);
         }
 
         if (!holder.AI && !holder.Removing)
@@ -425,6 +425,66 @@ void PlayerbotMgr::OnBotLoggedIn(ObjectGuid guid, BotHolder& holder)
 
     TC_LOG_INFO("server.playerbots", "Playerbots: bot {} ({}) logged in for {}", bot->GetName(), guid.ToString(), master->GetName());
     holder.AI->TellMaster(Trinity::StringFormat("Hello, I'm your {}. Whisper me \"help\" for commands.", GetRoleName(holder.AI->GetRole())));
+}
+
+namespace
+{
+void RunBotAI(Player* bot, PlayerbotAI* ai, uint32 diff)
+{
+    // a frozen bot was taken out of Unit::Update by the core, its AI only needs a few ticks per second
+    if (bot->GetSession()->IsBotFrozen())
+        if (uint32 frozenTickMs = sPlayerbotsConfig.FrozenTickMs; frozenTickMs && !ai->FrozenTickDue(diff, frozenTickMs, diff))
+            return;
+
+    ai->Update(diff);
+}
+}
+
+void PlayerbotMgr::TickMapBots(Map* map, uint32 diff)
+{
+    // The AI may teleport the bot, which unlinks it from the map's player list: collect first
+    thread_local std::vector<Player*> bots;
+    bots.clear();
+    for (MapReference const& ref : map->GetPlayers())
+        if (Player* player = ref.GetSource(); player && IsBotSession(player->GetSession()))
+            bots.push_back(player);
+
+    for (Player* bot : bots)
+        if (bot->IsInWorld() && bot->GetMap() == map)
+            if (PlayerbotAI* ai = GetAI(bot))
+                RunBotAI(bot, ai, diff);
+}
+
+void PlayerbotMgr::TickOtherMapBots(uint32 diff)
+{
+    for (auto const& [guid, holder] : _bots)
+    {
+        Player* bot = holder.Session->GetPlayer();
+        if (!bot || !holder.AI || holder.Removing || !bot->IsInWorld())
+            continue;
+
+        Map* map = bot->GetMap();
+        if (!map || map->GetEntry()->IsWorldMap())
+            continue;
+
+        RunBotAI(bot, holder.AI.get(), diff);
+    }
+}
+
+void PlayerbotMgr::RunOnlineRepairs()
+{
+    if (_onlineRepairs.empty())
+        return;
+
+    uint32 now = GameTime::GetGameTimeMS();
+    std::erase_if(_onlineRepairs, [now](OnlineRepair const& repair)
+    {
+        if (int32(now - repair.DueMs) < 0)
+            return false;
+
+        RepairOnlineFlags(repair.AccountId, ObjectAccessor::FindConnectedPlayer(repair.Master) ? repair.Master : ObjectGuid::Empty);
+        return true;
+    });
 }
 
 void PlayerbotMgr::LogoutRandomBots()

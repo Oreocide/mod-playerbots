@@ -38,7 +38,7 @@ class PlayerbotAI;
 /// Bots never start this on their own. When a real player waits in a queue, idle random bots join the same queue
 /// to fill it (the roles missing in a dungeon group, the players missing for a battleground, the opposing team of
 /// an arena group), and they answer whatever the queue asks of them: proposals, role checks, battleground
-/// invitations. They go through the same core code paths a client uses. World thread only, except OnBotPacket.
+/// invitations. They go through the same core code paths a client uses. World thread only.
 class ActivityMgr
 {
 public:
@@ -47,15 +47,12 @@ public:
     void Update(uint32 diff);
     void Shutdown();
 
-    /// Server packets sent to a random bot. Only dungeon finder proposals matter, they are answered later from Update
-    void OnBotPacket(ObjectGuid bot, WorldPacket const& packet);
-
 private:
     struct Proposal
     {
         ObjectGuid Bot;
-        uint32 Id = 0;
         uint32 AnswerAt = 0;
+        uint32 Attempts = 0;
     };
 
     struct LfgFill
@@ -77,7 +74,9 @@ private:
         PlayerbotAI* AI = nullptr;
     };
 
+    void ScanProposals();
     void AnswerProposals();
+    static void AcceptProposal(ObjectGuid bot, uint32 attempt);
     void Scan();
     void ServeBots(std::vector<BotRef> const& bots);
     void FillLfg(std::vector<Player*> const& humans, std::vector<BotRef> const& bots);
@@ -87,6 +86,7 @@ private:
 
     std::atomic<uint32> _clock = 0;
     uint32 _scanTimer = 0;
+    uint32 _proposalScanTimer = 0;
 
     std::mutex _proposalMutex;
     std::vector<Proposal> _proposals;

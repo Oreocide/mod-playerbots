@@ -19,6 +19,7 @@
 #include "AccountMgr.h"
 #include "BotPerf.h"
 #include "Perf/BotPerfReporter.h"
+#include "BotSession.h"
 #include "BattlenetAccountMgr.h"
 #include "BotSpellBook.h"
 #include "ByteBuffer.h"
@@ -781,7 +782,7 @@ Map* WarmCreateMap(uint32 mapId)
         return existing;
 
     WorldSession* session = new WorldSession(0, std::string(), 0, std::string(), nullptr, SEC_PLAYER, uint8(sWorld->getIntConfig(CONFIG_EXPANSION)), 0, "Win",
-        Minutes(0), 0, ClientBuild::VariantId{}, LOCALE_enUS, 0, false, true);
+        Minutes(0), 0, ClientBuild::VariantId{}, LOCALE_enUS, 0, false);
     Player* dummy = new Player(session);
     Map* map = sMapMgr->CreateMap(mapId, dummy);
     delete dummy;
@@ -990,38 +991,12 @@ void RandomBotMgr::BeginCreate()
         return;
     }
 
-    WorldSession* session = new WorldSession(account->Id, std::string(account->Name), account->BnetId, std::string(account->Email), nullptr, SEC_PLAYER,
-        uint8(sWorld->getIntConfig(CONFIG_EXPANSION)), 0, "Win", Minutes(0), 0, ClientBuild::VariantId{}, LOCALE_enUS, 0, false, true);
-
-    session->LoadPermissions();
-    session->SetBotPacketHandler([this](WorldPacket const& packet)
-    {
-        if (!_creation || packet.GetOpcode() != SMSG_CREATE_CHAR)
-            return;
-
-        try
-        {
-            WorldPacket copy(packet);
-            copy.rpos(0);
-            copy >> _creation->Code >> _creation->Guid;
-            _creation->Finished = true;
-        }
-        catch (ByteBufferException const&)
-        {
-            _creation->Code = CHAR_CREATE_ERROR;
-            _creation->Finished = true;
-        }
-    });
+    WorldSession* session = CreateBotSession(account->Id, std::string(account->Name), account->BnetId, std::string(account->Email),
+        uint8(sWorld->getIntConfig(CONFIG_EXPANSION)), "Win", Minutes(0), 0, ClientBuild::VariantId{}, LOCALE_enUS);
 
     _creation = std::make_unique<Creation>();
     _creation->Session = session;
     _creation->AccountId = account->Id;
-
-    session->InitializeSession([this]
-    {
-        if (_creation)
-            _creation->Initialized = true;
-    });
 }
 
 bool RandomBotMgr::SubmitCreate()
@@ -1045,6 +1020,11 @@ bool RandomBotMgr::SubmitCreate()
         uint8 gender = urand(0, 1) ? GENDER_MALE : GENDER_FEMALE;
         std::string name = MakeName(combination->Race, gender);
         if (name.empty())
+            continue;
+
+        // a name in use is refused by the core with a packet nobody reads here: do not wait for the timeout
+        std::string normalized = name;
+        if (!normalizePlayerName(normalized) || sCharacterCache->GetCharacterCacheByName(normalized))
             continue;
 
         WorldPackets::Character::CreateCharacter packet{ WorldPacket(CMSG_CREATE_CHARACTER) };
@@ -1073,9 +1053,10 @@ void RandomBotMgr::PumpCreation(uint32 /*diff*/)
     if (!_creation)
         return;
 
-    WorldSessionFilter filter(_creation->Session);
-    bool alive = _creation->Session->Update(0, filter);
-    if (alive && _creation->Initialized && !_creation->Submitted)
+    if (UpdateBotSession(_creation->Session, 0))
+        _creation->Initialized = true;
+
+    if (_creation->Initialized && !_creation->Submitted)
     {
         if (SubmitCreate())
         {
@@ -1089,9 +1070,23 @@ void RandomBotMgr::PumpCreation(uint32 /*diff*/)
         }
     }
 
+    // The core answers a creation with a packet, which a session without socket never gets. The character exists once
+    // the character cache knows its name; a refusal shows as the timeout
+    if (_creation->Submitted && !_creation->Finished)
+    {
+        std::string name = _creation->Name;
+        normalizePlayerName(name);
+        if (CharacterCacheEntry const* entry = sCharacterCache->GetCharacterCacheByName(name))
+        {
+            _creation->Guid = entry->Guid;
+            _creation->Code = CHAR_CREATE_SUCCESS;
+            _creation->Finished = true;
+        }
+    }
+
     uint32 now = GameTime::GetGameTimeMS();
     bool timedOut = _creation->Submitted && !_creation->Finished && _creation->StartedAt && now - _creation->StartedAt > CreateTimeout;
-    if (alive && !_creation->Finished && !timedOut)
+    if (!_creation->Finished && !timedOut)
         return;
 
     if (!_creation->Finished && timedOut)

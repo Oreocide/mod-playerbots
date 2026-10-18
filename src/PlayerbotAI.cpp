@@ -16,6 +16,7 @@
  */
 
 #include "PlayerbotAI.h"
+#include "BotSession.h"
 #include "Goal/GoalStore.h"
 #include "Strategies/QuestTravel.h"
 #include "BotPerf.h"
@@ -143,7 +144,7 @@ Player* PlayerbotAI::GetMaster() const
         return nullptr;
 
     Player* leader = ObjectAccessor::FindConnectedPlayer(group->GetLeaderGUID());
-    return leader && leader != _bot && leader->IsInWorld() && !leader->GetSession()->IsBot() ? leader : nullptr;
+    return leader && leader != _bot && leader->IsInWorld() && !IsBot(leader) ? leader : nullptr;
 }
 
 ObjectGuid PlayerbotAI::GetMasterGuid() const
@@ -425,7 +426,7 @@ void PlayerbotAI::Update(uint32 diff)
         if (group && !group->isBGGroup() && !group->isBFGroup())
         {
             Player* leader = ObjectAccessor::FindConnectedPlayer(group->GetLeaderGUID());
-            hasLeader = leader && leader != _bot && !leader->GetSession()->IsBot();
+            hasLeader = leader && leader != _bot && !IsBot(leader);
         }
 
         if (_hadLeader && !hasLeader)

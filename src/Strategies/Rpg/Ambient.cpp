@@ -16,6 +16,7 @@
  */
 
 #include "Ambient.h"
+#include "BotSession.h"
 #include "ChatPackets.h"
 #include "GameObject.h"
 #include "GameObjectPackets.h"
@@ -159,7 +160,7 @@ bool GreetNearbyPlayer(PlayerbotAI& ai, uint32 now)
 
 void ReturnTextEmote(Player* sender, uint32 emoteId, uint32 now)
 {
-    if (!sPlayerbotsConfig.ReactReturnEmotes || !sender || sender->GetSession()->IsBot() || !sender->IsAlive())
+    if (!sPlayerbotsConfig.ReactReturnEmotes || !sender || IsBot(sender) || !sender->IsAlive())
         return;
 
     static constexpr uint32 Friendly[] = { TEXT_EMOTE_WAVE, TEXT_EMOTE_HELLO, TEXT_EMOTE_GREET, TEXT_EMOTE_BOW, TEXT_EMOTE_CHEER,
@@ -175,7 +176,7 @@ void ReturnTextEmote(Player* sender, uint32 emoteId, uint32 now)
     float nearestDist = range;
     for (Player* bot : nearby)
     {
-        if (!bot->GetSession()->IsBot() || bot->IsInCombat() || bot->GetMap() != sender->GetMap())
+        if (!IsBot(bot) || bot->IsInCombat() || bot->GetMap() != sender->GetMap())
             continue;
         PlayerbotAI* ai = sPlayerbotMgr->GetAI(bot);
         if (!ai || ai->GetRpg().RepliedTo(sender->GetGUID(), now))

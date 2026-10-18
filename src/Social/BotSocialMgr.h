@@ -27,22 +27,18 @@
 #include <vector>
 
 class Player;
-class WorldPacket;
 
 namespace Playerbots
 {
 /// How random bots deal with real players who talk to them: they answer party and guild invitations after a
 /// moment, like a person would, and tell whoever whispers them how to get them to listen.
-/// Packets arrive on map threads (OnBotPacket), the answers are given from the world thread (Update).
+/// Pending invitations are found by polling the bots (ScanInvites), the answers are given from the world thread (Update).
 class BotSocialMgr
 {
 public:
     static BotSocialMgr* instance();
 
     void Update(uint32 diff);
-
-    /// Server packets sent to a random bot: party and guild invitations
-    void OnBotPacket(ObjectGuid bot, WorldPacket const& packet);
 
     /// A whisper from `from` to a random bot that does not follow `from`
     void OnWhisper(Player* bot, Player* from);
@@ -66,6 +62,8 @@ private:
         uint32 AnswerAt;
     };
 
+    void ScanInvites();
+    void NoteInvite(ObjectGuid bot, InviteKind kind);
     void AnswerParty(Player* bot);
     void AnswerGuild(Player* bot);
     bool WantsParty(Player* bot, Player* inviter) const;
@@ -81,6 +79,7 @@ private:
     void SendDueWhispers();
 
     std::atomic<uint32> _clock = 0;
+    uint32 _scanTimer = 0;
     std::mutex _mutex;
     std::vector<Whisper> _whispers;
     std::map<ObjectGuid, uint32> _nextSlot;                           // bot -> earliest time of its next line

@@ -16,6 +16,7 @@
  */
 
 #include "ActivityMgr.h"
+#include "BotSession.h"
 #include "ArenaTeam.h"
 #include "BattlegroundMgr.h"
 #include "BattlegroundPackets.h"
@@ -49,6 +50,8 @@ namespace Playerbots
 namespace
 {
 constexpr uint32 ScanInterval = 5000;
+constexpr uint32 ProposalScanInterval = 250; // how often bots are checked for a proposal
+constexpr uint32 ProposalRetry = 4000;       // a bot still in its proposal is answered again after this long
 constexpr uint32 ProposalAnswerMin = 2000;   // bots take a moment to accept, like a person would
 constexpr uint32 ProposalAnswerMax = 6000;
 constexpr uint32 MaxLfgFillAge = 15 * 60 * 1000;
@@ -72,7 +75,7 @@ uint8 LfgRolesOf(PlayerbotAI const& ai)
 
 bool IsHuman(Player const* player)
 {
-    return player && !player->GetSession()->IsBot();
+    return player && !IsBot(player);
 }
 
 bool HasHuman(Group const* group)
@@ -178,42 +181,32 @@ void ActivityMgr::Shutdown()
     _backoff.clear();
 }
 
-// Any thread
-void ActivityMgr::OnBotPacket(ObjectGuid bot, WorldPacket const& packet)
+// A bot session gets no packets. A proposal for a bot shows as the dungeon finder state of that bot
+void ActivityMgr::ScanProposals()
 {
-    if (packet.GetOpcode() != SMSG_LFG_PROPOSAL_UPDATE)
-        return;
-
-    try
+    sPlayerbotMgr->ForEachRandomBot([this](Player* bot, PlayerbotAI*)
     {
-        WorldPacket data(packet);
-        data.rpos(0);
-
-        WorldPackets::LFG::RideTicket ticket;
-        uint64 instanceId = 0;
-        uint32 proposalId = 0;
-        uint32 slot = 0;
-        int8 state = 0;
-        data >> ticket >> instanceId >> proposalId >> slot >> state;
-
-        if (state != lfg::LFG_PROPOSAL_INITIATING)
+        ObjectGuid guid = bot->GetGUID();
+        if (sLFGMgr->GetState(guid) != lfg::LFG_STATE_PROPOSAL)
             return;
 
         std::lock_guard lock(_proposalMutex);
-        if (std::ranges::any_of(_proposals, [&](Proposal const& p) { return p.Bot == bot && p.Id == proposalId; }))
+        if (std::ranges::any_of(_proposals, [&](Proposal const& p) { return p.Bot == guid; }))
             return;
 
-        _proposals.push_back({ bot, proposalId, _clock.load() + urand(ProposalAnswerMin, ProposalAnswerMax) });
-    }
-    catch (ByteBufferException const&)
-    {
-        TC_LOG_ERROR("server.playerbots", "Playerbots: could not read the dungeon finder proposal sent to {}", bot.ToString());
-    }
+        _proposals.push_back({ guid, _clock.load() + urand(ProposalAnswerMin, ProposalAnswerMax), 0 });
+    });
 }
 
 void ActivityMgr::Update(uint32 diff)
 {
     _clock += diff;
+    _proposalScanTimer += diff;
+    if (_proposalScanTimer >= ProposalScanInterval)
+    {
+        _proposalScanTimer = 0;
+        ScanProposals();
+    }
     AnswerProposals();
 
     _scanTimer += diff;
@@ -244,9 +237,31 @@ void ActivityMgr::AnswerProposals()
         }
     }
 
-    for (Proposal const& proposal : due)
-        if (sPlayerbotMgr->IsBotOnline(proposal.Bot) && sLFGMgr->GetState(proposal.Bot) == lfg::LFG_STATE_PROPOSAL)
-            sLFGMgr->UpdateProposal(proposal.Id, proposal.Bot, true);
+    for (Proposal proposal : due)
+    {
+        if (!sPlayerbotMgr->IsBotOnline(proposal.Bot) || sLFGMgr->GetState(proposal.Bot) != lfg::LFG_STATE_PROPOSAL)
+            continue;
+
+        AcceptProposal(proposal.Bot, proposal.Attempts);
+
+        // The bot may still be in the proposal because other members have not answered yet; answering again is harmless
+        // and covers a proposal id above the range tried so far
+        ++proposal.Attempts;
+        proposal.AnswerAt = _clock.load() + ProposalRetry;
+        std::lock_guard lock(_proposalMutex);
+        _proposals.push_back(proposal);
+    }
+}
+
+// The dungeon finder keeps the id of a proposal private and never hands it to a bot that gets no packet. Ids count up
+// from the start and the proposal store only holds the few proposals alive right now, so a lookup of an id that does not exist is a
+// cheap no-op, and UpdateProposal only acts when the bot is a member of the proposal with that id. Try them all. The range
+// grows with every unanswered attempt, so a server that has formed more proposals than the first range covers still works
+void ActivityMgr::AcceptProposal(ObjectGuid bot, uint32 attempt)
+{
+    uint32 const last = attempt < 2 ? 4096 : attempt < 4 ? 65536 : 1u << 20;
+    for (uint32 id = 1; id <= last; ++id)
+        sLFGMgr->UpdateProposal(id, bot, true);
 }
 
 void ActivityMgr::Scan()

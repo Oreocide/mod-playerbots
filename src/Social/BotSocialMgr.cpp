@@ -16,12 +16,14 @@
  */
 
 #include "BotSocialMgr.h"
+#include "BotSession.h"
 #include "Group.h"
 #include "GuildPackets.h"
 #include "Log.h"
 #include "ObjectAccessor.h"
 #include "Opcodes.h"
 #include "PartyPackets.h"
+#include "PlayerbotAI.h"
 #include "Player.h"
 #include "PlayerbotMgr.h"
 #include "PlayerbotsConfig.h"
@@ -42,6 +44,7 @@ constexpr uint32 LevelRange = 10;           // GroupInvitations = 1
 constexpr uint32 ReplyMin = 700;            // typing time of an answer
 constexpr uint32 ReplyMax = 1500;
 constexpr uint32 LineGap = 500;             // between two lines of the same bot
+constexpr uint32 ScanInterval = 250;        // how often bots are checked for a pending invitation
 }
 
 BotSocialMgr* BotSocialMgr::instance()
@@ -50,16 +53,20 @@ BotSocialMgr* BotSocialMgr::instance()
     return &instance;
 }
 
-void BotSocialMgr::OnBotPacket(ObjectGuid bot, WorldPacket const& packet)
+// A bot session gets no packets, the invitation shows as state on the player: a pending group or guild invite
+void BotSocialMgr::ScanInvites()
 {
-    InviteKind kind;
-    if (packet.GetOpcode() == SMSG_PARTY_INVITE)
-        kind = InviteKind::Party;
-    else if (packet.GetOpcode() == SMSG_GUILD_INVITE)
-        kind = InviteKind::Guild;
-    else
-        return;
+    sPlayerbotMgr->ForEachRandomBot([this](Player* bot, PlayerbotAI*)
+    {
+        if (bot->GetGroupInvite())
+            NoteInvite(bot->GetGUID(), InviteKind::Party);
+        if (bot->GetGuildIdInvited())
+            NoteInvite(bot->GetGUID(), InviteKind::Guild);
+    });
+}
 
+void BotSocialMgr::NoteInvite(ObjectGuid bot, InviteKind kind)
+{
     std::lock_guard lock(_mutex);
     if (std::ranges::any_of(_invites, [&](Invite const& invite) { return invite.Bot == bot && invite.Kind == kind; }))
         return;
@@ -118,6 +125,13 @@ void BotSocialMgr::Update(uint32 diff)
     _clock += diff;
     SendDueWhispers();
 
+    _scanTimer += diff;
+    if (_scanTimer >= ScanInterval)
+    {
+        _scanTimer = 0;
+        ScanInvites();
+    }
+
     std::vector<Invite> due;
     {
         std::lock_guard lock(_mutex);
@@ -154,7 +168,7 @@ void BotSocialMgr::Update(uint32 diff)
 // group content of its own
 bool BotSocialMgr::WantsParty(Player* bot, Player* inviter) const
 {
-    if (!inviter || inviter->GetSession()->IsBot() || sPlayerbotsConfig.RandomGroupInvitations == 0)
+    if (!inviter || IsBot(inviter) || sPlayerbotsConfig.RandomGroupInvitations == 0)
         return false;
 
     if (!bot->IsAlive() || bot->InBattleground() || bot->InBattlegroundQueue() || bot->isUsingLfg() || bot->GetGroup())

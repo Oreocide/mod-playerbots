@@ -1,4 +1,5 @@
 #include "BotPerfReporter.h"
+#include "BotSession.h"
 #include "BotPerf.h"
 #include "Channel.h"
 #include "CollectionMgr.h"
@@ -64,7 +65,6 @@ void BotPerfReporter::ApplyConfig()
     BotPerf::SetSlowTickMs(sPlayerbotsConfig.PerfMonSlowTickMs);
     BotPerf::SetOpcodeStats(sPlayerbotsConfig.PerfMonOpcodes);
     BotPerf::SetLoginDetail(sPlayerbotsConfig.PerfMonLoginDetail);
-    WorldSession::SetBotFrozenTickMs(sPlayerbotsConfig.FrozenTickMs);
     BotPerf::BotOpts::Set(sPlayerbotsConfig.SleepIdleActiveObjects, sPlayerbotsConfig.LazyMMap, sPlayerbotsConfig.SkipBotVisibilityGridLoad);
     BotPerf::SetEnabled(sPlayerbotsConfig.PerfMonEnabled);
 }
@@ -337,7 +337,7 @@ void BotPerfReporter::LogGridCensus()
             if (!p || !p->IsInWorld())
                 continue;
             uint8 level;
-            if (!p->GetSession()->IsBot())
+            if (!IsBot(p))
                 level = 3, ++humans;
             else if (p->GetSession()->IsBotFrozen())
                 level = 1, ++frozenBots;
