@@ -62,7 +62,7 @@ bool StartBotLogin(WorldSession* session, ObjectGuid character);
 
 /// Deleting a session logs its player out and saves it, which sets every character of the account offline. Bots of a
 /// player share the player's account, so those flags are set again a moment later. `master` is the player that
-/// stays online (empty for random bots, which have an account of their own)
+/// stays online; the caller only calls this while that player is online
 void RepairOnlineFlags(uint32 accountId, ObjectGuid master);
 }
 

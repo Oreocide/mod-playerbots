@@ -52,7 +52,7 @@ private:
     {
         ObjectGuid Bot;
         uint32 AnswerAt = 0;
-        uint32 Attempts = 0;
+        uint32 Cursor = 1;          // first proposal id not tried yet
     };
 
     struct LfgFill
@@ -76,7 +76,7 @@ private:
 
     void ScanProposals();
     void AnswerProposals();
-    static void AcceptProposal(ObjectGuid bot, uint32 attempt);
+    static uint32 AcceptProposal(ObjectGuid bot, uint32 first);
     void Scan();
     void ServeBots(std::vector<BotRef> const& bots);
     void FillLfg(std::vector<Player*> const& humans, std::vector<BotRef> const& bots);

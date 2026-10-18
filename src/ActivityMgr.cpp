@@ -51,7 +51,9 @@ namespace
 {
 constexpr uint32 ScanInterval = 5000;
 constexpr uint32 ProposalScanInterval = 250; // how often bots are checked for a proposal
-constexpr uint32 ProposalRetry = 4000;       // a bot still in its proposal is answered again after this long
+constexpr uint32 ProposalRetry = 4000;       // the next slice of proposal ids is tried this long later
+constexpr uint32 ProposalIdSlice = 16384;    // proposal ids tried per attempt
+constexpr uint32 ProposalIdLimit = 1u << 20; // the dungeon finder never gets near this many proposals
 constexpr uint32 ProposalAnswerMin = 2000;   // bots take a moment to accept, like a person would
 constexpr uint32 ProposalAnswerMax = 6000;
 constexpr uint32 MaxLfgFillAge = 15 * 60 * 1000;
@@ -194,7 +196,7 @@ void ActivityMgr::ScanProposals()
         if (std::ranges::any_of(_proposals, [&](Proposal const& p) { return p.Bot == guid; }))
             return;
 
-        _proposals.push_back({ guid, _clock.load() + urand(ProposalAnswerMin, ProposalAnswerMax), 0 });
+        _proposals.push_back({ guid, _clock.load() + urand(ProposalAnswerMin, ProposalAnswerMax), 1 });
     });
 }
 
@@ -242,26 +244,30 @@ void ActivityMgr::AnswerProposals()
         if (!sPlayerbotMgr->IsBotOnline(proposal.Bot) || sLFGMgr->GetState(proposal.Bot) != lfg::LFG_STATE_PROPOSAL)
             continue;
 
-        AcceptProposal(proposal.Bot, proposal.Attempts);
+        proposal.Cursor = AcceptProposal(proposal.Bot, proposal.Cursor);
 
-        // The bot may still be in the proposal because other members have not answered yet; answering again is harmless
-        // and covers a proposal id above the range tried so far
-        ++proposal.Attempts;
-        proposal.AnswerAt = _clock.load() + ProposalRetry;
-        std::lock_guard lock(_proposalMutex);
-        _proposals.push_back(proposal);
+        // The bot is probably still in the proposal because other members have not answered yet. Each id is tried only once
+        // per proposal: the next slice of ids is covered a few seconds later, in case the proposal id is higher than the slices
+        // so far. A bot that left the proposal state is dropped above, so the next proposal starts again at 1
+        if (proposal.Cursor <= ProposalIdLimit)
+        {
+            proposal.AnswerAt = _clock.load() + ProposalRetry;
+            std::lock_guard lock(_proposalMutex);
+            _proposals.push_back(proposal);
+        }
     }
 }
 
 // The dungeon finder keeps the id of a proposal private and never hands it to a bot that gets no packet. Ids count up
-// from the start and the proposal store only holds the few proposals alive right now, so a lookup of an id that does not exist is a
-// cheap no-op, and UpdateProposal only acts when the bot is a member of the proposal with that id. Try them all. The range
-// grows with every unanswered attempt, so a server that has formed more proposals than the first range covers still works
-void ActivityMgr::AcceptProposal(ObjectGuid bot, uint32 attempt)
+// from the start and the proposal store only holds the few proposals alive right now, so a lookup of an id that does not exist
+// is a cheap no-op, and UpdateProposal only acts when the bot is a member of the proposal with that id. Try a slice of them.
+// Returns the first id of the next slice
+uint32 ActivityMgr::AcceptProposal(ObjectGuid bot, uint32 first)
 {
-    uint32 const last = attempt < 2 ? 4096 : attempt < 4 ? 65536 : 1u << 20;
-    for (uint32 id = 1; id <= last; ++id)
+    uint32 const last = first + ProposalIdSlice - 1;
+    for (uint32 id = first; id <= last; ++id)
         sLFGMgr->UpdateProposal(id, bot, true);
+    return last + 1;
 }
 
 void ActivityMgr::Scan()

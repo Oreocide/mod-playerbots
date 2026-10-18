@@ -465,7 +465,9 @@ void PlayerbotMgr::RunOnlineRepairs()
         if (int32(now - repair.DueMs) < 0)
             return false;
 
-        RepairOnlineFlags(repair.AccountId, ObjectAccessor::FindConnectedPlayer(repair.Master) ? repair.Master : ObjectGuid::Empty);
+        // the master logged out meanwhile (the usual reason a bot is removed): the account is offline, leave it so
+        if (ObjectAccessor::FindConnectedPlayer(repair.Master))
+            RepairOnlineFlags(repair.AccountId, repair.Master);
         return true;
     });
 }

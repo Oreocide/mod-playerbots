@@ -185,10 +185,11 @@ bots affordable; raising it wakes grids across the world. See [docs/REFERENCE.md
 
 ### Log noise
 
-Bots have no client, so the core logs a line at ERROR level for every packet it would send them ("Prevented sending ... to
-non existent socket") and two lines for every bot login ("Account ... can't login with that character", the stock login
-handler is used without a character list). They are harmless. Mute them with `Logger.network.opcode` and `Logger.network` in
-`worldserver.conf` (this also hides those messages for real players).
+Bots have no client, so the core would log a line at ERROR level for every packet it sends them ("Prevented sending ... to
+non existent socket"). `conf/playerbots.conf.dist` ships `Logger.network.opcode=0,Server`, which turns that category off (it
+also hides the same message for real players). Every bot login still writes two harmless lines ("Account ... can't login with
+that character", the stock login handler is used without a character list). Count the first kind with
+`grep -c "Prevented sending" Server.log` if you want to check that the mute is active.
 
 ## Configuration
 

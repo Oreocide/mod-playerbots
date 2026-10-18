@@ -78,7 +78,6 @@ bool StartBotLogin(WorldSession* session, ObjectGuid character)
 void RepairOnlineFlags(uint32 accountId, ObjectGuid master)
 {
     LoginDatabase.PExecute("UPDATE account SET online = 1 WHERE id = {};", accountId);
-    if (!master.IsEmpty())
-        CharacterDatabase.PExecute("UPDATE characters SET online = 1 WHERE guid = {};", master.GetCounter());
+    CharacterDatabase.PExecute("UPDATE characters SET online = 1 WHERE guid = {};", master.GetCounter());
 }
 }

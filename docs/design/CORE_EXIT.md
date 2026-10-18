@@ -62,7 +62,7 @@ generic. What was done, all verified to compile, none play-tested:
 |---|---|
 | Socketless bot session (`isBot` flag, `SendPacket` redirect, idle/online/kick special cases, `InitializeSession` callback) | stock `WorldSession` built without a socket (`src/BotSession.*`). The queue flag around `Update` keeps the idle check off the null socket; "account data loaded" is read from the idle timeout the init callback sets |
 | `LoginBotPlayer` | stock `HandlePlayerLoginOpcode` + `HandleContinuePlayerLogin` (public). The first sets the "loading" state, then rejects the character against a list nobody asked for and logs; the second only needs the state. `Player::LoadFromDB` still checks the account |
-| Packet handler (party/guild invite, LFG proposal, character-create result) | polling: `Player::GetGroupInvite/GetGuildIdInvited`, `LFGMgr::GetState`, character cache by name. The proposal id is private in the LFG manager, so `UpdateProposal` is called for ids 1..N (no-op for unknown ids, N grows with each unanswered attempt) |
+| Packet handler (party/guild invite, LFG proposal, character-create result) | polling: `Player::GetGroupInvite/GetGuildIdInvited`, `LFGMgr::GetState`, character cache by name. The proposal id is private in the LFG manager, so `UpdateProposal` is called for slices of 16,384 ids (no-op for unknown ids), each id once per proposal, one slice every 4 s while the bot stays in the proposal |
 | `PlayerScript::OnUpdate` hook | one `WorldMapScript` per world map (map thread); dungeons/battlegrounds from `WorldScript::OnUpdate` |
 | Account/character `online` flags cleared by a bot logout | set again 3 s later by the module (bots of a player share the account) |
 | BotPerf probes, `LazyMMap`, `SleepIdleActiveObjects`, `SkipBotVisibilityGridLoad`, `WarmWorldMap`, spline/path/Unit changes | removed. `SleepElevators` and `Warm.*` were already module-only. The perf reporter keeps only the memory line and the synthetic chat driver |
@@ -70,6 +70,6 @@ generic. What was done, all verified to compile, none play-tested:
 | Module framework | kept (generic) |
 
 Known costs of the module-only route: two log lines per bot login and one ERROR line per packet sent to a bot (mute with
-`Logger.network.opcode`); the LFG id sweep; no push notification for GM kicks of a bot; the scale benchmark numbers that
+`Logger.network.opcode`, shipped in the conf); the LFG id sweep; no push notification for GM kicks of a bot; the scale benchmark numbers that
 depended on the removed gates have to be measured again. A change in stock `HandlePlayerLoginOpcode` (ordering of the
 "loading" state and the legit check) makes `StartBotLogin` log an error and the bot fail to log in.

@@ -246,6 +246,16 @@ Playerbots.PerfMon.Enable = 0
 Playerbots.PerfMon.MemorySeconds = 30
 
 #
+#    Logger.network.opcode
+#        Description: Bots have no client, so the core logs "Prevented sending ... to non existent socket" at ERROR level for every
+#                     packet it would send to a bot (thousands per second with many bots). This line turns that category off. It is a
+#                     logger setting of the core, not a Playerbots key, and it also hides the other messages of that category
+#                     (packets refused for real players). Remove it to see them again.
+#        Default:     0 - (Disabled) in this file, the core default is the root logger level
+
+Logger.network.opcode=0,Server
+
+#
 #    Playerbots.LoginTimeout
 #        Description: Milliseconds until a bot that did not finish logging in is dropped.
 #        Default:     60000
