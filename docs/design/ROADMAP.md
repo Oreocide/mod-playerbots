@@ -41,4 +41,4 @@ v2: P9 and P10 need only P2. P11 needs P10. P7 needs P10 for sensible fights. P8
 
 ## Out of scope (v1 and v2 unless reopened)
 
-Combat quests beyond kill-only, LLM chat, flying/skyriding, Exile's Reach, AH posting beyond grey/white (no valuation logic), taxi node discovery, guild bank/tasks, rated PvP tuning, per-boss puzzle mechanics without hints.
+Combat quests beyond kill-only (LLM chat is the separate module mod-ollama, started 2026-10-17), flying/skyriding, Exile's Reach, AH posting beyond grey/white (no valuation logic), taxi node discovery, guild bank/tasks, rated PvP tuning, per-boss puzzle mechanics without hints.

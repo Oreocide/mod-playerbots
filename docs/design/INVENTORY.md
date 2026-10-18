@@ -52,7 +52,7 @@ Portability: **direct** = copy with minor edits; **adapt** = keep the logic, swa
 | Module | LOC | Purpose | Needs online bots | License | Use |
 |---|---|---|---|---|---|
 | mod-ah-bot-plus | 3.4k | AH seller/buyer bot | no | AGPL-3 in headers, no LICENSE file | do not copy |
-| mod-ollama-chat | 34k | LLM chat replies | yes | AGPL-3 (README says GPL-3) | do not copy; behavior ref for the chat hook |
+| mod-ollama-chat | 34k | LLM chat replies | yes | AGPL-3 (README says GPL-3) | ported 2026-10-17 as the separate module mod-ollama (AGPL-3, owner decision); see modules/mod-ollama |
 | mod-bot-chat-intents | 440 | chat intent → safe bot action | yes | none (all rights reserved) | behavior ref only |
 | mod-bot-trade-chatter | 1.0k | "WTS" Trade channel posts | yes | none | behavior ref only |
 | mod-bot-spawners | 255 | GM-placed hotspot NPCs | yes (TravelMgr) | none | idea already in `mod:src/Script/npc_bot_hotspot.cpp` |

@@ -85,4 +85,4 @@ Tracking pointer: `/home/brandon/trinitycore-tracking/` (project convention, CLA
 
 | ID | Gap | Evidence | Minimal change | Conf |
 |---|---|---|---|---|
-| G28 | Chat modules for later (mod-ollama-chat) are AGPL-3. Linking them makes the binary AGPL-3, including the network-source duty. Unlicensed AC bot modules cannot be copied | INVENTORY §2 | decide before any chat-module port; reimplement from behavior otherwise | H |
+| G28 | Chat modules for later (mod-ollama-chat) are AGPL-3. Linking them makes the binary AGPL-3, including the network-source duty. Unlicensed AC bot modules cannot be copied | INVENTORY §2 | DECIDED 2026-10-17: ported as the separate module mod-ollama under AGPL-3 (own private repo, never pushed); the network-source duty applies if it is ever distributed | H |

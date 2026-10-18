@@ -22,6 +22,7 @@
 #include "Group.h"
 #include "Player.h"
 #include "Cmd/ChatCommands.h"
+#include "Social/WhisperFallback.h"
 #include "DB2Stores.h"
 #include "StringFormat.h"
 #include "Db/PlayerbotRepository.h"
@@ -150,7 +151,8 @@ public:
         // a random bot that does not follow this player only tells how to get it to listen
         if (ai->GetMasterGuid() != player->GetGUID())
         {
-            sBotSocialMgr->OnWhisper(receiver, player);
+            if (!CallWhisperFallback(receiver, player, msg))
+                sBotSocialMgr->OnWhisper(receiver, player);
             return;
         }
 

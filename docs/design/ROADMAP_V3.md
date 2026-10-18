@@ -37,4 +37,4 @@ Phases 1 and 2 can run in either order. Phase 4 is the gate for loot. A battlegr
 
 ## Explicitly not in v3
 
-LLM chat, flying, Exile's Reach, AH valuation, taxi discovery, guild bank, rated PvP, per-boss puzzles, boats and zeppelins (L, needs transport passengers), and a ghost run back to a corpse. v1 phases still open (in-game innkeeper, gear audits, mailbox) stay in ROADMAP.md and are not replaced by this file.
+flying, Exile's Reach, AH valuation, taxi discovery, guild bank, rated PvP, per-boss puzzles, boats and zeppelins (L, needs transport passengers), and a ghost run back to a corpse. v1 phases still open (in-game innkeeper, gear audits, mailbox) stay in ROADMAP.md and are not replaced by this file. LLM chat is not part of this plan: it is the separate module mod-ollama (started 2026-10-17).

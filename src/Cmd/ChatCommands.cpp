@@ -16,6 +16,7 @@
  */
 
 #include "ChatCommands.h"
+#include "Social/WhisperFallback.h"
 #include "Db/PlayerbotRepository.h"
 #include "AiRegistry.h"
 #include "GearFactory.h"
@@ -505,6 +506,7 @@ ChatOutcome HandleBotChat(PlayerbotAI& ai, Player* speaker, std::string text, bo
 
     ChatCommandTable const& table = GetChatCommands();
     BotTraits traits = GetTraits(ai, speaker);
+    bool claimed = false;   // a chat module took the whisper, tried once however many parts it has
 
     for (std::string const& part : SplitChain(text, sPlayerbotsConfig.CommandSeparator))
     {
@@ -517,7 +519,12 @@ ChatOutcome HandleBotChat(PlayerbotAI& ai, Player* speaker, std::string text, bo
         {
             // party chat is mostly people talking
             if (!group)
-                ai.TellMaster("Unknown command, whisper \"help\".");
+            {
+                if (!claimed && !outcome.Known)
+                    claimed = CallWhisperFallback(ai.GetBot(), speaker, text);
+                if (!claimed)
+                    ai.TellMaster("Unknown command, whisper \"help\".");
+            }
             continue;
         }
 

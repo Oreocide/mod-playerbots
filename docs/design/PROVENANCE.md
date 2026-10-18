@@ -10,7 +10,7 @@
 - TrinityCore is GPL-2.0-or-later (file headers, e.g. `src/server/game/Entities/Player/Player.cpp`). **The licenses are compatible. Adapting code is allowed.** The brief's AGPL "no copy" rule does not trigger for mod-playerbots.
 - **Do not copy:**
   - AGPL-headed AC core files: `Entities/Creature/Trainer.{h,cpp}`, `Server/Packets/NPCPackets.{h,cpp}`, `zone_teldrassil.cpp`, `zone_ironforge.cpp`, the local `TC9Sidecar/*`;
-  - mod-ollama-chat (AGPL-3; its README says GPL-3, a conflict), mod-dungeon-clear (AGPL-3), mod-ah-bot-plus (AGPL-3 headers);
+  - mod-ollama-chat (AGPL-3; its README says GPL-3, a conflict; ported on the owner's decision, 2026-10-17, into the separate AGPL-3 module mod-ollama, kept in its own private unpushed repo), mod-dungeon-clear (AGPL-3), mod-ah-bot-plus (AGPL-3 headers);
   - mod-bot-chat-intents, mod-bot-trade-chatter, mod-bot-spawners and mod-duel-anchors, which carry no license (all rights reserved). Use them as behavior references only.
 - Project rule (CLAUDE.md): treat all borrowed logic as GPL2, and flag it if the project is ever redistributed publicly.
 
