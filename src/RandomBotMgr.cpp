@@ -17,7 +17,6 @@
 
 #include "RandomBotMgr.h"
 #include "AccountMgr.h"
-#include "BotPerf.h"
 #include "Perf/BotPerfReporter.h"
 #include "BotSession.h"
 #include "BattlenetAccountMgr.h"
@@ -302,7 +301,6 @@ void RandomBotMgr::Update(uint32 diff)
         return;    // bots log in once the maps are warm
 
     {
-        BotPerf::Scope perfHotspot(BotPerf::M_HOTSPOT);
         sHotspotMgr->Update(diff);
     }
     _rotateTimer += diff;
@@ -815,10 +813,6 @@ bool RandomBotMgr::RunWarmStep()
         if (step.Pin)
         {
             map->SetUnloadLock(Trinity::ComputeGridCoord(step.X, step.Y), true);
-            // LoadGrid does not load the navmesh tile while LazyMMap is on. Pinned hubs (capitals, saved
-            // player positions) pay that tile here, during warm-up, so the first player in town does not.
-            if (BotPerf::BotOpts::LazyMMap())
-                map->EnsureMMapTile(step.X, step.Y);
         }
         TC_LOG_INFO("server.playerbots", "Playerbots: warm-up: map {} grid at ({:.0f}, {:.0f}) loaded in {} ms{}", step.MapId, step.X, step.Y, GetMSTimeDiffToNow(start), step.Pin ? " (pinned)" : "");
     }
@@ -898,7 +892,6 @@ void RandomBotMgr::BuildSpots()
 
 RandomBotMgr::BotCharacter const* RandomBotMgr::NextOfflineCharacter() const
 {
-    BotPerf::Scope perfNext(BotPerf::M_NEXT_OFFLINE);
     uint32 totalRatio = sPlayerbotsConfig.RandomAllianceRatio + sPlayerbotsConfig.RandomHordeRatio;
     uint32 allowedAlliance = sPlayerbotsConfig.RandomCount * sPlayerbotsConfig.RandomAllianceRatio / totalRatio;
 
@@ -962,7 +955,6 @@ RandomBotMgr::GameAccount* RandomBotMgr::AccountWithRoom()
 
 void RandomBotMgr::LoginOne()
 {
-    BotPerf::Scope perfLogin(BotPerf::M_LOGIN_ONE);
     BotCharacter const* character = NextOfflineCharacter();
     GameAccount* account = character ? FindAccount(character->AccountId) : nullptr;
     if (!character || !account || !sPlayerbotMgr->AddRandomBot(account->Id, account->Name, account->BnetId, character->Guid))
@@ -1432,7 +1424,6 @@ bool RandomBotMgr::LoadHome(ObjectGuid guid, uint32& mapId, Position& home)
 
 bool RandomBotMgr::AdvanceRandomize()
 {
-    BotPerf::Scope perfRandomize(BotPerf::M_RANDOMIZE);
     while (!_pendingRandomize.empty())
     {
         ObjectGuid guid = *_pendingRandomize.begin();
@@ -1852,7 +1843,6 @@ void RandomBotMgr::RotateBots()
 {
     EvictFromEnemyGround();
 
-    BotPerf::Scope perfRotate(BotPerf::M_ROTATE);
     uint32 minutes = sPlayerbotsConfig.HotspotRotateMinutes;
     if (!minutes || sPlayerbotsConfig.HotspotProb <= 0.0f || !sPlayerbotMgr->GetRandomBotCount())
         return;

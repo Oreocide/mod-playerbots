@@ -52,3 +52,24 @@ Upstream reference = `34fd0ebd` (TC master merged 2026-10-14). Core paths are re
 
 - G1 (BotPerf untracked): becomes part of the BotPerf decision above. No core edit in P0.
 - G2 (`ValidateAppearance` empty-choice guard): fixed **module-side**: `FillCustomizations` must never send an empty choice list for a race/gender that has options (`modules/mod-playerbots/src/RandomBotMgr.cpp:155`). The core guard stays whatever the working tree has; humans are a separate matter.
+
+## Outcome (2026-10-17): the core kit is gone
+
+The decisions above ("keep a minimal core kit") were superseded: the owner asked to remove every core change that is not
+generic. What was done, all verified to compile, none play-tested:
+
+| Was in the core | Now |
+|---|---|
+| Socketless bot session (`isBot` flag, `SendPacket` redirect, idle/online/kick special cases, `InitializeSession` callback) | stock `WorldSession` built without a socket (`src/BotSession.*`). The queue flag around `Update` keeps the idle check off the null socket; "account data loaded" is read from the idle timeout the init callback sets |
+| `LoginBotPlayer` | stock `HandlePlayerLoginOpcode` + `HandleContinuePlayerLogin` (public). The first sets the "loading" state, then rejects the character against a list nobody asked for and logs; the second only needs the state. `Player::LoadFromDB` still checks the account |
+| Packet handler (party/guild invite, LFG proposal, character-create result) | polling: `Player::GetGroupInvite/GetGuildIdInvited`, `LFGMgr::GetState`, character cache by name. The proposal id is private in the LFG manager, so `UpdateProposal` is called for ids 1..N (no-op for unknown ids, N grows with each unanswered attempt) |
+| `PlayerScript::OnUpdate` hook | one `WorldMapScript` per world map (map thread); dungeons/battlegrounds from `WorldScript::OnUpdate` |
+| Account/character `online` flags cleared by a bot logout | set again 3 s later by the module (bots of a player share the account) |
+| BotPerf probes, `LazyMMap`, `SleepIdleActiveObjects`, `SkipBotVisibilityGridLoad`, `WarmWorldMap`, spline/path/Unit changes | removed. `SleepElevators` and `Warm.*` were already module-only. The perf reporter keeps only the memory line and the synthetic chat driver |
+| Frozen bots | **kept, generalised**: `WorldSession::SetDormant/IsDormant` + 3 hunks (`Player::Update`, two in `Map::Update`). Generic, nothing in the core sets it |
+| Module framework | kept (generic) |
+
+Known costs of the module-only route: two log lines per bot login and one ERROR line per packet sent to a bot (mute with
+`Logger.network.opcode`); the LFG id sweep; no push notification for GM kicks of a bot; the scale benchmark numbers that
+depended on the removed gates have to be measured again. A change in stock `HandlePlayerLoginOpcode` (ordering of the
+"loading" state and the legit check) makes `StartBotLogin` log an error and the bot fail to log in.

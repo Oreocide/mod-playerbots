@@ -19,9 +19,7 @@
 #include "BotSession.h"
 #include "Goal/GoalStore.h"
 #include "Strategies/QuestTravel.h"
-#include "BotPerf.h"
 #include "GearFactory.h"
-#include "Perf/BotPerfReporter.h"
 #include "CellImpl.h"
 #include "Creature.h"
 #include "DB2Stores.h"
@@ -165,8 +163,6 @@ bool PlayerbotAI::IsSimulated()
     uint32 now = GameTime::GetGameTimeMS();
     if (_verdictValid && now - _verdictStamp < cacheMs + _verdictJitter)
     {
-        if (BotPerf::On())
-            BotPerf::Add(BotPerf::GATE_VERDICT_CACHE_HIT, _bot->GetSession()->GetBotPerfClass(), 0, 1);
         return _verdictSim;
     }
 
@@ -179,24 +175,22 @@ bool PlayerbotAI::IsSimulated()
 
 bool PlayerbotAI::ComputeSimulated()
 {
-    // the perf class is bookkeeping for BotPerf only, nothing reads it to decide behavior
-    WorldSession* session = _bot->GetSession();
     if (!_master.IsEmpty() || GetMaster())
     {
-        session->SetBotPerfClass(BotPerf::CLS_BOT_GROUPED);
+        _far = false;
         return true;
     }
 
     if (_bot->InBattleground() || _bot->InBattlegroundQueue() || _bot->isUsingLfg())
     {
-        session->SetBotPerfClass(BotPerf::CLS_BOT_INSTANCE);
+        _far = false;
         return true;
     }
 
     if (Map const* map = _bot->GetMap())
         if (map->IsDungeon() || map->IsRaid() || map->IsBattlegroundOrArena())
         {
-            session->SetBotPerfClass(BotPerf::CLS_BOT_INSTANCE);
+            _far = false;
             return true;
         }
 
@@ -204,13 +198,12 @@ bool PlayerbotAI::ComputeSimulated()
     uint32 now = GameTime::GetGameTimeMS();
     if (!_activeAloneValid || now - _activeAloneStamp >= ActiveAloneCacheMs + uint32(_bot->GetGUID().GetCounter() % 250))
     {
-        BotPerf::Scope perf(BotPerf::M_ACTIVE_ALONE, session->GetBotPerfClass());
         _activeAlone = IsActiveAlone();
         _activeAloneStamp = now;
         _activeAloneValid = true;
     }
 
-    session->SetBotPerfClass(_activeAlone ? _simClass : BotPerf::CLS_BOT_FROZEN);
+    _far = !_activeAlone || _simClass == SimRotation;
     return _activeAlone;
 }
 
@@ -244,7 +237,7 @@ bool PlayerbotAI::IsActiveAlone()
         h ^= h >> 16;
         if (h % std::max<uint32>(1, sPlayerbotsConfig.RandomCount) < forceActive)
         {
-            _simClass = BotPerf::CLS_BOT_SIM_ROTATION;
+            _simClass = SimRotation;
             return true;
         }
     }
@@ -252,7 +245,7 @@ bool PlayerbotAI::IsActiveAlone()
     uint32 pct = sPlayerbotsConfig.BotActiveAlone;
     if (pct >= 100)
     {
-        _simClass = BotPerf::CLS_BOT_SIM_ROTATION;
+        _simClass = SimRotation;
         return true;
     }
 
@@ -328,12 +321,12 @@ bool PlayerbotAI::IsActiveAlone()
     if (forced)
     {
         _forcedUntil = now + sPlayerbotsConfig.BotActiveAloneForceGraceSeconds * 1000;
-        _simClass = BotPerf::CLS_BOT_SIM_NEAR;
+        _simClass = SimNear;
         return true;
     }
     if (now < _forcedUntil)
     {
-        _simClass = BotPerf::CLS_BOT_SIM_NEAR;
+        _simClass = SimNear;
         return true;
     }
 
@@ -356,7 +349,7 @@ bool PlayerbotAI::IsActiveAlone()
         }
     }
 
-    _simClass = BotPerf::CLS_BOT_SIM_ROTATION;
+    _simClass = SimRotation;
     return RotatingSlot(100) < pct;
 }
 
@@ -365,7 +358,6 @@ bool PlayerbotAI::SnapToGround(bool notify, float lift)
     if (!_bot->IsInWorld() || _bot->IsBeingTeleported())
         return false;
 
-    BotPerf::Scope perfSnap(BotPerf::M_SNAP_GROUND, _bot->GetSession()->GetBotPerfClass());
 
     // Party bots keep the master's Z (Ironforge, tunnels). Sky-height snap
     // puts them on the mountain above the instance interior.
@@ -413,7 +405,7 @@ void PlayerbotAI::Update(uint32 diff)
     if (_bot->IsBeingTeleported())
     {
         _grounded = false;
-        _bot->GetSession()->SetBotFrozen(false);
+        _bot->GetSession()->SetDormant(false);
         return;
     }
 
@@ -436,10 +428,7 @@ void PlayerbotAI::Update(uint32 diff)
 
     if (!IsSimulated())
     {
-        BotPerf::Scope perfFrozen(BotPerf::M_AI_FROZEN, BotPerf::CLS_BOT_FROZEN);
-        if (!_bot->GetSession()->IsBotFrozen())
-            sBotPerfReporter->NoteFreeze();
-        _bot->GetSession()->SetBotFrozen(true);
+        _bot->GetSession()->SetDormant(true);
         if (!_idle)
         {
             _idle = true;
@@ -460,7 +449,6 @@ void PlayerbotAI::Update(uint32 diff)
         // nobody can see the bot: a route is lived through in time, not walked
         if (_route.IsActive())
         {
-            BotPerf::Scope perfVirtual(BotPerf::M_VIRTUAL_TRAVEL, BotPerf::CLS_BOT_FROZEN);
             RouteStatus status = _route.StepVirtual(*this, diff);
             if (status == RouteStatus::Arrived || status == RouteStatus::Failed)
             {
@@ -487,15 +475,12 @@ void PlayerbotAI::Update(uint32 diff)
         _bot->SetDisableGravity(false);
         _idle = false;
     }
-    if (_bot->GetSession()->IsBotFrozen())
-        sBotPerfReporter->NoteThaw();
-    _bot->GetSession()->SetBotFrozen(false);
+    _bot->GetSession()->SetDormant(false);
 
     _updateTimer += diff;
     if (_updateTimer < sPlayerbotsConfig.UpdateInterval)
         return;
     _updateTimer = 0;
-    BotPerf::Scope perfSim(BotPerf::M_AI_SIM, _bot->GetSession()->GetBotPerfClass());
     _context.BeginTick(GameTime::GetGameTimeMS());
 
     // a teleport is still noticed before the engine picks an action; the height query is the costly part
@@ -505,7 +490,6 @@ void PlayerbotAI::Update(uint32 diff)
     BotSpellBook::StripStartingAuras(_bot);
 
     {
-        BotPerf::Scope perfGear(BotPerf::M_GEAR, _bot->GetSession()->GetBotPerfClass());
         MaintainGear(sPlayerbotsConfig.UpdateInterval);
     }
     MaintainTalents();

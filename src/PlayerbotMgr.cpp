@@ -18,9 +18,7 @@
 #include "PlayerbotMgr.h"
 #include "BotSession.h"
 #include "Economy/BotProfessions.h"
-#include "BotPerf.h"
 #include "CharacterCache.h"
-#include "Perf/BotPerfReporter.h"
 #include "GameTime.h"
 #include "Map.h"
 #include "MapRefManager.h"
@@ -109,7 +107,6 @@ bool PlayerbotMgr::AddRandomBot(uint32 accountId, std::string const& accountName
     BotHolder& holder = _bots[character];
     holder.Session = session;
     holder.Character = character;
-    holder.LoginStartNs = BotPerf::NowNs();
     return true;
 }
 
@@ -217,7 +214,6 @@ void PlayerbotMgr::NoteWorldTick(uint32 diff)
 
 void PlayerbotMgr::RefreshNearbyHumans()
 {
-    BotPerf::Scope perfNearby(BotPerf::M_NEARBY_REFRESH);
     auto next = std::make_shared<std::vector<NearbyHuman>>();
     {
         std::shared_lock lock(*HashMapHolder<Player>::GetLock());
@@ -272,8 +268,6 @@ void PlayerbotMgr::Update(uint32 diff)
             holder.ColdAccum += diff;
             if (holder.ColdAccum < sliceMs)
             {
-                if (BotPerf::On())
-                    BotPerf::Add(BotPerf::GATE_MGR_SLICE_SKIPPED, BotPerf::CLS_BOT_FROZEN, 0, 1);
                 ++itr;
                 continue;
             }
@@ -325,11 +319,7 @@ void PlayerbotMgr::Update(uint32 diff)
             continue;
         }
 
-        bool ready;
-        {
-            BotPerf::Scope perfSession(idleTick ? BotPerf::M_IDLE_SESSION_UPDATE : BotPerf::M_BOT_SESSION_UPDATE, session->GetBotPerfClass());
-            ready = UpdateBotSession(session, botDiff);
-        }
+        bool ready = UpdateBotSession(session, botDiff);
 
         // the account data is loaded: log the character in with the stock handlers
         if (ready && !holder.LoginStarted && !holder.Removing)
@@ -369,9 +359,6 @@ void PlayerbotMgr::OnBotLoggedIn(ObjectGuid guid, BotHolder& holder)
     Player* bot = holder.Session->GetPlayer();
     if (holder.Master.IsEmpty())
     {
-        if (BotPerf::On() && holder.LoginStartNs)
-            sBotPerfReporter->NoteLoginWall(uint32((BotPerf::NowNs() - holder.LoginStartNs) / 1000000ull));
-        BotPerf::HeapScope perfAiInit(BotPerf::M_AI_INIT, BotPerf::CLS_BOT_FROZEN);
         sRandomBotMgr->Prepare(bot);
         holder.AI = std::make_unique<PlayerbotAI>(bot, ObjectGuid::Empty, 0);
         holder.AI->AddRandomBotStrategies();
@@ -379,11 +366,7 @@ void PlayerbotMgr::OnBotLoggedIn(ObjectGuid guid, BotHolder& holder)
             holder.AI->SetHome(*home);
         // zone channels (General, Trade, LFG...) are joined by the core on a zone change, a bot that logged in without one has none yet
         if (sPlayerbotsConfig.RandomJoinChannels && !bot->IsBeingTeleported() && bot->GetJoinedChannels().empty())
-        {
             bot->UpdateLocalChannels(bot->GetZoneId());
-            if (!bot->GetJoinedChannels().empty())
-                sBotPerfReporter->NoteChannelJoin();
-        }
         TC_LOG_INFO("server.playerbots", "Playerbots: random bot {} ({}) logged in", bot->GetName(), guid.ToString());
         return;
     }
@@ -432,7 +415,7 @@ namespace
 void RunBotAI(Player* bot, PlayerbotAI* ai, uint32 diff)
 {
     // a frozen bot was taken out of Unit::Update by the core, its AI only needs a few ticks per second
-    if (bot->GetSession()->IsBotFrozen())
+    if (bot->GetSession()->IsDormant())
         if (uint32 frozenTickMs = sPlayerbotsConfig.FrozenTickMs; frozenTickMs && !ai->FrozenTickDue(diff, frozenTickMs, diff))
             return;
 

@@ -112,7 +112,6 @@ private:
         ObjectGuid Master;          // empty for random bots
         uint8 FormationIndex = 0;
         uint32 LoginTimer = 0;
-        uint64 LoginStartNs = 0;    // steady clock at AddRandomBot, for the perf log
         bool Cold = false;          // frozen and idle: visited only every Playerbots.ManagerSliceMs
         uint32 ColdAccum = 0;
         uint32 IdleSessionAccum = 0;

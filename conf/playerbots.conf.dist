@@ -237,34 +237,13 @@ Playerbots.ScanInterval = 1500
 Playerbots.PerfMon.Enable = 0
 
 #
-#    Playerbots.PerfMon.ReportSeconds
-#    Playerbots.PerfMon.SlowTickMs
-#    Playerbots.PerfMon.TopBots
-#    Playerbots.PerfMon.Opcodes
-#    Playerbots.PerfMon.GridCensusSeconds
 #    Playerbots.PerfMon.MemorySeconds
-#    Playerbots.PerfMon.MemCensusSeconds
-#        Description: Only used while Playerbots.PerfMon.Enable = 1, which also switches on the read-only probes in the
-#                     core (World::Update, Map::Update, packets to bot sessions, bot logins). Everything goes to the
-#                     logger server.playerbots.perf (Playerbots-Perf.log), never to Server.log.
-#                     ReportSeconds: seconds between two window reports (tick p50/p95/max, cost per bot class and
-#                     slot, opcodes sent to bots, per map cost).
-#                     SlowTickMs: a world tick above this gets a full attribution dump (slowest tick of the window,
-#                     with the TopBots most expensive players).
-#                     Opcodes: count the packets handed to bot sessions per opcode and bot class.
-#                     GridCensusSeconds: loaded grids per map and what holds them (human, simulated bot, frozen
-#                     bots only, nobody), 0 = off.
-#                     MemorySeconds: RSS and jemalloc stats line, 0 = off.
-#                     MemCensusSeconds: items, spells, auras, channels per bot class, 0 = off.
-#        Default:     60 / 150 / 10 / 1 / 60 / 30 / 300
+#        Description: Only used while Playerbots.PerfMon.Enable = 1. Seconds between two lines with the process memory
+#                     (RSS), the number of random bots and the loaded grids, written to the logger
+#                     server.playerbots.perf (Playerbots-Perf.log), never to Server.log. 0 = off.
+#        Default:     30
 
-Playerbots.PerfMon.ReportSeconds = 60
-Playerbots.PerfMon.SlowTickMs = 150
-Playerbots.PerfMon.TopBots = 10
-Playerbots.PerfMon.Opcodes = 1
-Playerbots.PerfMon.GridCensusSeconds = 60
 Playerbots.PerfMon.MemorySeconds = 30
-Playerbots.PerfMon.MemCensusSeconds = 300
 
 #
 #    Playerbots.LoginTimeout
@@ -507,10 +486,6 @@ Playerbots.Random.JoinChannels = 0
 Playerbots.Random.MaxRssMB = 0
 
 #
-#    Playerbots.PerfMon.LoginDetail
-#        Description: One perf-log line per login phase call of a bot (name, net heap, ms, grids created so far): lets a reader regress
-#                     per-bot memory against per-grid memory. Needs PerfMon.Enable. Default: 0
-#
 #    Playerbots.PerfMon.ChatDriver
 #        Description: "<messages per second> <say|yell|emote|channel|guild|mix>": start the synthetic chat driver by itself once 90% of the
 #                     bots are online (no console needed for benchmark runs). Empty = off. Default: (empty)
@@ -531,10 +506,9 @@ Playerbots.Random.MaxRssMB = 0
 #                     is invited into a group or joins a queue reacts up to this long later. 250 is a sensible value. Default: 0
 #
 #    Playerbots.FrozenTickMs
-#        Description: Frozen bots run their AI hook at most this often (0 = on every map tick, ~75 per second). A frozen bot that a player
+#        Description: Frozen bots run their AI at most this often (0 = on every map tick, ~75 per second). A frozen bot that a player
 #                     walks up to wakes up to this long later. 250 is a sensible value. Default: 0
 
-Playerbots.PerfMon.LoginDetail = 0
 Playerbots.PerfMon.ChatDriver =
 Playerbots.Warm.Maps =
 
@@ -558,37 +532,14 @@ Playerbots.SimVerdictCacheMs = 0
 Playerbots.FrozenTickMs = 0
 
 #
-#    Playerbots.SleepIdleActiveObjects
-#        Description: Core change, NOT limited to bots: it applies to any grid where no awake player is near. Elevators and doors are "active" game objects: every tick they update all creatures in the cells around them,
-#                     even when no player is anywhere near (the grid stays loaded because bots stand in it). With this on, such an object is only
-#                     visited when an awake player (a human or a simulated bot) already marked its cell this tick. Nothing a player can see changes;
-#                     an unobserved elevator and the creatures around it simply do not advance while nobody is there. Default: 0
-#
-#    Playerbots.LazyMMap
-#        Description: Core change. A navmesh tile costs ~30 MB and ~400 ms per grid and is only used by pathfinding. With this on, a grid created for a BOT
-#                     does not load its tile; PathGenerator loads the start and end tile of a path the first time something asks. A bot nobody is near
-#                     (frozen, or simulated only by the activity rotation) does not trigger a load at all (the pathfinder falls back to a straight line
-#                     there, unseen). A grid a HUMAN loads or moves into gets its tile immediately, as without this switch. The one remaining difference
-#                     for a human: creatures that path in a tile only bots had loaded pay the ~400 ms tile load at their first path. Default: 0
-#
-#    Playerbots.SkipBotVisibilityGridLoad
-#        Description: Core change. When a player relocates the core loads every grid within its visibility range (that is what the client would see).
-#                     In the rotation benchmark 98 of 100 grid creations after login came from there, ~35 MB each (navmesh tile + terrain + objects).
-#                     With this on a BOT does not trigger that; it only keeps its own grid. A human's relocation is unchanged. Default: 0
-
-Playerbots.SleepIdleActiveObjects = 0
-
-#
 #    Playerbots.SleepElevators
-#        Description: Module-only replacement for the core switch SleepIdleActiveObjects. Elevators (and the doors that go with them) are created "active":
+#        Description: Elevators (and the doors that go with them) are created "active":
 #                     every map tick the core updates every creature in the cells around them, even when no player is anywhere near. With this on the module
 #                     calls setActive(false) on elevator-type game objects (a sweep every 5 seconds on each continent's own map thread), so they and their
 #                     surroundings are only updated while a player or simulated bot is in range. Nothing a player can see changes; an unobserved elevator just
 #                     does not advance. This is a world change for everybody, not only for bots. Default: 0
 
 Playerbots.SleepElevators = 0
-Playerbots.LazyMMap = 0
-Playerbots.SkipBotVisibilityGridLoad = 0
 
 #
 #    Playerbots.FarBotHeightNoGridLoad

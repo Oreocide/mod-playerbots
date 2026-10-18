@@ -1,5 +1,4 @@
 #include "MoveToward.h"
-#include "BotPerf.h"
 #include "CollectionMgr.h"
 #include "DB2Stores.h"
 #include "GridDefines.h"
@@ -8,6 +7,8 @@
 #include "GameTime.h"
 #include "Map.h"
 #include "MotionMaster.h"
+#include "PlayerbotAI.h"
+#include "PlayerbotMgr.h"
 #include "MoveSpline.h"
 #include "MoveSplineInit.h"
 #include "PathGenerator.h"
@@ -44,13 +45,9 @@ bool TryGetStandZ(Player* bot, float x, float y, float hintZ, float& outZ, float
     bool loadGrid = true;
     if (sPlayerbotsConfig.FarBotHeightNoGridLoad)
     {
-        uint8 cls = bot->GetSession()->GetBotPerfClass();
-        if ((cls == BotPerf::CLS_BOT_FROZEN || cls == BotPerf::CLS_BOT_SIM_ROTATION) && !map->IsGridLoaded(x, y))
-        {
+        PlayerbotAI* ai = sPlayerbotMgr->GetAI(bot);
+        if (ai && ai->IsFarBot() && !map->IsGridLoaded(x, y))
             loadGrid = false;
-            if (BotPerf::On())
-                BotPerf::Add(BotPerf::GATE_HEIGHT_NO_LOAD, cls, 0, 1);
-        }
     }
     if (loadGrid)
         map->LoadGrid(x, y);

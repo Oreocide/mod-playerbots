@@ -463,7 +463,7 @@ public:
         return false;
     }
 
-    // .bot perf [show|reset|report|grids|mem|chat <start rate kind|stop|status>]
+    // .bot perf [show|reset|chat <start rate kind|stop|status>]
     static bool HandleBotPerfCommand(ChatHandler* handler, Optional<std::string> option, Optional<Tail> rest)
     {
         if (option && *option == "reset")
@@ -494,23 +494,6 @@ public:
             else if (verb == "stop")
                 sBotPerfReporter->StopChat();
             handler->SendSysMessage(sBotPerfReporter->ChatStatus().c_str());
-            return true;
-        }
-
-        if (option && (*option == "report" || *option == "grids" || *option == "mem"))
-        {
-            if (!sPlayerbotsConfig.PerfMonEnabled)
-            {
-                handler->SendSysMessage("Perf is off, set Playerbots.PerfMon.Enable = 1 and .reload config.");
-                return true;
-            }
-            if (*option == "report")
-                sBotPerfReporter->ForceReport();
-            else if (*option == "grids")
-                sBotPerfReporter->LogGridCensus();
-            else
-                sBotPerfReporter->LogMemCensus();
-            handler->SendSysMessage("Written to Playerbots-Perf.log.");
             return true;
         }
 

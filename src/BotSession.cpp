@@ -47,7 +47,13 @@ bool UpdateBotSession(WorldSession* session, uint32 diff)
     // With a player this pushes the idle timeout. Without one it does nothing, so the timeout stays at 0 (expired)
     // until InitializeSessionCallback sets a future one: that is how a finished initialisation shows
     session->ResetTimeOutTime(true);
-    return !session->IsConnectionIdle();
+    bool ready = !session->IsConnectionIdle();
+
+    // The map updates the sessions of its players too, from its own thread and between two calls of this function.
+    // Once the account data is there the session stays "queued", so the idle check can never reach the null socket
+    if (ready)
+        session->SetInQueue(true);
+    return ready;
 }
 
 bool StartBotLogin(WorldSession* session, ObjectGuid character)

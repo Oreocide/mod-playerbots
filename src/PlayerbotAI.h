@@ -49,6 +49,8 @@ char const* GetRoleName(BotRole role);
 /// HandleCommand() in the world thread (chat), they never overlap.
 class PlayerbotAI
 {
+    enum SimClass : uint8 { SimRotation = 2, SimNear = 3 };
+
 public:
     PlayerbotAI(Player* bot, ObjectGuid master, uint8 formationIndex);
     ~PlayerbotAI();
@@ -64,6 +66,8 @@ public:
     Player* GetMaster() const;
 
     void Update(uint32 diff);
+    /// Nobody is near the bot: frozen, or simulated only by the activity rotation. Written and read by the bot's own AI tick
+    bool IsFarBot() const { return _far; }
     /// Frozen bots only need a few ticks per second (Playerbots.FrozenTickMs, 0 = every map tick). Adds diff and says
     /// whether a tick is due; `elapsed` is the time since the last one
     bool FrozenTickDue(uint32 diff, uint32 frozenTickMs, uint32& elapsed)
@@ -182,7 +186,8 @@ private:
     bool _verdictSim = false;
     uint32 _verdictStamp = 0;
     uint32 _verdictJitter = 0;
-    uint8 _simClass = 2;       // BotPerf class while simulated alone: sim_rotation (2) or sim_near (3), for the perf log only
+    uint8 _simClass = SimRotation; // why the bot is simulated alone: the activity rotation or a human nearby
+    bool _far = false;         // nobody is near: frozen, or simulated only by the activity rotation
     uint32 _nextGoalMs = 0;    // far-bot goal check, so a frozen tick does not roll the table every time
 };
 }

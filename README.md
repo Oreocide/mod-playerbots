@@ -7,9 +7,9 @@ idea of ownerless "random bots" are carried over, but the code is a retail-nativ
 class AI does not apply to the current client, so rotations, talents, travel, quests, gear and professions are rebuilt on
 retail data (DB2, `phase_area`, taxi paths, ChrClasses, traits).
 
-> **Read the requirements first.** This module does **not** build on stock TrinityCore. It needs a core with the
-> modules framework and a small "bot kit" of core changes. Patches are not published yet, see
-> [Requirements](#requirements).
+> **Read the requirements first.** The module needs a TrinityCore with the module framework (`modules/`, not upstream)
+> and one small, generic "dormant player" hook. Everything else uses stock TrinityCore. Patches for those two are not
+> published yet, see [Requirements](#requirements).
 
 ## What it is
 
@@ -63,10 +63,9 @@ Filters: `@tank @healer @dps @melee @ranged @caster`, class names, `@group2`, `@
 | Scale controls: bots only fully simulate near a player; far bots use cheap virtual travel; tick staggering; scan throttles | live |
 | Optional persona, goal and memory tables (`Playerbots.Goal.*`, `Playerbots.Memory.*`) | built, off |
 
-Measured cost on the development box with the interim core scale switches on and nobody online: 750 bots used about a
-third of one core and 9-10 GiB of memory. Not measured with players online, and the switches belong to the BotPerf part of
-the core changes that is planned to go away. Memory is dominated by loaded grids and navmesh tiles, not by the bots
-themselves.
+Cost: bots nobody can see are made dormant and simulated abstractly, so memory is dominated by the map grids and navmesh
+tiles the bots stand in, not by the bots themselves. Earlier measurements (750 bots, about a third of one core and 9-10 GiB,
+nobody online) were taken with core scale switches that have since been removed; the numbers have to be measured again.
 
 ### Not done
 
@@ -77,27 +76,27 @@ dedicated playerbots database (a module cannot open a fifth connection pool, so 
 
 ## Requirements
 
-- A TrinityCore **fork based on master `34fd0ebd`** (12.1.5, client build 70391) with the changes below. The module
-  uses the standard `ScriptMgr.h` script classes for everything it can, but bot login and sessions cannot be done from
-  outside the core.
+- A TrinityCore **fork based on master `34fd0ebd`** (12.1.5, client build 70391) with the two core changes below.
+  Bot sessions, login, ticking, invites and the dungeon finder all run on stock public API; see
+  [docs/design/CORE_EXIT.md](docs/design/CORE_EXIT.md).
 - MySQL/MariaDB with the usual four TrinityCore databases (`auth`, `characters`, `world`, `hotfixes`).
 - A client-extracted `dbc` / `maps` / `vmaps` / **`mmaps`** set. Bots move on mmaps only, there is no fallback.
 - g++ with C++20 (same as the core) for the build; the engine unit tests need only g++.
 
-**Core changes the module depends on** (not upstream, patches are not published yet; extracting and verifying a clean
-patch set is open work):
+**Core changes the module depends on** (not upstream, patches are not published yet). Both are generic, any module can use them:
 
 Paths are relative to the TrinityCore root.
 
-| Part | Files | Why |
+| Part | Files | What it does |
 |---|---|---|
-| Modules framework | `modules/CMakeLists.txt`, `modules/ModulesLoader.cpp.in.cmake`, `modules/ModulesScriptLoader.h`, `src/server/CMakeLists.txt`, `src/server/worldserver/CMakeLists.txt`, `src/server/worldserver/Main.cpp`, `src/server/database/Updater/DBUpdater.*`, `src/server/database/Updater/UpdateFetcher.*` | builds `modules/*`, loads their scripts, applies `modules/*/data/sql/db-*` through the DB updater |
-| Bot kit | `src/server/game/Server/WorldSession.h/.cpp`, `src/server/game/Handlers/CharacterHandler.cpp` (`LoginBotPlayer`), `src/server/game/Entities/Player/Player.cpp`, `src/server/game/Maps/Map.cpp`, `src/server/game/Scripting/ScriptMgr.h/.cpp` | socketless bot sessions and login, `PlayerScript::OnUpdate`, "frozen" far bots that skip `Unit::Update` and grid visits |
-| BotPerf (interim) | `src/server/game/Server/BotPerf.h/.cpp` and probes in `World`, `MapManager`, `Map`, `GridNotifiers`, `Player`, `PathGenerator`, `WorldSession` | measurement and opt-in scale switches; several module files include `BotPerf.h`. Planned to be removed |
+| Module framework | `modules/CMakeLists.txt`, `modules/ModulesLoader.cpp.in.cmake`, `modules/ModulesScriptLoader.h`, `src/server/CMakeLists.txt`, `src/server/worldserver/CMakeLists.txt`, `src/server/worldserver/Main.cpp`, `src/server/database/Updater/DBUpdater.*`, `src/server/database/Updater/UpdateFetcher.*` | builds `modules/*`, loads their scripts, applies `modules/*/data/sql/db-*` through the DB updater |
+| Dormant players | `src/server/game/Server/WorldSession.h/.cpp` (`SetDormant`/`IsDormant`), `src/server/game/Entities/Player/Player.cpp`, `src/server/game/Maps/Map.cpp` (about 20 lines) | a script can mark a session dormant: its player stays in the world but skips `Unit::Update` and the map's cell visits. Nothing in the core sets it. The module uses it for bots nobody can see |
+
+Without the dormant hook the module still runs, but every bot costs a full `Player::Update` and keeps its grids active.
 
 ## Installation
 
-These steps assume the patched core above is already checked out and building.
+These steps assume the core with the two changes above is already checked out and building.
 
 1. **Clone the module into the core's `modules/` directory.**
 
@@ -183,6 +182,13 @@ What the first start creates:
 
 Start small. `Playerbots.BotActiveAlone = 0` (default) keeps bots that nobody can see frozen, which is what makes hundreds of
 bots affordable; raising it wakes grids across the world. See [docs/REFERENCE.md](docs/REFERENCE.md) for every scale option.
+
+### Log noise
+
+Bots have no client, so the core logs a line at ERROR level for every packet it would send them ("Prevented sending ... to
+non existent socket") and two lines for every bot login ("Account ... can't login with that character", the stock login
+handler is used without a character list). They are harmless. Mute them with `Logger.network.opcode` and `Logger.network` in
+`worldserver.conf` (this also hides those messages for real players).
 
 ## Configuration
 

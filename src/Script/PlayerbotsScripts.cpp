@@ -26,7 +26,6 @@
 #include "StringFormat.h"
 #include "Db/PlayerbotRepository.h"
 #include "Goal/GoalStore.h"
-#include "BotPerf.h"
 #include "Log.h"
 #include "Map.h"
 #include "MapManager.h"
@@ -56,13 +55,11 @@ public:
     {
         // OnConfigLoad(false) runs before scripts are registered
         sPlayerbotsConfig.Load();
-        sBotPerfReporter->ApplyConfig();
     }
 
     void OnConfigLoad(bool reload) override
     {
         sPlayerbotsConfig.Load();
-        sBotPerfReporter->ApplyConfig();
         if (reload && sPlayerbotsConfig.GoalEnable)
             GoalStore::Load();
     }
@@ -81,22 +78,10 @@ public:
         sPlayerbotMgr->TickOtherMapBots(diff);
         sRemoteControl->Update();
         sPlayerbotMgr->NoteWorldTick(diff);
-        {
-            BotPerf::Scope scope(BotPerf::M_RANDOM_MGR);
-            sRandomBotMgr->Update(diff);
-        }
-        {
-            BotPerf::Scope scope(BotPerf::M_BOTMGR_UPDATE);
-            sPlayerbotMgr->Update(diff);
-        }
-        {
-            BotPerf::Scope scope(BotPerf::M_ACTIVITY);
-            sActivityMgr->Update(diff);
-        }
-        {
-            BotPerf::Scope scope(BotPerf::M_SOCIAL);
-            sBotSocialMgr->Update(diff);
-        }
+        sRandomBotMgr->Update(diff);
+        sPlayerbotMgr->Update(diff);
+        sActivityMgr->Update(diff);
+        sBotSocialMgr->Update(diff);
         sBotPerfReporter->Update(diff);
     }
 
