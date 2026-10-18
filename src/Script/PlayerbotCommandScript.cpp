@@ -17,17 +17,25 @@
 
 #include "CharacterCache.h"
 #include "Chat.h"
+#include "GameTime.h"
 #include "ChatCommand.h"
 #include "ObjectAccessor.h"
 #include "ObjectMgr.h"
 #include "Player.h"
 #include "Engine/PerfMonitor.h"
+#include "GearFactory.h"
+#include "Db/PlayerbotRepository.h"
+#include "Goal/GoalStore.h"
 #include "Perf/BotPerfReporter.h"
 #include "PlayerbotAI.h"
 #include "PlayerbotMgr.h"
 #include "PlayerbotsConfig.h"
 #include "RBAC.h"
 #include "Rotation/RotationMgr.h"
+#include "Strategies/Rpg/NpcDispatch.h"
+#include "Strategies/Rpg/RpgInfo.h"
+#include "Travel/HubIndex.h"
+#include "Travel/MoveToward.h"
 #include "Travel/HotspotMgr.h"
 #include "Travel/TravelMgr.h"
 #include "ScriptMgr.h"
@@ -91,6 +99,10 @@ public:
             { "remove",  HandleBotRemoveCommand, RBAC_PERM_COMMAND_BOT, Console::No },
             { "list",    HandleBotListCommand,   RBAC_PERM_COMMAND_BOT, Console::No },
             { "perf",    HandleBotPerfCommand,   rbac::RBAC_PERM_COMMAND_DEBUG, Console::Yes },
+            { "rpg",     HandleBotRpgCommand,    rbac::RBAC_PERM_COMMAND_DEBUG, Console::Yes },
+            { "autogear", HandleBotAutogearCommand, rbac::RBAC_PERM_COMMAND_DEBUG, Console::No },
+            { "goal",    HandleBotGoalCommand,   rbac::RBAC_PERM_COMMAND_DEBUG, Console::Yes },
+            { "inspect", HandleBotInspectCommand, rbac::RBAC_PERM_COMMAND_DEBUG, Console::Yes },
             { "hotspot", hotspotCommandTable },
             { "travel",  travelCommandTable },
             { "rotation", rotationCommandTable },
@@ -102,6 +114,158 @@ public:
         };
 
         return commandTable;
+    }
+
+    // .bot goal reload
+    static bool HandleBotGoalCommand(ChatHandler* handler, std::string what)
+    {
+        if (what != "reload")
+        {
+            handler->SendSysMessage("Usage: .bot goal reload");
+            return false;
+        }
+
+        uint32 rows = GoalStore::Load();
+        handler->PSendSysMessage("Playerbots: goal table reloaded, %u rows.", rows);
+        return true;
+    }
+
+    // .bot inspect <name>
+    static bool HandleBotInspectCommand(ChatHandler* handler, std::string name)
+    {
+        Player* bot = ObjectAccessor::FindPlayerByName(name);
+        PlayerbotAI* ai = bot ? sPlayerbotMgr->GetAI(bot) : nullptr;
+        if (!bot || !ai)
+        {
+            handler->PSendSysMessage("No online bot named %s.", name.c_str());
+            return false;
+        }
+
+        GoalStore::Inspect info = GoalStore::Describe(bot->GetGUID());
+        if (!info.Known)
+        {
+            handler->PSendSysMessage("%s has no goal yet.", bot->GetName().c_str());
+            return true;
+        }
+
+        if (info.Goal.empty())
+            handler->PSendSysMessage("%s is %s, with no goal yet.", bot->GetName().c_str(), info.Persona.c_str());
+        else
+            handler->PSendSysMessage("%s is %s. Goal: %s (%s)%s.", bot->GetName().c_str(), info.Persona.c_str(), info.Goal.c_str(), info.Kind.c_str(), info.Far ? ", stored" : "");
+
+        for (PlayerbotRepository::MemoryLine const& line : sPlayerbotRepository->RecentMemory(bot->GetGUID(), 8))
+            handler->PSendSysMessage("  %s: %s %s", line.Kind.c_str(), line.Key.c_str(), line.Payload.c_str());
+        return true;
+    }
+
+    // .bot autogear <name> [white|green|blue|purple|<ilvl>|match|reset]
+    static bool HandleBotAutogearCommand(ChatHandler* handler, std::string name, Optional<std::string> arg)
+    {
+        Player* bot = ObjectAccessor::FindPlayerByName(name);
+        PlayerbotAI* ai = bot ? sPlayerbotMgr->GetAI(bot) : nullptr;
+        if (!bot || !ai)
+        {
+            handler->PSendSysMessage("%s is not a bot that is online.", name.c_str());
+            handler->SetSentErrorMessage(true);
+            return false;
+        }
+
+        GearFactory::GearOptions options;
+        switch (sGearFactory->ParseGearArg(arg.value_or(""), options))
+        {
+            case GearFactory::GearArgKind::Bad:
+                handler->SendSysMessage("Usage: .bot autogear <name> [white|green|blue|purple|<ilvl>|match|reset]");
+                handler->SetSentErrorMessage(true);
+                return false;
+            case GearFactory::GearArgKind::Match:
+                if (Player* who = handler->GetPlayer())
+                    options.ItemLevelCap = uint32(who->GetAverageItemLevel());
+                else
+                {
+                    handler->SendSysMessage("match needs the commanding player to be in game.");
+                    handler->SetSentErrorMessage(true);
+                    return false;
+                }
+                break;
+            default:
+                break;
+        }
+
+        uint32 changed = sGearFactory->Equip(bot, options);
+        handler->PSendSysMessage("%s: %u slots changed, average item level %.0f.", name.c_str(), changed, bot->GetAverageItemLevel());
+        return true;
+    }
+
+    // .bot rpg <random bot> <status|service|trainer>: test harness, makes the bot do that next (it still only runs while a player
+    // is near or Playerbots.BotActiveAlone lets it run). Status: idle, rest, wander, npc, flight, quest, grind, camp,
+    // gather. Service (walk to the nearest one and use it): innkeeper, vendor, repair, auctioneer, banker, mailbox, flightmaster.
+    static bool HandleBotRpgCommand(ChatHandler* handler, std::string name, std::string what)
+    {
+        Player* bot = ObjectAccessor::FindPlayerByName(name);
+        PlayerbotAI* ai = bot ? sPlayerbotMgr->GetAI(bot) : nullptr;
+        if (!bot || !ai)
+        {
+            handler->PSendSysMessage("%s is not a bot that is online.", name.c_str());
+            handler->SetSentErrorMessage(true);
+            return false;
+        }
+
+        if (ai->GetMaster())
+        {
+            handler->PSendSysMessage("%s follows a master and does not run the rpg behavior.", name.c_str());
+            handler->SetSentErrorMessage(true);
+            return false;
+        }
+
+        struct Entry { char const* Name; RpgStatus Status; int8 Kind; };
+        static constexpr Entry Entries[] =
+        {
+            { "idle", RpgStatus::Idle, -1 }, { "rest", RpgStatus::Rest, -1 }, { "wander", RpgStatus::WanderRandom, -1 },
+            { "npc", RpgStatus::WanderNpc, -1 }, { "flight", RpgStatus::TravelFlight, -1 }, { "quest", RpgStatus::DoQuest, -1 },
+            { "grind", RpgStatus::GoGrind, -1 }, { "camp", RpgStatus::GoCamp, -1 }, { "gather", RpgStatus::Gather, -1 },
+            { "innkeeper", RpgStatus::WanderNpc, int8(HubKind::Innkeeper) }, { "vendor", RpgStatus::WanderNpc, int8(HubKind::Vendor) },
+            { "repair", RpgStatus::WanderNpc, int8(HubKind::Repair) }, { "auctioneer", RpgStatus::WanderNpc, int8(HubKind::Auctioneer) },
+            { "banker", RpgStatus::WanderNpc, int8(HubKind::Banker) }, { "mailbox", RpgStatus::WanderNpc, int8(HubKind::Mailbox) },
+            { "flightmaster", RpgStatus::WanderNpc, int8(HubKind::FlightMaster) },
+        };
+
+        std::ranges::transform(what, what.begin(), [](unsigned char c) { return char(std::tolower(c)); });
+
+        // a trainer has no hub kind: walk to the nearest one within 80 yards and use it
+        if (what == "trainer")
+        {
+            ObjectGuid trainer = FindNearestNpcWithFlag(bot, UNIT_NPC_FLAG_TRAINER, 80.0f);
+            if (trainer.IsEmpty())
+            {
+                handler->PSendSysMessage("%s: no trainer within 80 yards.", bot->GetName().c_str());
+                handler->SetSentErrorMessage(true);
+                return false;
+            }
+
+            RpgInfo& rpg = ai->GetRpg();
+            rpg.Begin(RpgStatus::WanderNpc, GameTime::GetGameTimeMS());
+            rpg.Target = trainer;
+            rpg.ForcedUntil = GameTime::GetGameTimeMS() + 10 * 60 * 1000;
+            handler->PSendSysMessage("%s: next rpg behavior is a visit to the trainer %s.", bot->GetName().c_str(), trainer.ToString().c_str());
+            return true;
+        }
+
+        for (Entry const& entry : Entries)
+        {
+            if (what != entry.Name)
+                continue;
+
+            RpgInfo& rpg = ai->GetRpg();
+            rpg.Begin(entry.Status, GameTime::GetGameTimeMS());
+            rpg.ForceKind = entry.Kind;
+            rpg.ForcedUntil = GameTime::GetGameTimeMS() + 10 * 60 * 1000;   // quests stay out of the way for 10 minutes
+            handler->PSendSysMessage("%s: next rpg behavior is '%s'.", bot->GetName().c_str(), entry.Name);
+            return true;
+        }
+
+        handler->SendSysMessage("Unknown behavior. Use: idle, rest, wander, npc, flight, quest, grind, camp, gather, innkeeper, vendor, repair, auctioneer, banker, mailbox, flightmaster, trainer.");
+        handler->SetSentErrorMessage(true);
+        return false;
     }
 
     // .bot add <character>
@@ -208,6 +372,9 @@ public:
     // .bot travel info
     static bool HandleTravelInfoCommand(ChatHandler* handler)
     {
+        MeshMoveStats mesh = GetMeshMoveStats();
+        handler->PSendSysMessage("Mesh mover: %u paths launched, %u targets with no mesh path since start.", mesh.Launched, mesh.NoPath);
+
         if (!sTravelMgr->IsBuilt())
         {
             handler->SendSysMessage("The travel graph is not built (Playerbots.Travel.Enable, random bots enabled).");

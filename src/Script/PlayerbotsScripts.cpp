@@ -16,11 +16,13 @@
  */
 
 #include "ActivityMgr.h"
+#include "Strategies/Rpg/Ambient.h"
 #include "Chat.h"
 #include "Group.h"
 #include "Player.h"
 #include "Cmd/ChatCommands.h"
 #include "Db/PlayerbotRepository.h"
+#include "Goal/GoalStore.h"
 #include "BotPerf.h"
 #include "Log.h"
 #include "Map.h"
@@ -34,8 +36,10 @@
 #include "Rotation/RotationMgr.h"
 #include "Social/BotSocialMgr.h"
 #include "Travel/HotspotMgr.h"
+#include "World/WorldActionQueue.h"
 #include "ScriptMgr.h"
 #include "Timer.h"
+#include "GameTime.h"
 #include "Util.h"
 #include "WorldSession.h"
 #include <sstream>
@@ -52,14 +56,25 @@ public:
         sBotPerfReporter->ApplyConfig();
     }
 
-    void OnConfigLoad(bool /*reload*/) override
+    void OnConfigLoad(bool reload) override
     {
         sPlayerbotsConfig.Load();
         sBotPerfReporter->ApplyConfig();
+        if (reload && sPlayerbotsConfig.GoalEnable)
+            GoalStore::Load();
     }
 
     void OnUpdate(uint32 diff) override
     {
+        static bool goalsLoaded = false;
+        if (!goalsLoaded)
+        {
+            goalsLoaded = true;
+            if (sPlayerbotsConfig.GoalEnable)
+                GoalStore::Load();
+        }
+
+        sWorldActionQueue->Drain();
         sRemoteControl->Update();
         sPlayerbotMgr->NoteWorldTick(diff);
         {
@@ -129,6 +144,11 @@ public:
         if (sPlayerbotsConfig.RandomMaxGrids)
             handler.PSendSysMessage("|cff00ff00Playerbots:|r the bots share at most %u map grids (%s).",
                 uint32(sPlayerbotsConfig.RandomMaxGrids), sPlayerbotsConfig.RandomMaps.empty() ? "all maps" : ("maps " + sPlayerbotsConfig.RandomMaps).c_str());
+    }
+
+    void OnTextEmote(Player* player, uint32 textEmote, uint32 /*emoteNum*/, ObjectGuid /*guid*/) override
+    {
+        Ambient::ReturnTextEmote(player, textEmote, GameTime::GetGameTimeMS());
     }
 
     void OnLogout(Player* player) override

@@ -74,6 +74,7 @@ bool PlayerbotRepository::Expired(BotEvent const& event, time_t now)
 
 void PlayerbotRepository::Load()
 {
+    std::scoped_lock lock(_lock);
     _store.clear();
     _events.clear();
     _names.assign(NameGroupCount * 2, {});
@@ -105,6 +106,19 @@ void PlayerbotRepository::Load()
             event.Data = fields[6].IsNull() ? std::string() : fields[6].GetString();
             uint64 key = (uint64(fields[0].GetUInt32()) << 32) | fields[1].GetUInt32();
             _events[{ key, fields[4].GetString() }] = std::move(event);
+        } while (result->NextRow());
+    }
+
+    if (QueryResult result = CharacterDatabase.Query("SELECT guid, kind, slot, `key`, payload, `at` FROM playerbots_memory ORDER BY guid, kind, slot"))
+    {
+        do
+        {
+            Field* fields = result->Fetch();
+            MemorySlot slot;
+            slot.Key = fields[3].GetString();
+            slot.Payload = fields[4].GetString();
+            slot.At = time_t(fields[5].GetUInt32());
+            _memory[fields[0].GetUInt32()][fields[1].GetString()].push_back(std::move(slot));
         } while (result->NextRow());
     }
 
@@ -144,6 +158,7 @@ void PlayerbotRepository::Load()
 
 Optional<std::string> PlayerbotRepository::GetValue(ObjectGuid bot, std::string const& key) const
 {
+    std::scoped_lock lock(_lock);
     auto bots = _store.find(Low(bot));
     if (bots == _store.end())
         return {};
@@ -160,6 +175,7 @@ void PlayerbotRepository::SetValue(ObjectGuid bot, std::string const& key, std::
     if (!_loaded)
         return;
 
+    std::scoped_lock lock(_lock);   // held while queueing the write, so two threads' writes reach the DB in memory order
     _store[Low(bot)][key] = value;
 
     auto trans = CharacterDatabase.BeginTransaction();
@@ -173,6 +189,7 @@ void PlayerbotRepository::EraseValue(ObjectGuid bot, std::string const& key)
     if (!_loaded)
         return;
 
+    std::scoped_lock lock(_lock);
     auto bots = _store.find(Low(bot));
     if (bots == _store.end() || !bots->second.erase(key))
         return;
@@ -182,6 +199,7 @@ void PlayerbotRepository::EraseValue(ObjectGuid bot, std::string const& key)
 
 Optional<BotEvent> PlayerbotRepository::GetEvent(uint32 owner, ObjectGuid bot, std::string const& event) const
 {
+    std::scoped_lock lock(_lock);
     auto itr = _events.find({ (uint64(owner) << 32) | Low(bot), event });
     if (itr == _events.end() || Expired(itr->second, time(nullptr)))
         return {};
@@ -199,6 +217,8 @@ void PlayerbotRepository::SetEvent(uint32 owner, ObjectGuid bot, std::string con
     entry.Data = data;
     entry.Time = time(nullptr);
     entry.ValidIn = validIn;
+
+    std::scoped_lock lock(_lock);
     _events[{ (uint64(owner) << 32) | Low(bot), event }] = entry;
 
     auto trans = CharacterDatabase.BeginTransaction();
@@ -206,6 +226,59 @@ void PlayerbotRepository::SetEvent(uint32 owner, ObjectGuid bot, std::string con
     trans->PAppend("INSERT INTO playerbots_random_bots (owner, bot, `time`, validIn, event, `value`, `data`) VALUES ({}, {}, {}, {}, '{}', {}, '{}')",
         owner, Low(bot), uint32(entry.Time), validIn, Escaped(event), value, Escaped(data));
     CharacterDatabase.CommitTransaction(trans);
+}
+
+void PlayerbotRepository::Remember(ObjectGuid bot, std::string const& kind, std::string const& key, std::string const& payload)
+{
+    if (!sPlayerbotsConfig.MemoryEnable || kind.empty())
+        return;
+
+    uint32 cap = kind == "person" ? 32u : 16u;
+    uint32 low = Low(bot);
+    std::deque<MemorySlot> saved;
+    {
+        std::scoped_lock lock(_lock);
+        std::deque<MemorySlot>& ring = _memory[low][kind];
+        ring.push_front({ key.substr(0, 64), payload.substr(0, 255), time(nullptr) });
+        while (ring.size() > cap)
+            ring.pop_back();
+        saved = ring;
+    }
+
+    auto trans = CharacterDatabase.BeginTransaction();
+    trans->PAppend("DELETE FROM playerbots_memory WHERE guid = {} AND kind = '{}'", low, Escaped(kind));
+    for (uint32 slot = 0; slot < saved.size(); ++slot)
+        trans->PAppend("INSERT INTO playerbots_memory (guid, kind, slot, `key`, payload, `at`) VALUES ({}, '{}', {}, '{}', '{}', {})",
+            low, Escaped(kind), slot, Escaped(saved[slot].Key), Escaped(saved[slot].Payload), uint32(saved[slot].At));
+    CharacterDatabase.CommitTransaction(trans);
+}
+
+void PlayerbotRepository::ForgetMemory(ObjectGuid bot)
+{
+    uint32 low = Low(bot);
+    {
+        std::scoped_lock lock(_lock);
+        _memory.erase(low);
+    }
+    CharacterDatabase.PExecute("DELETE FROM playerbots_memory WHERE guid = {}", low);
+}
+
+std::vector<PlayerbotRepository::MemoryLine> PlayerbotRepository::RecentMemory(ObjectGuid bot, uint32 limit) const
+{
+    std::vector<MemoryLine> lines;
+    std::scoped_lock lock(_lock);
+    auto botRows = _memory.find(Low(bot));
+    if (botRows == _memory.end())
+        return lines;
+
+    for (auto const& [kind, ring] : botRows->second)
+        for (MemorySlot const& slot : ring)
+            lines.push_back({ kind, slot.Key, slot.Payload, slot.At });
+
+    std::ranges::sort(lines, [](MemoryLine const& a, MemoryLine const& b) { return a.At > b.At; });
+    if (lines.size() > limit)
+        lines.resize(limit);
+    return lines;
 }
 
 void PlayerbotRepository::MarkRandomAccount(uint32 accountId)

@@ -107,6 +107,7 @@ struct Config
     bool BotActiveAloneGuild = true;
     uint32 BotActiveAloneDurationSeconds = 30;   // the roster of lonely active bots changes this often
     uint32 BotActiveAloneForceGraceSeconds = 10; // a bot a player left stays awake this long (no flicker)
+    uint32 DebugForceActive = 0;                 // test knob: about this many random bots run as if a player were near (0 = off)
     uint32 BotActiveAloneZoneMaxActive = 0;      // 0 = every bot of the zone with a player wakes, else at most this many
     uint32 BotActiveAloneRadiusMaxActive = 0;    // same for the radius, the nearest ones first
     bool BotActiveAloneSmartScale = true;
@@ -138,16 +139,52 @@ struct Config
     std::string RotationPath;                  // directory of the *.rot files, empty = modules/mod-playerbots/data/rotations of the source directory
 
     bool RpgEnable = true;
-    uint32 RpgWeight[9] = { 0, 60, 20, 15, 15, 10, 5, 15, 12 };
-    uint32 RpgDurationMs[9] = { 0, 1800000, 300000, 180000, 300000, 180000, 30000, 300000, 600000 };
+    uint32 RpgWeight[10] = { 0, 60, 20, 15, 15, 10, 5, 15, 12, 8 };
+    uint32 RpgDurationMs[10] = { 0, 1800000, 120000, 180000, 300000, 120000, 30000, 300000, 600000, 45000 };
     uint32 RpgGatherDistance = 120;            // yards a gatherer walks to a herb or ore node to work at it
     uint32 RpgNpcStayTime = 8000;
     uint32 RpgPoiStayTime = 300000;
     uint32 RpgStuckTime = 90000;
+    bool RpgSellJunk = true;                  // a bot at a vendor sells the grey items it carries (the client's "sell all junk")
+    bool RpgTrain = true;                     // a bot at a trainer learns what it can use and afford (profession recipes)
+    uint32 RpgTrainMaxPerVisit = 8;
+    bool RpgMailbox = true;                   // a bot at a mailbox takes money and items (world thread)
+    bool RpgBuyFood = true;                   // a bot at a vendor buys food and drink when its stack is low
+    bool AhPost = true;                       // a bot at an auctioneer posts grey and white items (world thread)
+    uint32 AhMaxPostsPerVisit = 3;
+    uint32 AhVisitCooldownMs = 1800000;       // 30 min between auction visits
+    bool SpawnEvict = true;                   // login re-placement and the once-a-minute move of bots off enemy ground
+    bool GearClassArmorOnly = true;           // armor slots take only the class's armor type; a wrong type triggers one re-gear
+    bool MountsRacialGrant = true;            // riding skill by level and a racial mount in the collection
+    float RpgHopChance = 0.03f;               // per second while walking on foot
+    uint32 RpgHopMinIntervalMs = 12000;       // between two hops of one bot
+    float RpgIdleHopChance = 0.04f;           // per resting roll
+    bool RpgGreetEmotes = true;               // wave/hello/bow at a player standing close
+    float RpgGreetDistance = 12.0f;
+    uint32 RpgGreetCooldownMs = 300000;       // per bot
+    float RpgGreetChance = 0.4f;              // when the cooldown is over and a player is close
     uint32 RpgRepairDurabilityPct = 80;
     uint32 RpgSellBagSpacePct = 80;
-    uint32 RpgCapitalBoost = 20;
+    uint32 RpgCapitalBoost = 15;
     uint32 RpgMountMinLevel = 20;
+    bool GoalEnable = false;                  // playerbots_goal picks the activity; off keeps today's status weights
+    bool MemoryEnable = false;                // rings of place, goal, and person, shown by .bot inspect
+    bool QuestCollect = false;                // kill quests may also include an item a creature drops
+    bool QuestInteract = false;               // gameobject use, talk-to, and chest loot
+    bool QuestExplore = false;                // walk into an area trigger
+    bool QuestAbstractXp = false;             // a far quest goal grants XP and does not complete the log quest
+    bool BgObjectives = false;                // Warsong and Arathi bots play the flag and the nodes
+    bool WorldReactions = false;              // a hostile player, a rare, or a duel in a city
+    bool ReactReturnEmotes = true;            // a nearby bot answers a player's wave, hello, bow and the like
+    bool ReactChairs = true;                  // a resting bot sits on a chair within 15 yards
+
+    // where far bots land, by level band: 1-19, 20-39, 40-59, 60-69, 70-79, 80-84, 85-89, 90
+    uint32 PopulationWeight[8] = { 10, 10, 10, 10, 10, 10, 10, 12 };
+    uint32 PopulationTeleportMin = 3600;      // seconds between far-bot zone moves
+    uint32 PopulationTeleportMax = 18000;
+    uint32 PopulationLevelUpChance = 8;       // percent, on that move, of gaining one level
+    uint32 PopulationReviveMin = 60;          // seconds a far corpse waits
+    uint32 PopulationReviveMax = 300;
 
     // remote control port (off unless a port is set)
     uint16 RemotePort = 0;

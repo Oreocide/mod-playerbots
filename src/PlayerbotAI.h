@@ -119,7 +119,7 @@ private:
     /// Hash of the guid and the current rotation window, 0..max-1: the same bot gets another slot every window
     uint32 RotatingSlot(uint32 max) const;
     void CompleteTeleportIfNeeded();
-    bool SnapToGround(bool notify);
+    bool SnapToGround(bool notify, float lift = 0.25f);
     Unit* FindNearbyEnemy() const;
     void MaintainGear(uint32 diff);
     void MaintainTalents();
@@ -171,6 +171,7 @@ private:
     uint32 _verdictStamp = 0;
     uint32 _verdictJitter = 0;
     uint8 _simClass = 2;       // BotPerf class while simulated alone: sim_rotation (2) or sim_near (3), for the perf log only
+    uint32 _nextGoalMs = 0;    // far-bot goal check, so a frozen tick does not roll the table every time
 };
 }
 

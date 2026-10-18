@@ -114,10 +114,25 @@ bool BotSpellBook::IsJunk(SpellInfo const* spellInfo)
     return false;
 }
 
+void BotSpellBook::StripStartingAuras(Player* bot)
+{
+    if (!bot)
+        return;
+
+    // Character-create auras meant for the starting room. Random bots keep them after GiveLevel + teleport.
+    // 80653 Gnome Irradiated (New Tinkertown), 73523 Undead Rigor Mortis (Deathknell), 155882 GiveLevel spam
+    static constexpr uint32 StartingAuras[] = { 80653, 73523, 155882 };
+    for (uint32 spellId : StartingAuras)
+        if (bot->HasAura(spellId))
+            bot->RemoveAurasDueToSpell(spellId);
+}
+
 void BotSpellBook::StripJunk(Player* bot)
 {
     if (!bot)
         return;
+
+    StripStartingAuras(bot);
 
     std::vector<uint32> junk;
     for (auto const& [spellId, playerSpell] : bot->GetSpellMap())

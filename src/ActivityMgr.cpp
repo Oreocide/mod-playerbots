@@ -101,6 +101,34 @@ bool QueueHasHuman(BattlegroundQueue& queue)
     return false;
 }
 
+uint32 InviteInstance(Player* bot, BattlegroundQueueTypeId queueId)
+{
+    BattlegroundQueue& queue = sBattlegroundMgr->GetBattlegroundQueue(queueId);
+    auto itr = queue.m_QueuedPlayers.find(bot->GetGUID());
+    if (itr == queue.m_QueuedPlayers.end() || !itr->second.GroupInfo)
+        return 0;
+    return itr->second.GroupInfo->IsInvitedToBGInstanceGUID;
+}
+
+// A real player is inside this battleground, or still on the accept dialog for it.
+bool HumanPresent(uint32 instanceId)
+{
+    if (!instanceId)
+        return false;
+
+    if (Battleground* bg = sBattlegroundMgr->GetBattleground(instanceId, BATTLEGROUND_TYPE_NONE))
+        for (auto const& entry : bg->GetPlayers())
+            if (IsHuman(ObjectAccessor::FindConnectedPlayer(entry.first)))
+                return true;
+
+    std::shared_lock lock(*HashMapHolder<Player>::GetLock());
+    for (auto const& [guid, player] : ObjectAccessor::GetPlayers())
+        if (player->IsInWorld() && IsHuman(player) && player->IsInvitedForBattlegroundInstance(instanceId))
+            return true;
+
+    return false;
+}
+
 // Players waiting in the queue that have not been invited yet, per team
 void CountQueued(BattlegroundQueue& queue, BattlegroundBracketId bracket, uint32& alliance, uint32& horde, uint32& groups)
 {
@@ -297,7 +325,14 @@ void ActivityMgr::ServeBots(std::vector<BotRef> const& bots)
             }
         }
 
-        // ---- battlegrounds and arenas
+        // ---- battlegrounds and arenas. A match with no real player is not played.
+        if (bot->InBattleground() && !HumanPresent(bot->GetBattlegroundId()))
+        {
+            TC_LOG_DEBUG("server.playerbots", "Playerbots: {} leaves the battleground, no player is in it", bot->GetName());
+            bot->LeaveBattleground(true, true);
+            continue;
+        }
+
         bool queued = false;
         for (uint32 slot = 0; slot < PLAYER_MAX_BATTLEGROUND_QUEUES; ++slot)
         {
@@ -308,7 +343,10 @@ void ActivityMgr::ServeBots(std::vector<BotRef> const& bots)
             queued = true;
             if (bot->IsInWorld() && bot->IsInvitedForBattlegroundQueueType(queueId))
             {
-                AnswerBattlefieldPort(bot, slot, true);
+                bool accept = HumanPresent(InviteInstance(bot, queueId));
+                AnswerBattlefieldPort(bot, slot, accept);
+                if (!accept)
+                    TC_LOG_DEBUG("server.playerbots", "Playerbots: {} declined a battleground with no player in it", bot->GetName());
                 _queueSince.erase(guid);
                 break;
             }
@@ -488,13 +526,13 @@ void ActivityMgr::FillBattlegrounds(std::vector<Player*> const& humans, std::vec
             uint32 groups = 0;
             CountQueued(queue, bracket->GetBracketId(), counts[TEAM_ALLIANCE], counts[TEAM_HORDE], groups);
 
-            uint32 minPerTeam = std::max<uint32>(bgTemplate->GetMinPlayersPerTeam(), 1);
+            uint32 cap = std::max<uint32>(bgTemplate->GetMaxPlayersPerTeam(), 1);
             uint32 added = 0;
             for (TeamId team : { TEAM_ALLIANCE, TEAM_HORDE })
             {
                 for (BotRef const& ref : bots)
                 {
-                    if (counts[team] >= minPerTeam || added >= MaxBgBotsPerScan)
+                    if (counts[team] >= cap || added >= MaxBgBotsPerScan)
                         break;
 
                     Player* bot = ref.Bot;

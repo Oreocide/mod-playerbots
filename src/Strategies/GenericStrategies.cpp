@@ -21,6 +21,7 @@
 #include "Engine/AiRegistry.h"
 #include "CellImpl.h"
 #include "Creature.h"
+#include "DB2Stores.h"
 #include "GridDefines.h"
 #include "GameTime.h"
 #include "GridNotifiersImpl.h"
@@ -31,6 +32,9 @@
 #include "LootPackets.h"
 #include "Map.h"
 #include "MotionMaster.h"
+#include "Battleground.h"
+#include "GameObject.h"
+#include "World/WorldActionQueue.h"
 #include "ObjectAccessor.h"
 #include "Player.h"
 #include "PlayerbotAI.h"
@@ -46,6 +50,7 @@
 #include <algorithm>
 #include <cmath>
 #include <mutex>
+#include <unordered_map>
 #include <unordered_set>
 
 namespace Playerbots
@@ -62,6 +67,7 @@ namespace Priority
     constexpr float Travel = 55.0f;
     constexpr float Buff = 48.0f;
     constexpr float Pvp = 30.0f;
+    constexpr float World = 40.0f;
     constexpr float Loot = 50.0f;
     constexpr float Idle = 10.0f;
 }
@@ -369,6 +375,29 @@ public:
             return true;
         }
 
+        if (bot->InBattleground() && !bot->HasPlayerFlag(PLAYER_FLAGS_GHOST))
+        {
+            static std::mutex repopLock;
+            static std::unordered_map<ObjectGuid, uint32> repopAt;
+            uint32 now = GameTime::GetGameTimeMS();
+            {
+                std::lock_guard lock(repopLock);
+                if (repopAt[bot->GetGUID()] > now)
+                    return true;
+                repopAt[bot->GetGUID()] = now + 10000;
+            }
+
+            sWorldActionQueue->Enqueue(bot->GetGUID(), bot->GetMapId(), ObjectGuid::Empty, [](Player* player)
+            {
+                if (player->IsAlive() || player->HasPlayerFlag(PLAYER_FLAGS_GHOST) || !player->InBattleground())
+                    return;
+                player->RemovePet(nullptr, PET_SAVE_NOT_IN_SLOT, true);
+                player->BuildPlayerRepop();
+                player->RepopAtGraveyard();
+            });
+            return true;
+        }
+
         Player* master = ai.GetMaster();
         if (sPlayerbotsConfig.AutoResurrect && (!master || (master->IsAlive() && !master->IsInCombat())))
         {
@@ -431,6 +460,13 @@ public:
         bool ranged = role == BotRole::RangedDps || role == BotRole::Healer;
 
         ai.Chase(target, ranged);
+
+        RotationRunner& rotation = ai.GetRotation();
+        bool useRotation = sPlayerbotsConfig.RotationEnable && rotation.HasList(ai, "combat");
+        // OOC combat-list entries (rogue Stealth) before Attack(), which flags combat and would make Stealth fail
+        if (useRotation && !bot->IsInCombat())
+            rotation.Run(ai, "combat", target, false);
+
         if (bot->GetVictim() != target)
             bot->Attack(target, !ranged);
 
@@ -440,8 +476,7 @@ public:
 
         if (role != BotRole::Healer || bot->GetPowerPct(POWER_MANA) > HealerDamageMinMana)
         {
-            RotationRunner& rotation = ai.GetRotation();
-            if (sPlayerbotsConfig.RotationEnable && rotation.HasList(ai, "combat"))
+            if (useRotation)
             {
                 // an interrupt or a defensive first, then the rotation of the specialization
                 if (!rotation.Run(ai, "interrupt", target, true) && !rotation.Run(ai, "defensive", target, true))
@@ -472,29 +507,37 @@ public:
             looted.clear();
         looted.insert(corpse->GetGUID()); // whatever happens below, do not retry (e.g. full bags)
 
-        WorldSession* session = bot->GetSession();
         ObjectGuid guid = corpse->GetGUID();
 
-        WorldPackets::Loot::LootUnit lootUnit{ WorldPacket(CMSG_LOOT_UNIT) };
-        lootUnit.Unit = guid;
-        session->HandleLootOpcode(lootUnit);
-
-        if (Loot* loot = corpse->GetLootForPlayer(bot))
+        // loot opcodes are world-thread only
+        sWorldActionQueue->Enqueue(bot->GetGUID(), bot->GetMapId(), guid, [guid](Player* player)
         {
-            if (loot->gold)
+            Creature* body = ObjectAccessor::GetCreature(*player, guid);
+            if (!body)
+                return;
+
+            WorldSession* session = player->GetSession();
+            WorldPackets::Loot::LootUnit lootUnit{ WorldPacket(CMSG_LOOT_UNIT) };
+            lootUnit.Unit = guid;
+            session->HandleLootOpcode(lootUnit);
+
+            if (Loot* loot = body->GetLootForPlayer(player))
             {
-                WorldPackets::Loot::LootMoney lootMoney{ WorldPacket(CMSG_LOOT_MONEY) };
-                session->HandleLootMoneyOpcode(lootMoney);
+                if (loot->gold)
+                {
+                    WorldPackets::Loot::LootMoney lootMoney{ WorldPacket(CMSG_LOOT_MONEY) };
+                    session->HandleLootMoneyOpcode(lootMoney);
+                }
+
+                for (uint32 slot = 0; slot < loot->items.size() && slot < 255; ++slot)
+                    if (!loot->items[slot].is_looted)
+                        player->StoreLootItem(guid, uint8(slot), loot);
             }
 
-            for (uint32 slot = 0; slot < loot->items.size() && slot < 255; ++slot)
-                if (!loot->items[slot].is_looted)
-                    bot->StoreLootItem(guid, uint8(slot), loot);
-        }
-
-        WorldPackets::Loot::LootRelease release{ WorldPacket(CMSG_LOOT_RELEASE) };
-        release.Unit = guid;
-        session->HandleLootReleaseOpcode(release);
+            WorldPackets::Loot::LootRelease release{ WorldPacket(CMSG_LOOT_RELEASE) };
+            release.Unit = guid;
+            session->HandleLootReleaseOpcode(release);
+        });
         return true;
     }
 };
@@ -561,11 +604,241 @@ public:
         float radius = std::max(5.0f, sPlayerbotsConfig.RandomWanderRadius);
         Position dest = bot->GetPosition();
         bot->MovePositionToFirstCollision(dest, frand(radius * 0.25f, radius), frand(-float(M_PI), float(M_PI)));
-        dest.m_positionZ = GetStandZ(bot, dest.GetPositionX(), dest.GetPositionY(), ai.GetHome().GetPositionZ());
         MoveToward(bot, dest, 3.0f);
         return true;
     }
 };
+
+constexpr uint32 WarsongMap = 2106;
+constexpr uint32 ArathiMap = 2107;
+constexpr uint32 AllianceFlag = 227741;
+constexpr uint32 HordeFlag = 227740;
+constexpr uint32 HordeFlagAura = 23333;
+constexpr uint32 AllianceFlagAura = 23335;
+constexpr uint32 ArathiNodes[] = { 227420, 227522, 227536, 227538, 227544 };
+
+GameObject* FindGo(Player* bot, uint32 entry)
+{
+    FindGameObjectOptions options;
+    options.GameObjectId = entry;
+    std::vector<GameObject*> found;
+    bot->GetGameObjectListWithOptionsInGrid(found, 400.0f, options);
+    return found.empty() ? nullptr : found.front();
+}
+
+bool CarriesFlag(Player const* bot)
+{
+    return bot->HasAura(HordeFlagAura) || bot->HasAura(AllianceFlagAura);
+}
+
+Player* FriendlyCarrier(Player* bot)
+{
+    for (MapReference const& ref : bot->GetMap()->GetPlayers())
+    {
+        Player* other = ref.GetSource();
+        if (!other || other == bot || !other->IsAlive() || other->GetTeamId() != bot->GetTeamId())
+            continue;
+        if (CarriesFlag(other))
+            return other;
+    }
+    return nullptr;
+}
+
+void SayBg(Player* bot, std::string const& line)
+{
+    static std::mutex lock;
+    static std::unordered_map<ObjectGuid, uint32> nextAt;
+    uint32 now = GameTime::GetGameTimeMS();
+    {
+        std::lock_guard guard(lock);
+        if (nextAt[bot->GetGUID()] > now)
+            return;
+        nextAt[bot->GetGUID()] = now + 20000;
+    }
+
+    sWorldActionQueue->Enqueue(bot->GetGUID(), bot->GetMapId(), ObjectGuid::Empty, [line](Player* player)
+    {
+        player->Say(line, LANG_UNIVERSAL);
+    });
+}
+
+bool NearEnemy(Player* bot, PlayerbotAI& ai, Position const& where)
+{
+    Player* best = nullptr;
+    float bestDist = 40.0f * 40.0f;
+    for (MapReference const& ref : bot->GetMap()->GetPlayers())
+    {
+        Player* other = ref.GetSource();
+        if (!other || other == bot || !other->IsAlive() || !bot->IsValidAttackTarget(other))
+            continue;
+        float dist = other->GetExactDistSq(where);
+        if (dist < bestDist)
+        {
+            bestDist = dist;
+            best = other;
+        }
+    }
+    if (!best)
+        return false;
+    ai.SetForcedTarget(best->GetGUID());
+    return true;
+}
+
+bool PlayWarsong(Player* bot, PlayerbotAI& ai)
+{
+    bool alliance = bot->GetTeamId() == TEAM_ALLIANCE;
+    GameObject* ours = FindGo(bot, alliance ? AllianceFlag : HordeFlag);
+    GameObject* enemyFlag = FindGo(bot, alliance ? HordeFlag : AllianceFlag);
+    if (!ours || !enemyFlag)
+    {
+        TC_LOG_DEBUG("server.playerbots", "Playerbots: {} cannot see a Warsong flag yet", bot->GetName());
+        return false;
+    }
+
+    if (CarriesFlag(bot))
+    {
+        SayBg(bot, "flag out");
+        NearEnemy(bot, ai, ours->GetPosition());
+        MoveAlongMesh(bot, ours->GetPosition(), 5.0f);
+        return true;
+    }
+
+    if (Player* carrier = FriendlyCarrier(bot))
+    {
+        uint32 closer = 0;
+        for (MapReference const& ref : bot->GetMap()->GetPlayers())
+        {
+            Player* other = ref.GetSource();
+            if (!other || other == bot || other == carrier || !other->IsAlive() || other->GetTeamId() != bot->GetTeamId() || CarriesFlag(other))
+                continue;
+            if (other->GetExactDist(carrier) < bot->GetExactDist(carrier))
+                ++closer;
+        }
+        if (closer < 2)
+        {
+            NearEnemy(bot, ai, carrier->GetPosition());
+            MoveAlongMesh(bot, carrier->GetPosition(), 8.0f);
+            return true;
+        }
+    }
+
+    if (enemyFlag->GetFlagState() == FlagState::Taken)
+    {
+        uint32 aura = alliance ? HordeFlagAura : AllianceFlagAura;
+        Player* carrier = nullptr;
+        for (MapReference const& ref : bot->GetMap()->GetPlayers())
+        {
+            Player* other = ref.GetSource();
+            if (!other || !other->IsAlive() || !other->HasAura(aura))
+                continue;
+            carrier = other;
+            break;
+        }
+        if (carrier)
+        {
+            NearEnemy(bot, ai, carrier->GetPosition());
+            MoveAlongMesh(bot, carrier->GetPosition(), 5.0f);
+            return true;
+        }
+    }
+
+    if (enemyFlag->GetFlagState() == FlagState::InBase)
+        SayBg(bot, "inc their flag");
+    NearEnemy(bot, ai, enemyFlag->GetPosition());
+    MoveAlongMesh(bot, enemyFlag->GetPosition(), 5.0f);
+    return true;
+}
+
+bool PlayArathi(Player* bot, PlayerbotAI& ai)
+{
+    GameObject* nearest = nullptr;
+    float nearestDist = 0.0f;
+    uint32 held = 0;
+    GameObject* ours = nullptr;
+    for (uint32 entry : ArathiNodes)
+    {
+        GameObject* node = FindGo(bot, entry);
+        if (!node)
+            continue;
+        // Capture points are not control zones, so ownership is "can we still assault this".
+        bool enemy = node->CanInteractWithCapturePoint(bot);
+        if (!enemy)
+        {
+            ++held;
+            ours = node;
+            continue;
+        }
+        float dist = bot->GetExactDist2d(node);
+        if (!nearest || dist < nearestDist)
+        {
+            nearest = node;
+            nearestDist = dist;
+        }
+    }
+
+    if (held >= 3 && ours && (bot->GetGUID().GetCounter() % 8) == 0)
+    {
+        SayBg(bot, "defending");
+        NearEnemy(bot, ai, ours->GetPosition());
+        MoveAlongMesh(bot, ours->GetPosition(), 8.0f);
+        return true;
+    }
+
+    if (!nearest)
+        return false;
+
+    NearEnemy(bot, ai, nearest->GetPosition());
+    if (bot->GetExactDist(nearest) < 10.0f && nearest->CanInteractWithCapturePoint(bot))
+    {
+        SayBg(bot, "need help");
+        nearest->AssaultCapturePoint(bot);
+        return true;
+    }
+
+    MoveAlongMesh(bot, nearest->GetPosition(), 5.0f);
+    return true;
+}
+
+bool PlayObjective(Player* bot, PlayerbotAI& ai)
+{
+    if (!sPlayerbotsConfig.BgObjectives)
+        return false;
+
+    Battleground* bg = bot->GetBattleground();
+    if (!bg || (bot->GetMapId() != WarsongMap && bot->GetMapId() != ArathiMap))
+        return false;
+
+    if (bg->GetStatus() != STATUS_IN_PROGRESS)
+        return true;
+
+    if (ai.GetRole() == BotRole::Healer)
+    {
+        Player* follow = FriendlyCarrier(bot);
+        float followDist = follow ? 0.0f : 80.0f * 80.0f;
+        if (!follow)
+            for (MapReference const& ref : bot->GetMap()->GetPlayers())
+            {
+                Player* other = ref.GetSource();
+                if (!other || other == bot || !other->IsAlive() || other->GetTeamId() != bot->GetTeamId())
+                    continue;
+                float dist = bot->GetExactDistSq(other);
+                if (dist < followDist)
+                {
+                    followDist = dist;
+                    follow = other;
+                }
+            }
+        if (follow)
+        {
+            MoveAlongMesh(bot, follow->GetPosition(), 10.0f);
+            return true;
+        }
+    }
+
+    if (bot->GetMapId() == WarsongMap)
+        return PlayWarsong(bot, ai);
+    return PlayArathi(bot, ai);
+}
 
 class PvpAction : public Action
 {
@@ -575,6 +848,9 @@ public:
     bool Execute(PlayerbotAI& ai) override
     {
         Player* bot = ai.GetBot();
+        if (PlayObjective(bot, ai))
+            return true;
+
         Player* enemy = FindPvpEnemy(bot);
         if (!enemy)
             return false;
@@ -638,6 +914,216 @@ public:
     }
 };
 
+constexpr float HostileRange = 40.0f;
+constexpr float RareRange = 60.0f;
+constexpr float GuardRange = 80.0f;
+constexpr int32 LevelWindow = 5;
+
+struct ReactState
+{
+    uint32 NextScan = 0;
+    ObjectGuid Guard;
+    ObjectGuid Rare;
+};
+
+std::mutex sReactLock;
+std::unordered_map<ObjectGuid, ReactState> sReact;
+
+ReactState LoadReact(ObjectGuid guid)
+{
+    std::lock_guard guard(sReactLock);
+    auto itr = sReact.find(guid);
+    return itr == sReact.end() ? ReactState{} : itr->second;
+}
+
+void SaveReact(ObjectGuid guid, ReactState const& state)
+{
+    std::lock_guard guard(sReactLock);
+    if (sReact.size() > 4096)
+        sReact.clear();
+    sReact[guid] = state;
+}
+
+bool InCapital(Player const* bot)
+{
+    AreaTableEntry const* zone = sAreaTableStore.LookupEntry(bot->GetZoneId());
+    return zone && zone->GetFlags().HasFlag(AreaFlags::LinkedChat);
+}
+
+Player* NearestHostilePlayer(Player* bot)
+{
+    struct Check
+    {
+        Player* Bot = nullptr;
+        bool operator()(Player* other) const
+        {
+            return other && other != Bot && other->IsAlive() && !Bot->IsInSameGroupWith(other) && Bot->IsValidAttackTarget(other);
+        }
+    };
+
+    std::vector<Player*> found;
+    Check check{ bot };
+    Trinity::PlayerListSearcher searcher(bot, found, check);
+    Cell::VisitGridObjects(bot, searcher, HostileRange);
+
+    Player* best = nullptr;
+    for (Player* other : found)
+        if (!best || bot->GetExactDistSq(other) < bot->GetExactDistSq(best))
+            best = other;
+    return best;
+}
+
+Creature* NearestGuard(Player* bot)
+{
+    struct Check
+    {
+        Player* Bot = nullptr;
+        bool operator()(Creature* creature) const
+        {
+            return creature->IsAlive() && creature->IsGuard() && creature->IsFriendlyTo(Bot);
+        }
+    };
+
+    std::vector<Creature*> found;
+    Check check{ bot };
+    Trinity::CreatureListSearcher searcher(bot, found, check);
+    Cell::VisitGridObjects(bot, searcher, GuardRange);
+
+    Creature* best = nullptr;
+    for (Creature* creature : found)
+        if (!best || bot->GetExactDistSq(creature) < bot->GetExactDistSq(best))
+            best = creature;
+    return best;
+}
+
+Creature* NearestRare(Player* bot)
+{
+    struct Check
+    {
+        bool operator()(Creature* creature) const
+        {
+            if (!creature->IsAlive() || creature->IsCritter() || creature->IsTrigger() || creature->IsPet())
+                return false;
+            CreatureClassifications rank = creature->GetCreatureTemplate()->Classification;
+            return rank == CreatureClassifications::Rare || rank == CreatureClassifications::RareElite;
+        }
+    };
+
+    std::vector<Creature*> found;
+    Check check;
+    Trinity::CreatureListSearcher searcher(bot, found, check);
+    Cell::VisitGridObjects(bot, searcher, RareRange);
+
+    Creature* best = nullptr;
+    for (Creature* creature : found)
+        if (!best || bot->GetExactDistSq(creature) < bot->GetExactDistSq(best))
+            best = creature;
+    return best;
+}
+
+bool WorldReactTrigger(PlayerbotAI& ai)
+{
+    if (!sPlayerbotsConfig.WorldReactions)
+        return false;
+
+    Player* bot = ai.GetBot();
+    if (ai.GetMaster() || !bot->IsAlive() || bot->IsInCombat() || bot->IsBeingTeleported() || bot->InBattleground())
+        return false;
+
+    ReactState state = LoadReact(bot->GetGUID());
+    if (!state.Guard.IsEmpty() || !state.Rare.IsEmpty())
+        return true;
+    if (bot->duel && bot->duel->State == DUEL_STATE_CHALLENGED && bot->duel->Initiator != bot)
+        return true;
+    return GameTime::GetGameTimeMS() >= state.NextScan;
+}
+
+class WorldReactAction : public Action
+{
+public:
+    char const* GetName() const override { return "world react"; }
+
+    bool Execute(PlayerbotAI& ai) override
+    {
+        Player* bot = ai.GetBot();
+        ReactState state = LoadReact(bot->GetGUID());
+        uint32 now = GameTime::GetGameTimeMS();
+
+        if (bot->duel && bot->duel->State == DUEL_STATE_CHALLENGED && bot->duel->Initiator != bot)
+        {
+            Player* challenger = bot->duel->Initiator;
+            if (!InCapital(bot))
+            {
+                TC_LOG_DEBUG("server.playerbots", "Playerbots: {} declined a duel from {}, not in a city", bot->GetName(), challenger ? challenger->GetName() : "someone");
+                state.NextScan = now + sPlayerbotsConfig.ScanInterval;
+                SaveReact(bot->GetGUID(), state);
+                return false;
+            }
+
+            ObjectGuid arbiter(*bot->m_playerData->DuelArbiter);
+            TC_LOG_DEBUG("server.playerbots", "Playerbots: {} accepted a duel from {} in a city", bot->GetName(), challenger ? challenger->GetName() : "someone");
+            sWorldActionQueue->Enqueue(bot->GetGUID(), bot->GetMapId(), ObjectGuid::Empty, [arbiter](Player* player)
+            {
+                if (!player->duel || player->duel->State != DUEL_STATE_CHALLENGED || player->duel->Initiator == player)
+                    return;
+                player->GetSession()->HandleDuelAccepted(arbiter);
+            });
+            state.NextScan = now + 5000;
+            SaveReact(bot->GetGUID(), state);
+            return true;
+        }
+
+        if (Player* hostile = NearestHostilePlayer(bot))
+        {
+            int32 gap = std::abs(int32(bot->GetLevel()) - int32(hostile->GetLevel()));
+            if (gap <= LevelWindow)
+            {
+                state.Guard.Clear();
+                TC_LOG_DEBUG("server.playerbots", "Playerbots: {} fights {}, levels are within {}", bot->GetName(), hostile->GetName(), LevelWindow);
+                ai.SetForcedTarget(hostile->GetGUID());
+                ai.Chase(hostile, ai.GetRole() == BotRole::RangedDps || ai.GetRole() == BotRole::Healer);
+                state.NextScan = now + sPlayerbotsConfig.ScanInterval;
+                SaveReact(bot->GetGUID(), state);
+                return true;
+            }
+
+            if (Creature* guard = NearestGuard(bot))
+            {
+                state.Guard = guard->GetGUID();
+                TC_LOG_DEBUG("server.playerbots", "Playerbots: {} runs from {} to a guard", bot->GetName(), hostile->GetName());
+                if (MoveAlongMesh(bot, guard->GetPosition(), 6.0f) == MoveResult::NoPath)
+                    TC_LOG_DEBUG("server.playerbots", "Playerbots: {} has no path to the guard and does not run straight", bot->GetName());
+                SaveReact(bot->GetGUID(), state);
+                return true;
+            }
+
+            state.Guard.Clear();
+            TC_LOG_DEBUG("server.playerbots", "Playerbots: {} will not fight {}, no guard within {} yards", bot->GetName(), hostile->GetName(), uint32(GuardRange));
+        }
+        else
+            state.Guard.Clear();
+
+        if (Creature* rare = NearestRare(bot))
+        {
+            state.Rare = rare->GetGUID();
+            int32 gap = std::abs(int32(bot->GetLevel()) - int32(rare->GetLevelForTarget(bot)));
+            TC_LOG_DEBUG("server.playerbots", "Playerbots: {} is looking at rare {}", bot->GetName(), rare->GetName());
+            if (gap <= LevelWindow && bot->GetExactDist(rare) < 25.0f)
+                ai.SetForcedTarget(rare->GetGUID());
+            if (MoveAlongMesh(bot, rare->GetPosition(), 12.0f) == MoveResult::NoPath)
+                TC_LOG_DEBUG("server.playerbots", "Playerbots: {} has no path to rare {} and does not run straight", bot->GetName(), rare->GetName());
+            state.NextScan = now + sPlayerbotsConfig.ScanInterval;
+            SaveReact(bot->GetGUID(), state);
+            return true;
+        }
+
+        state.Rare.Clear();
+        state.NextScan = now + sPlayerbotsConfig.ScanInterval;
+        SaveReact(bot->GetGUID(), state);
+        return false;
+    }
+};
+
 /// A strategy that is only a list of trigger -> action offers
 class TriggerStrategy final : public Strategy
 {
@@ -677,6 +1163,7 @@ void RegisterGenericAi()
     r.AddTrigger("follow master", 0, FollowMasterTrigger);
     r.AddTrigger("idle alone", 0, IdleAloneTrigger);
     r.AddTrigger("pvp zone", 0, PvpTrigger);
+    r.AddTrigger("world react", 0, WorldReactTrigger);
     r.AddTrigger("alive", 0, IsAliveTrigger);
     r.AddTrigger("traveling", 0, TravelingTrigger);
     r.AddTrigger("needs buff", 2000, NeedsBuffTrigger);
@@ -690,6 +1177,7 @@ void RegisterGenericAi()
     r.AddAction<FollowAction>("follow");
     r.AddAction<WanderAction>("wander");
     r.AddAction<PvpAction>("pvp");
+    r.AddAction<WorldReactAction>("world react");
     r.AddAction<StayAction>("stay");
     r.AddAction<TravelAction>("travel");
     r.AddAction<BuffAction>("buff");
@@ -705,6 +1193,7 @@ void RegisterGenericAi()
     AddTriggerStrategy(r, "travel", { { "traveling", { { "travel", Priority::Travel } } } });
     AddTriggerStrategy(r, "buff", { { "needs buff", { { "buff", Priority::Buff } } } });
     AddTriggerStrategy(r, "pvp", { { "pvp zone", { { "pvp", Priority::Pvp } } } });
+    AddTriggerStrategy(r, "world", { { "world react", { { "world react", Priority::World } } } });
     r.AddStrategy("rpg", [](std::string const&) { return CreateRpgStrategy(); });
     r.AddStrategy("quest", [](std::string const&) { return CreateQuestStrategy(); });
 

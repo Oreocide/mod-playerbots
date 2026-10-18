@@ -33,11 +33,14 @@
 #include "IteratorPair.h"
 #include "Log.h"
 #include "GridDefines.h"
+#include "HubIndex.h"
 #include "Map.h"
+#include "PhasingHandler.h"
 #include "MapManager.h"
 #include "Timer.h"
 #include <algorithm>
 #include <cctype>
+#include <cmath>
 #include <set>
 #include <tuple>
 #include <sstream>
@@ -50,6 +53,8 @@
 #include "PlayerbotsConfig.h"
 #include "QuestTravel.h"
 #include "Talents/BotTalents.h"
+#include "Economy/TrainerIndex.h"
+#include "Spawn/SpawnPolicy.h"
 #include "Travel/HotspotMgr.h"
 #include "Travel/HubIndex.h"
 #include "Travel/TravelMgr.h"
@@ -71,8 +76,9 @@
 
 namespace
 {
-// Bump to put every random bot on a valid spot at its next login (for example after bots ended up under the map)
-constexpr int32 PlacementVersion = 4;
+// Bump to put every random bot on a valid spot at its next login (open-world spots scatter inside
+// the graveyard's zone, weighted so cities are crowded and desolate graveyards stay thin)
+constexpr int32 PlacementVersion = 6;
 constexpr uint32 RotateCheckMs = 60000;          // hotspot rotation looks at the bots once a minute
 constexpr float RotateObservedDistance = 250.0f; // a bot a player can see is not moved
 
@@ -218,7 +224,9 @@ bool FillCustomizations(WorldSession* session, uint8 race, uint8 playerClass, ui
         auto tail = std::ranges::unique(picked, {}, &UF::ChrCustomizationChoice::ChrCustomizationOptionID);
         picked.erase(tail.begin(), tail.end());
 
-        if (session->ValidateAppearance(Races(race), Classes(playerClass), Gender(gender), Choices(picked)))
+        // never an empty list when the race has options: 12.1.5 hangs building a model from no choices, and the core
+        // check for it is not something this module may rely on (no core edits)
+        if (!picked.empty() && session->ValidateAppearance(Races(race), Classes(playerClass), Gender(gender), Choices(picked)))
         {
             for (UF::ChrCustomizationChoice const& choice : picked)
                 out.push_back(choice);
@@ -274,6 +282,7 @@ void RandomBotMgr::Update(uint32 diff)
         HubIndex::Build();
         sHotspotMgr->BuildFromHubs();
         GatherNodes::Build();
+        TrainerIndex::Build();
         if (sPlayerbotsConfig.TravelEnable)
             sTravelMgr->Build();
         if (sPlayerbotsConfig.RandomGear)
@@ -300,6 +309,13 @@ void RandomBotMgr::Update(uint32 diff)
     {
         _rotateTimer = 0;
         RotateBots();
+    }
+
+    _populationTimer += diff;
+    if (_populationTimer >= 10000)
+    {
+        _populationTimer = 0;
+        MaintainPopulation();
     }
 
     if (sPlayerbotsConfig.RandomOnlyWithPlayers)
@@ -796,7 +812,13 @@ bool RandomBotMgr::RunWarmStep()
     {
         map->LoadGrid(step.X, step.Y);
         if (step.Pin)
+        {
             map->SetUnloadLock(Trinity::ComputeGridCoord(step.X, step.Y), true);
+            // LoadGrid does not load the navmesh tile while LazyMMap is on. Pinned hubs (capitals, saved
+            // player positions) pay that tile here, during warm-up, so the first player in town does not.
+            if (BotPerf::BotOpts::LazyMMap())
+                map->EnsureMMapTile(step.X, step.Y);
+        }
         TC_LOG_INFO("server.playerbots", "Playerbots: warm-up: map {} grid at ({:.0f}, {:.0f}) loaded in {} ms{}", step.MapId, step.X, step.Y, GetMSTimeDiffToNow(start), step.Pin ? " (pinned)" : "");
     }
     if (_warmSteps.empty())
@@ -807,6 +829,7 @@ bool RandomBotMgr::RunWarmStep()
 void RandomBotMgr::BuildSpots()
 {
     _spots.clear();
+    _spotHostilityKnown = false;
     _allowedMaps.clear();
     uint8 expansion = uint8(sWorld->getIntConfig(CONFIG_EXPANSION));
 
@@ -856,6 +879,17 @@ void RandomBotMgr::BuildSpots()
             spot.Faction = ALLIANCE;
         else if ((area->FactionGroupMask & FACTION_MASK_HORDE) && !(area->FactionGroupMask & FACTION_MASK_ALLIANCE))
             spot.Faction = HORDE;
+
+        spot.ZoneId = zoneId;
+
+        // The graveyard's own faction is a condition now (no team column): a Horde-only graveyard in a contested zone must
+        // not take Alliance bots, and a graveyard whose condition disagrees with its zone is no spot for either team
+        if (uint32 graveyardTeam = SpawnPolicy::TeamOfGraveyard(graveyard.Conditions))
+        {
+            if (spot.Faction && spot.Faction != graveyardTeam)
+                continue;
+            spot.Faction = graveyardTeam;
+        }
 
         _spots.push_back(spot);
     }
@@ -1170,6 +1204,51 @@ RandomBotMgr::Spot const* RandomBotMgr::PickSpot(uint8 level, uint32 faction, Ob
         int32 Score = 0;
     };
 
+    // inside a town that attacks the team: needs the hub index, which is built after the spots, so it is filled on first use
+    if (!_spotHostilityKnown && HubIndex::IsBuilt())
+    {
+        for (Spot const& spot : _spots)
+        {
+            spot.HostileMask = 0;
+            if (SpawnPolicy::IsEnemyGround(spot.MapId, spot.ZoneId, spot.X, spot.Y, spot.Z, ALLIANCE))
+                spot.HostileMask |= 1;
+            if (SpawnPolicy::IsEnemyGround(spot.MapId, spot.ZoneId, spot.X, spot.Y, spot.Z, HORDE))
+                spot.HostileMask |= 2;
+
+            // A graveyard inside a city is chosen often and the bots stay close. One out in the open is rare
+            // and the few bots that land there stand hundreds of yards apart.
+            spot.Weight = 1;
+            spot.Scatter = 480.0f;
+            if (HubCluster const* cluster = HubIndex::NearestCluster(spot.MapId, Position(spot.X, spot.Y, spot.Z), 600.0f))
+            {
+                if (Position(spot.X, spot.Y, spot.Z).GetExactDist2d(cluster->Center) <= cluster->Radius + 40.0f)
+                {
+                    switch (cluster->Tier)
+                    {
+                        case HubTier::Capital: spot.Weight = 24; spot.Scatter = 100.0f; break;
+                        case HubTier::Town:    spot.Weight = 8;  spot.Scatter = 180.0f; break;
+                        case HubTier::Outpost: spot.Weight = 3;  spot.Scatter = 280.0f; break;
+                        default: break;
+                    }
+                }
+            }
+        }
+        uint32 capitals = 0, towns = 0, outposts = 0, desolate = 0;
+        for (Spot const& spot : _spots)
+        {
+            if (spot.Weight >= 24)
+                ++capitals;
+            else if (spot.Weight >= 8)
+                ++towns;
+            else if (spot.Weight >= 3)
+                ++outposts;
+            else
+                ++desolate;
+        }
+        TC_LOG_INFO("server.playerbots", "Playerbots: spot density, {} capital graveyards, {} towns, {} outposts, {} desolate", capitals, towns, outposts, desolate);
+        _spotHostilityKnown = true;
+    }
+
     std::vector<Candidate> candidates;
     for (Spot const& spot : _spots)
     {
@@ -1177,6 +1256,9 @@ RandomBotMgr::Spot const* RandomBotMgr::PickSpot(uint8 level, uint32 faction, Ob
             continue;
 
         if (spot.Faction && spot.Faction != faction)
+            continue;
+
+        if (spot.HostileMask & (faction == ALLIANCE ? 1 : 2))
             continue;
 
         candidates.push_back({ &spot, 0 });
@@ -1198,7 +1280,64 @@ RandomBotMgr::Spot const* RandomBotMgr::PickSpot(uint8 level, uint32 faction, Ob
     if (candidates.empty())
         return nullptr;
 
-    return candidates[urand(0, uint32(candidates.size() - 1))].Place;
+    uint32 total = 0;
+    for (Candidate const& candidate : candidates)
+        total += std::max<uint32>(candidate.Place->Weight, 1);
+    uint32 roll = urand(1, total);
+    for (Candidate const& candidate : candidates)
+    {
+        uint32 weight = std::max<uint32>(candidate.Place->Weight, 1);
+        if (roll <= weight)
+            return candidate.Place;
+        roll -= weight;
+    }
+    return candidates.back().Place;
+}
+
+Position RandomBotMgr::ScatterSpot(Spot const& spot, ObjectGuid except) const
+{
+    Position at(spot.X, spot.Y, spot.Z, frand(0.0f, 2.0f * float(M_PI)));
+    if (spot.Scatter < 5.0f)
+        return at;
+
+    Map* map = sMapMgr->FindMap(spot.MapId, 0);
+    if (!map)
+        return at;
+
+    bool capped = false;
+    std::unordered_set<uint64> occupied;
+    if (uint32 maxGrids = sPlayerbotsConfig.RandomMaxGrids)
+    {
+        occupied = OccupiedGrids(except);
+        capped = occupied.size() >= maxGrids;
+    }
+
+    PhaseShift const& phase = PhasingHandler::GetEmptyPhaseShift();
+    uint32 const homeZone = map->GetZoneId(phase, spot.X, spot.Y, spot.Z);
+
+    for (uint32 attempt = 0; attempt < 8; ++attempt)
+    {
+        float dist = std::sqrt(frand(0.0f, 1.0f)) * spot.Scatter;
+        float angle = frand(0.0f, 2.0f * float(M_PI));
+        float x = spot.X + dist * std::cos(angle);
+        float y = spot.Y + dist * std::sin(angle);
+        if (!Trinity::IsValidMapCoord(x, y))
+            continue;
+
+        float z = map->GetHeight(phase, x, y, spot.Z + 5.0f, true);
+        if (z <= INVALID_HEIGHT)
+            continue;
+        if (std::fabs(z - spot.Z) > 80.0f)
+            continue;
+        if (homeZone && map->GetZoneId(phase, x, y, z) != homeZone)
+            continue;
+        if (capped && !occupied.contains(GridKeyOf(spot.MapId, x, y)))
+            continue;
+
+        at.Relocate(x, y, z, frand(0.0f, 2.0f * float(M_PI)));
+        return at;
+    }
+    return at;
 }
 
 void RandomBotMgr::Prepare(Player* bot)
@@ -1224,9 +1363,23 @@ void RandomBotMgr::Prepare(Player* bot)
         }
         else if (bot->GetMap() && bot->GetMap()->Instanceable())
             Place(bot);
+        else if (sPlayerbotsConfig.SpawnEvict && SpawnPolicy::IsEnemyGround(bot))
+        {
+            // an old placement, a summon or a GM left it where its own faction is not welcome
+            TC_LOG_INFO("server.playerbots", "Playerbots: {} logged in on enemy ground, placing it on a valid spot", bot->GetName());
+            Place(bot);
+        }
     }
 
-    if (!_homes.contains(bot->GetGUID()))
+    bool hasHome = false;
+    bool hasAnchor = false;
+    {
+        std::shared_lock lock(_homesLock);
+        hasHome = _homes.contains(bot->GetGUID());
+        hasAnchor = _anchors.contains(bot->GetGUID());
+    }
+
+    if (!hasHome)
     {
         uint32 mapId = 0;
         Position home;
@@ -1237,15 +1390,19 @@ void RandomBotMgr::Prepare(Player* bot)
             SaveHome(bot->GetGUID(), mapId, home);
         }
 
+        std::unique_lock lock(_homesLock);
         _homes[bot->GetGUID()] = home;
         _homeMaps[bot->GetGUID()] = mapId;
     }
 
-    if (!_anchors.contains(bot->GetGUID()))
+    if (!hasAnchor)
     {
         Anchor anchor;
         if (LoadAnchor(bot->GetGUID(), anchor))
+        {
+            std::unique_lock lock(_homesLock);
             _anchors[bot->GetGUID()] = anchor;
+        }
     }
 }
 
@@ -1299,25 +1456,10 @@ bool RandomBotMgr::AdvanceRandomize()
         if (floor > maxLevel)
             floor = maxLevel;
 
-        uint8 level = uint8(urand(floor, maxLevel));
-        if (bot->GetLevel() != level)
-            bot->GiveLevel(level);
-
-        bot->SetXP(0);
-        if (bot->GetLevel() >= MIN_SPECIALIZATION_LEVEL)
-        {
-            std::vector<ChrSpecializationEntry const*> specs;
-            for (uint32 index = 0; index < 4; ++index)
-                if (ChrSpecializationEntry const* spec = sDB2Manager.GetChrSpecializationByIndex(bot->GetClass(), index))
-                    if (!spec->IsPetSpecialization())
-                        specs.push_back(spec);
-
-            if (!specs.empty())
-                bot->ActivateTalentGroup(specs[urand(0, uint32(specs.size() - 1))]);
-
-            bot->InitTalentForLevel();
-            BotTalents::ApplyStarterBuild(bot);
-        }
+        uint8 level = RollBandLevel(floor, maxLevel);
+        ApplyLevel(bot, level, true);
+        _banded.insert(bot->GetGUID());
+        sPlayerbotRepository->SetEvent(0, bot->GetGUID(), "popband", 1);
 
         BotSpellBook::StripJunk(bot);
         Place(bot);
@@ -1341,11 +1483,11 @@ void RandomBotMgr::Place(Player* bot)
 
     if (Spot const* spot = PickSpot(bot->GetLevel(), Player::TeamForRace(bot->GetRace()), bot->GetGUID()))
     {
-        if (bot->TeleportTo(spot->MapId, spot->X, spot->Y, spot->Z, spot->O))
+        Position at = ScatterSpot(*spot, bot->GetGUID());
+        if (bot->TeleportTo(spot->MapId, at.GetPositionX(), at.GetPositionY(), at.GetPositionZ(), at.GetOrientation()))
         {
-            _homes[bot->GetGUID()] = Position(spot->X, spot->Y, spot->Z, spot->O);
-            _homeMaps[bot->GetGUID()] = spot->MapId;
-            SaveHome(bot->GetGUID(), spot->MapId, _homes[bot->GetGUID()]);
+            UpdateHome(bot->GetGUID(), spot->MapId, at);
+            sPlayerbotRepository->Remember(bot->GetGUID(), "place", std::to_string(spot->MapId), Trinity::StringFormat("{:.0f} {:.0f}", at.GetPositionX(), at.GetPositionY()));
         }
         return;
     }
@@ -1355,11 +1497,7 @@ void RandomBotMgr::Place(Player* bot)
     {
         WorldLocation const& start = info->createPosition.Loc;
         if (bot->TeleportTo(start))
-        {
-            _homes[bot->GetGUID()] = start;
-            _homeMaps[bot->GetGUID()] = start.GetMapId();
-            SaveHome(bot->GetGUID(), start.GetMapId(), _homes[bot->GetGUID()]);
-        }
+            UpdateHome(bot->GetGUID(), start.GetMapId(), start);
     }
 }
 
@@ -1380,19 +1518,41 @@ bool RandomBotMgr::PlaceAtHotspot(Player* bot)
             return false;
     }
 
-    float orientation = frand(0.0f, 2.0f * float(M_PI));
-    if (!bot->TeleportTo(hotspot.Map, point.X, point.Y, point.Z, orientation))
+    // the same predicate as the eviction pass: a hotspot on ground the bot's team may not stand on is no hotspot for it
+    if (SpawnPolicy::IsEnemyGroundAt(bot, hotspot.Map, Position(point.X, point.Y, point.Z)))
         return false;
 
+    // a few yards off the shared point, so a crowd at one inn is not one model
+    float orientation = frand(0.0f, 2.0f * float(M_PI));
+    float x = point.X;
+    float y = point.Y;
+    float z = point.Z;
+    float jitter = frand(4.0f, 16.0f);
+    float angle = frand(0.0f, 2.0f * float(M_PI));
+    float jx = point.X + jitter * std::cos(angle);
+    float jy = point.Y + jitter * std::sin(angle);
+    if (Map* map = sMapMgr->FindMap(hotspot.Map, 0))
+    {
+        float jz = map->GetHeight(PhasingHandler::GetEmptyPhaseShift(), jx, jy, point.Z + 5.0f, true);
+        if (jz > INVALID_HEIGHT && std::fabs(jz - point.Z) <= 8.0f)
+        {
+            x = jx;
+            y = jy;
+            z = jz;
+        }
+    }
+    if (!bot->TeleportTo(hotspot.Map, x, y, z, orientation))
+        return false;
+
+    sPlayerbotRepository->Remember(bot->GetGUID(), "place", std::to_string(hotspot.Map), Trinity::StringFormat("{:.0f} {:.0f}", x, y));
+
     ObjectGuid guid = bot->GetGUID();
-    _homes[guid] = Position(point.X, point.Y, point.Z, orientation);
-    _homeMaps[guid] = hotspot.Map;
-    SaveHome(guid, hotspot.Map, _homes[guid]);
+    UpdateHome(guid, hotspot.Map, Position(x, y, z, orientation));
 
     Anchor anchor;
     anchor.MapId = hotspot.Map;
     // the bot stays around where it arrived (the auction house, the bank), not around the middle of the town
-    anchor.Center = Position(point.X, point.Y, point.Z);
+    anchor.Center = Position(x, y, z);
     anchor.Radius = sPlayerbotsConfig.HotspotWanderRadius;
     SetAnchor(guid, anchor);
     return true;
@@ -1401,7 +1561,10 @@ bool RandomBotMgr::PlaceAtHotspot(Player* bot)
 // db_store key "anchor": map;x;y;z;radius
 void RandomBotMgr::SetAnchor(ObjectGuid guid, Anchor const& anchor)
 {
-    _anchors[guid] = anchor;
+    {
+        std::unique_lock lock(_homesLock);
+        _anchors[guid] = anchor;
+    }
     sPlayerbotRepository->SetValue(guid, "anchor", Trinity::StringFormat("{};{};{};{};{}", anchor.MapId, anchor.Center.GetPositionX(),
         anchor.Center.GetPositionY(), anchor.Center.GetPositionZ(), anchor.Radius));
 }
@@ -1432,20 +1595,268 @@ bool RandomBotMgr::LoadAnchor(ObjectGuid guid, Anchor& anchor)
 
 void RandomBotMgr::ClearAnchor(ObjectGuid guid)
 {
-    if (_anchors.erase(guid))
+    bool erased = false;
+    {
+        std::unique_lock lock(_homesLock);
+        erased = _anchors.erase(guid) != 0;
+    }
+
+    if (erased)
         sPlayerbotRepository->EraseValue(guid, "anchor");
 }
 
-RandomBotMgr::Anchor const* RandomBotMgr::GetAnchor(ObjectGuid guid) const
+Optional<RandomBotMgr::Anchor> RandomBotMgr::GetAnchor(ObjectGuid guid) const
 {
+    std::shared_lock lock(_homesLock);
     auto itr = _anchors.find(guid);
-    return itr == _anchors.end() ? nullptr : &itr->second;
+    if (itr == _anchors.end())
+        return {};
+    return itr->second;
+}
+
+uint8 RandomBotMgr::RollBandLevel(uint32 floor, uint32 cap) const
+{
+    struct Band
+    {
+        uint8 Min;
+        uint8 Max;
+    };
+
+    // the continents these bots already use, then the cap as its own band
+    static constexpr Band Bands[] =
+    {
+        { 1, 19 }, { 20, 39 }, { 40, 59 }, { 60, 69 }, { 70, 79 }, { 80, 84 }, { 85, 89 }, { 90, 90 }
+    };
+
+    struct Choice
+    {
+        uint8 Min;
+        uint8 Max;
+        uint32 Weight;
+    };
+
+    Choice choices[std::size(Bands)];
+    uint32 count = 0;
+    uint32 sum = 0;
+    uint32 loFloor = std::min<uint32>(floor, 255);
+    uint32 hiCap = std::min<uint32>(cap, 255);
+    for (size_t i = 0; i < std::size(Bands); ++i)
+    {
+        uint8 lo = std::max<uint8>(Bands[i].Min, uint8(loFloor));
+        uint8 hi = std::min<uint8>(Bands[i].Max, uint8(hiCap));
+        if (lo > hi)
+            continue;
+
+        uint32 weight = sPlayerbotsConfig.PopulationWeight[i];
+        if (!weight)
+            continue;
+
+        choices[count++] = { lo, hi, weight };
+        sum += weight;
+    }
+
+    if (!sum || loFloor > hiCap)
+        return uint8(std::clamp(floor, uint32(1), std::max<uint32>(cap, 1)));
+
+    uint32 roll = urand(1, sum);
+    uint32 acc = 0;
+    for (uint32 i = 0; i < count; ++i)
+    {
+        acc += choices[i].Weight;
+        if (acc >= roll)
+            return uint8(urand(choices[i].Min, choices[i].Max));
+    }
+
+    return uint8(hiCap);
+}
+
+void RandomBotMgr::ApplyLevel(Player* bot, uint8 level, bool pickSpec)
+{
+    if (bot->GetLevel() != level)
+        bot->GiveLevel(level);
+
+    bot->SetXP(0);
+    if (bot->GetLevel() < MIN_SPECIALIZATION_LEVEL)
+        return;
+
+    if (pickSpec)
+    {
+        std::vector<ChrSpecializationEntry const*> specs;
+        for (uint32 index = 0; index < 4; ++index)
+            if (ChrSpecializationEntry const* spec = sDB2Manager.GetChrSpecializationByIndex(bot->GetClass(), index))
+                if (!spec->IsPetSpecialization())
+                    specs.push_back(spec);
+
+        if (!specs.empty())
+            bot->ActivateTalentGroup(specs[urand(0, uint32(specs.size() - 1))]);
+    }
+
+    bot->InitTalentForLevel();
+    if (pickSpec)
+        BotTalents::ApplyStarterBuild(bot);
+}
+
+namespace
+{
+bool LeftAlone(Player* bot, PlayerbotAI* ai)
+{
+    if (!bot->IsAlive() || bot->IsInCombat() || bot->IsBeingTeleported() || bot->GetGroup() || bot->InBattleground()
+        || bot->InBattlegroundQueue() || bot->isUsingLfg() || ai->GetMaster() || !bot->GetMap() || bot->GetMap()->Instanceable()
+        || bot->IsInFlight() || ai->GetRoute().IsActive())
+        return true;
+
+    return sPlayerbotMgr->HasHumanWithin(bot, sPlayerbotsConfig.BotActiveAloneRadius);
+}
+}
+
+void RandomBotMgr::MaintainPopulation()
+{
+    uint32 nowSec = uint32(GameTime::GetGameTime());
+    uint32 nowMs = GameTime::GetGameTimeMS();
+    uint32 banded = 0;
+    uint32 moved = 0;
+    uint32 revived = 0;
+
+    sPlayerbotMgr->ForEachRandomBot([&](Player* bot, PlayerbotAI* ai)
+    {
+        ObjectGuid guid = bot->GetGUID();
+
+        if (!bot->IsAlive())
+        {
+            if (bot->IsBeingTeleported() || bot->GetGroup() || bot->InBattleground() || bot->InBattlegroundQueue()
+                || ai->GetMaster() || !bot->GetMap() || bot->GetMap()->Instanceable()
+                || sPlayerbotMgr->HasHumanWithin(bot, sPlayerbotsConfig.BotActiveAloneRadius))
+            {
+                // a player is standing on the corpse: do not pull it out from under them
+                _reviveAt.erase(guid);
+                return;
+            }
+
+            if (revived >= 4)
+                return;
+
+            auto itr = _reviveAt.find(guid);
+            if (itr == _reviveAt.end())
+            {
+                _reviveAt[guid] = nowMs + urand(sPlayerbotsConfig.PopulationReviveMin, sPlayerbotsConfig.PopulationReviveMax) * 1000;
+                return;
+            }
+            if (nowMs < itr->second)
+                return;
+
+            bot->ResurrectPlayer(0.5f);
+            Place(bot);
+            _reviveAt.erase(guid);
+            ++revived;
+            TC_LOG_INFO("server.playerbots", "Playerbots: revived {} and placed it (nobody was near the corpse)", bot->GetName());
+            return;
+        }
+
+        _reviveAt.erase(guid);
+        if (LeftAlone(bot, ai))
+            return;
+
+        if (!_banded.contains(guid))
+        {
+            if (sPlayerbotRepository->GetEvent(0, guid, "popband"))
+            {
+                _banded.insert(guid);
+            }
+            else if (banded < 2)
+            {
+                uint32 maxLevel = std::min(sPlayerbotsConfig.RandomMaxLevel, sWorld->getIntConfig(CONFIG_MAX_PLAYER_LEVEL));
+                uint32 minLevel = std::min(sPlayerbotsConfig.RandomMinLevel, maxLevel);
+                uint32 start = StartLevel(bot);
+                uint32 floor = std::max<uint32>(minLevel, start);
+                if (maxLevel > start && floor <= start)
+                    floor = start + 1;
+                if (floor > maxLevel)
+                    floor = maxLevel;
+
+                ApplyLevel(bot, RollBandLevel(floor, maxLevel), false);
+                Place(bot);
+                bot->SaveToDB();
+                sPlayerbotRepository->SetEvent(0, guid, "popband", 1);
+                _banded.insert(guid);
+                _nextPopulationAt[guid] = nowSec + urand(sPlayerbotsConfig.PopulationTeleportMin, sPlayerbotsConfig.PopulationTeleportMax);
+                ++banded;
+                return;
+            }
+        }
+
+        if (moved >= 2)
+            return;
+
+        auto due = _nextPopulationAt.find(guid);
+        if (due == _nextPopulationAt.end())
+        {
+            _nextPopulationAt[guid] = nowSec + urand(sPlayerbotsConfig.PopulationTeleportMin, sPlayerbotsConfig.PopulationTeleportMax);
+            return;
+        }
+        if (nowSec < due->second)
+            return;
+
+        uint32 maxLevel = std::min(sPlayerbotsConfig.RandomMaxLevel, sWorld->getIntConfig(CONFIG_MAX_PLAYER_LEVEL));
+        if (bot->GetLevel() < maxLevel && roll_chance(sPlayerbotsConfig.PopulationLevelUpChance))
+            ApplyLevel(bot, uint8(bot->GetLevel() + 1), false);
+
+        Place(bot);
+        due->second = nowSec + urand(sPlayerbotsConfig.PopulationTeleportMin, sPlayerbotsConfig.PopulationTeleportMax);
+        ++moved;
+    });
 }
 
 // About once per RotateMinutes each idle bot gets a new roll: a hotspot, or back to the open world if it was
 // anchored. Bots someone can see, bots with a job (quest, flight) and grouped bots are left alone.
+void RandomBotMgr::EvictFromEnemyGround()
+{
+    if (!sPlayerbotsConfig.SpawnEvict)
+        return;
+
+    std::vector<Player*> evict;
+    sPlayerbotMgr->ForEachRandomBot([&](Player* bot, PlayerbotAI* ai)
+    {
+        if (!bot->IsAlive() || bot->IsInCombat() || bot->IsBeingTeleported() || bot->GetGroup() || bot->InBattleground()
+            || bot->InBattlegroundQueue() || bot->isUsingLfg() || ai->GetMaster() || !bot->GetMap() || bot->GetMap()->Instanceable()
+            || bot->IsInFlight() || ai->GetRoute().IsActive())
+            return;
+
+        if (SpawnPolicy::IsEnemyGround(bot))
+            evict.push_back(bot);
+    });
+
+    uint32 now = GameTime::GetGameTimeMS();
+    for (Player* bot : evict)
+    {
+        // placement and eviction use the same predicate; a bot evicted twice within 10 minutes means they disagree somewhere
+        auto last = _evictedAt.find(bot->GetGUID());
+        if (last != _evictedAt.end() && now - last->second < 10 * 60 * 1000)
+        {
+            TC_LOG_WARN("server.playerbots", "Playerbots: {} was evicted from enemy ground twice within 10 minutes (map {}, {:.0f}, {:.0f}), leaving it",
+                bot->GetName(), bot->GetMapId(), bot->GetPositionX(), bot->GetPositionY());
+            continue;
+        }
+
+        _evictedAt[bot->GetGUID()] = now;
+        if (Optional<Position> side = SpawnPolicy::SafeDistrict(bot))
+        {
+            TC_LOG_INFO("server.playerbots", "Playerbots: {} stands in the other faction's district (map {}, {:.0f}, {:.0f}), moving it to its own side",
+                bot->GetName(), bot->GetMapId(), bot->GetPositionX(), bot->GetPositionY());
+            if (bot->TeleportTo(bot->GetMapId(), side->GetPositionX(), side->GetPositionY(), side->GetPositionZ(), side->GetOrientation()))
+                UpdateHome(bot->GetGUID(), bot->GetMapId(), *side);
+            continue;
+        }
+
+        TC_LOG_INFO("server.playerbots", "Playerbots: {} stands on enemy ground (map {}, {:.0f}, {:.0f}), placing it on a valid spot",
+            bot->GetName(), bot->GetMapId(), bot->GetPositionX(), bot->GetPositionY());
+        Place(bot);
+    }
+}
+
 void RandomBotMgr::RotateBots()
 {
+    EvictFromEnemyGround();
+
     BotPerf::Scope perfRotate(BotPerf::M_ROTATE);
     uint32 minutes = sPlayerbotsConfig.HotspotRotateMinutes;
     if (!minutes || sPlayerbotsConfig.HotspotProb <= 0.0f || !sPlayerbotMgr->GetRandomBotCount())
@@ -1491,8 +1902,11 @@ void RandomBotMgr::RotateBots()
 
 void RandomBotMgr::UpdateHome(ObjectGuid guid, uint32 mapId, Position const& home)
 {
-    _homes[guid] = home;
-    _homeMaps[guid] = mapId;
+    {
+        std::unique_lock lock(_homesLock);
+        _homes[guid] = home;
+        _homeMaps[guid] = mapId;
+    }
     SaveHome(guid, mapId, home);
 }
 
@@ -1503,6 +1917,7 @@ bool RandomBotMgr::HasHumanOnline() const
 
 bool RandomBotMgr::GetHomeLocation(ObjectGuid guid, uint32& mapId, Position& position) const
 {
+    std::shared_lock lock(_homesLock);
     auto home = _homes.find(guid);
     auto map = _homeMaps.find(guid);
     if (home == _homes.end() || map == _homeMaps.end())
@@ -1513,9 +1928,12 @@ bool RandomBotMgr::GetHomeLocation(ObjectGuid guid, uint32& mapId, Position& pos
     return true;
 }
 
-Position const* RandomBotMgr::GetHome(ObjectGuid guid) const
+Optional<Position> RandomBotMgr::GetHome(ObjectGuid guid) const
 {
+    std::shared_lock lock(_homesLock);
     auto itr = _homes.find(guid);
-    return itr == _homes.end() ? nullptr : &itr->second;
+    if (itr == _homes.end())
+        return {};
+    return itr->second;
 }
 }

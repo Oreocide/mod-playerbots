@@ -17,12 +17,16 @@
 
 #include "GearFactory.h"
 #include "BotSpellBook.h"
+#include "DB2Stores.h"
 #include "Item.h"
+#include "ItemEnchantmentMgr.h"
 #include "ItemTemplate.h"
+#include "GameTime.h"
 #include "Log.h"
 #include "ObjectMgr.h"
 #include "CollectionMgr.h"
 #include "Economy/BotProfessions.h"
+#include "Economy/RaceMounts.h"
 #include "Player.h"
 #include "PlayerbotsConfig.h"
 #include "Random.h"
@@ -33,15 +37,140 @@
 #include "Util.h"
 #include "World.h"
 #include <algorithm>
+#include <cctype>
+#include <cstdlib>
+#include <initializer_list>
+#include <utility>
 
 namespace Playerbots
 {
 namespace
 {
 constexpr uint32 MaxScan = 200;       // candidates inspected per slot before giving up
-constexpr uint32 PickAmongBest = 3;   // the bot takes a random one of the best N usable items
 constexpr int32 GearLevelSlack = 8;   // gear more than this many levels below the bot is replaced
 constexpr uint32 FoodStack = 20;
+
+// Armor slots the class's armor type governs (cloaks, jewelry, trinkets and held items are the same for everyone)
+bool IsGovernedSlotType(uint8 inventoryType)
+{
+    switch (inventoryType)
+    {
+        case INVTYPE_HEAD: case INVTYPE_SHOULDERS: case INVTYPE_CHEST: case INVTYPE_ROBE: case INVTYPE_WAIST:
+        case INVTYPE_LEGS: case INVTYPE_FEET: case INVTYPE_WRISTS: case INVTYPE_HANDS: case INVTYPE_SHIELD:
+            return true;
+        default:
+            return false;
+    }
+}
+
+// The armor type of the class (ChrClasses.ArmorTypeMask: a bit per item armor subclass; a warrior wears plate, a mage
+// cloth) - never a lower type, and no shield for a class without the shield bit
+bool FitsClassArmor(Player const* bot, ItemTemplate const* proto)
+{
+    if (!sPlayerbotsConfig.GearClassArmorOnly || !proto->IsArmor() || !IsGovernedSlotType(proto->GetInventoryType()))
+        return true;
+
+    ChrClassesEntry const* chrClass = sChrClassesStore.LookupEntry(bot->GetClass());
+    if (!chrClass || !chrClass->ArmorTypeMask)
+        return true;
+
+    return (chrClass->ArmorTypeMask & (1u << proto->GetSubClass())) != 0;
+}
+
+int32 PrimaryItemMod(Stats primary)
+{
+    switch (primary)
+    {
+        case STAT_AGILITY: return ITEM_MOD_AGILITY;
+        case STAT_INTELLECT: return ITEM_MOD_INTELLECT;
+        default: return ITEM_MOD_STRENGTH;
+    }
+}
+
+bool HasForeignPrimary(ItemTemplate const* proto, int32 primaryMod)
+{
+    for (uint32 i = 0; i < MAX_ITEM_PROTO_STATS; ++i)
+    {
+        if (proto->GetStatPercentEditor(i) <= 0)
+            continue;
+
+        int32 stat = proto->GetStatModifierBonusStat(i);
+        if (stat != ITEM_MOD_STRENGTH && stat != ITEM_MOD_AGILITY && stat != ITEM_MOD_INTELLECT)
+            continue;
+        if (stat != primaryMod)
+            return true;
+    }
+    return false;
+}
+
+bool AllowedWeapon(Stats primary, uint32 subClass)
+{
+    auto has = [subClass](std::initializer_list<uint32> subs)
+    {
+        return std::find(subs.begin(), subs.end(), subClass) != subs.end();
+    };
+
+    switch (primary)
+    {
+        case STAT_AGILITY:
+            return has({ ITEM_SUBCLASS_WEAPON_DAGGER, ITEM_SUBCLASS_WEAPON_FIST_WEAPON, ITEM_SUBCLASS_WEAPON_SWORD,
+                ITEM_SUBCLASS_WEAPON_AXE, ITEM_SUBCLASS_WEAPON_BOW, ITEM_SUBCLASS_WEAPON_GUN, ITEM_SUBCLASS_WEAPON_CROSSBOW,
+                ITEM_SUBCLASS_WEAPON_WARGLAIVES, ITEM_SUBCLASS_WEAPON_POLEARM, ITEM_SUBCLASS_WEAPON_SWORD2, ITEM_SUBCLASS_WEAPON_AXE2 });
+        case STAT_INTELLECT:
+            return has({ ITEM_SUBCLASS_WEAPON_STAFF, ITEM_SUBCLASS_WEAPON_WAND, ITEM_SUBCLASS_WEAPON_DAGGER,
+                ITEM_SUBCLASS_WEAPON_MACE, ITEM_SUBCLASS_WEAPON_SWORD });
+        default:
+            return has({ ITEM_SUBCLASS_WEAPON_AXE, ITEM_SUBCLASS_WEAPON_AXE2, ITEM_SUBCLASS_WEAPON_MACE, ITEM_SUBCLASS_WEAPON_MACE2,
+                ITEM_SUBCLASS_WEAPON_SWORD, ITEM_SUBCLASS_WEAPON_SWORD2, ITEM_SUBCLASS_WEAPON_POLEARM, ITEM_SUBCLASS_WEAPON_FIST_WEAPON });
+    }
+}
+
+bool FitsWeapon(Player const* bot, ItemTemplate const* proto)
+{
+    if (proto->GetInventoryType() == INVTYPE_HOLDABLE)
+        return bot->GetPrimaryStat() == STAT_INTELLECT;
+    if (!proto->IsWeapon())
+        return true;
+    return AllowedWeapon(bot->GetPrimaryStat(), proto->GetSubClass());
+}
+
+// Retail budget: GetRandomPropertyPoints * StatPercentEditor * 0.0001, the same split Item::GetItemStatValue uses.
+// Weights are shared: the spec only changes which stat is primary. A per-spec table is not seeded.
+float ScoreItem(Player const* bot, ItemTemplate const* proto, bool penalizeIllegal)
+{
+    if (!proto)
+        return -1.f;
+
+    int32 primaryMod = PrimaryItemMod(bot->GetPrimaryStat());
+    bool illegal = HasForeignPrimary(proto, primaryMod) || !FitsWeapon(bot, proto) || !FitsClassArmor(bot, proto);
+    if (penalizeIllegal && illegal)
+        return -1.f;
+
+    uint32 itemLevel = proto->GetBaseItemLevel();
+    float points = GetRandomPropertyPoints(itemLevel, proto->GetQuality(), proto->GetInventoryType(), proto->GetSubClass());
+    float score = float(itemLevel) * 0.5f;
+    for (uint32 i = 0; i < MAX_ITEM_PROTO_STATS; ++i)
+    {
+        int32 percent = proto->GetStatPercentEditor(i);
+        if (percent <= 0)
+            continue;
+
+        float amount = points * percent * 0.0001f;
+        int32 stat = proto->GetStatModifierBonusStat(i);
+        float weight = 0.15f;
+        if (stat == primaryMod)
+            weight = 1.f;
+        else if (stat == ITEM_MOD_STAMINA)
+            weight = 0.5f;
+        else if (stat == ITEM_MOD_CRIT_RATING || stat == ITEM_MOD_HASTE_RATING || stat == ITEM_MOD_VERSATILITY || stat == ITEM_MOD_MASTERY_RATING)
+            weight = 0.4f;
+        score += amount * weight;
+    }
+
+    if (proto->IsWeapon())
+        score += proto->GetDPS(itemLevel) * 10.f;
+    return score;
+}
 
 bool IsTestItem(char const* name)
 {
@@ -218,6 +347,7 @@ void GearFactory::Build()
         total += group.Candidates.size();
 
     _built = true;
+    RaceMounts::Validate();
     TC_LOG_INFO("server.playerbots", "Playerbots: gear factory knows {} equippable items, {} food and {} drink items", total, _food.size(), _drink.size());
 }
 
@@ -244,41 +374,98 @@ bool GearFactory::NeedsGear(Player const* bot) const
             return true;
     }
 
+    // Armor of a type the class cannot wear (cloth on a warrior): gear again, unless that was tried lately and no
+    // item of the right type existed for this level
+    uint32 now = GameTime::GetGameTimeMS();
+    {
+        std::lock_guard lock(_wrongTypeLock);
+        auto retry = _wrongTypeRetryAt.find(bot->GetGUID());
+        if (retry != _wrongTypeRetryAt.end() && now < retry->second)
+            return false;
+    }
+
+    int32 primaryMod = PrimaryItemMod(bot->GetPrimaryStat());
+    for (uint8 slot = EQUIPMENT_SLOT_START; slot < EQUIPMENT_SLOT_END; ++slot)
+        if (Item const* item = bot->GetItemByPos(INVENTORY_SLOT_BAG_0, slot))
+        {
+            ItemTemplate const* proto = item->GetTemplate();
+            if (!FitsClassArmor(bot, proto) || !FitsWeapon(bot, proto) || HasForeignPrimary(proto, primaryMod))
+                return true;
+        }
+
     return false;
 }
 
-bool GearFactory::EquipSlot(Player* bot, Group const& group, uint8 slot, uint32 excludedItem) const
+bool GearFactory::EquipSlot(Player* bot, Group const& group, uint8 slot, uint32 excludedItem, GearOptions const& options) const
 {
     int32 level = bot->GetLevel();
+    uint32 qualityCap = options.QualityCap ? options.QualityCap : sPlayerbotsConfig.RandomGearMaxQuality;
 
     // Candidates are sorted from high to low required level, skip the ones the bot is too low for
     auto first = std::ranges::partition_point(group.Candidates, [level](Candidate const& c) { return c.RequiredLevel > level; });
 
-    std::vector<uint32> usable;
-    uint32 scanned = 0;
-    for (auto itr = first; itr != group.Candidates.end() && scanned < MaxScan && usable.size() < PickAmongBest; ++itr, ++scanned)
+    // strict pass: class armor, a weapon the primary stat uses, and no second primary stat. Wrong items are skipped
+    // without counting against MaxScan. If nothing legal exists the second pass takes what the old rule took.
+    auto search = [&](bool strict) -> std::pair<uint32, float>
     {
-        ItemTemplate const* proto = itr->Proto;
-        if (proto->GetId() == excludedItem)
-            continue;
+        uint32 bestId = 0;
+        float bestScore = -1.f;
+        uint32 scanned = 0;
+        uint32 iterations = 0;
+        for (auto itr = first; itr != group.Candidates.end() && scanned < MaxScan && iterations < MaxScan * 8; ++itr, ++iterations)
+        {
+            ItemTemplate const* proto = itr->Proto;
+            if (proto->GetId() == excludedItem)
+                continue;
+            if (proto->GetQuality() > qualityCap)
+                continue;
+            if (options.ItemLevelCap && proto->GetBaseItemLevel() > options.ItemLevelCap)
+                continue;
+            if (strict && (!FitsClassArmor(bot, proto) || !FitsWeapon(bot, proto) || HasForeignPrimary(proto, PrimaryItemMod(bot->GetPrimaryStat()))))
+                continue;
 
-        if (bot->CanUseItem(proto) != EQUIP_ERR_OK)
-            continue;
+            ++scanned;
+            if (bot->CanUseItem(proto) != EQUIP_ERR_OK)
+                continue;
+            if (!proto->IsUsableByLootSpecialization(bot, false))
+                continue;
 
-        if (!proto->IsUsableByLootSpecialization(bot, false))
-            continue;
+            uint16 dest = 0;
+            if (bot->CanEquipNewItem(slot, dest, proto->GetId(), true) != EQUIP_ERR_OK)
+                continue;
 
-        uint16 dest = 0;
-        if (bot->CanEquipNewItem(slot, dest, proto->GetId(), true) != EQUIP_ERR_OK)
-            continue;
+            float score = ScoreItem(bot, proto, strict);
+            if (score > bestScore)
+            {
+                bestScore = score;
+                bestId = proto->GetId();
+            }
+        }
+        return { bestId, bestScore };
+    };
 
-        usable.push_back(proto->GetId());
+    auto [itemId, bestScore] = search(true);
+    if (!itemId)
+    {
+        std::tie(itemId, bestScore) = search(false);
+        if (itemId)
+        {
+            std::lock_guard lock(_wrongTypeLock);
+            _wrongTypeRetryAt[bot->GetGUID()] = GameTime::GetGameTimeMS() + 60 * 60 * 1000;
+            TC_LOG_DEBUG("server.playerbots", "Playerbots: no legal item for {} (level {}, slot {}), took a fallback", bot->GetName(), bot->GetLevel(), uint32(slot));
+        }
     }
 
-    if (usable.empty())
+    if (!itemId)
         return false;
 
-    uint32 itemId = usable[urand(0, uint32(usable.size() - 1))];
+    if (Item const* worn = bot->GetItemByPos(INVENTORY_SLOT_BAG_0, slot))
+    {
+        float wornScore = ScoreItem(bot, worn->GetTemplate(), true);
+        if (wornScore >= bestScore && wornScore >= 0.f)
+            return false;
+    }
+
     uint16 dest = 0;
     if (bot->CanEquipNewItem(slot, dest, itemId, true) != EQUIP_ERR_OK)
         return false;
@@ -298,8 +485,50 @@ bool GearFactory::EquipSlot(Player* bot, Group const& group, uint8 slot, uint32 
 
 void GearFactory::Equip(Player* bot) const
 {
+    Equip(bot, GearOptions{});
+}
+
+GearFactory::GearArgKind GearFactory::ParseGearArg(std::string const& arg, GearOptions& options) const
+{
+    options = {};
+    if (arg.empty())
+        return GearArgKind::Ok;
+
+    std::string text = arg;
+    strToLower(text);
+    if (text == "reset")
+    {
+        options.Reset = true;
+        return GearArgKind::Ok;
+    }
+    if (text == "match")
+        return GearArgKind::Match;
+    if (text == "white")
+        options.QualityCap = ITEM_QUALITY_NORMAL;
+    else if (text == "green")
+        options.QualityCap = ITEM_QUALITY_UNCOMMON;
+    else if (text == "blue")
+        options.QualityCap = ITEM_QUALITY_RARE;
+    else if (text == "purple" || text == "epic")
+        options.QualityCap = ITEM_QUALITY_EPIC;
+    else if (!text.empty() && std::all_of(text.begin(), text.end(), [](unsigned char c) { return std::isdigit(c) != 0; }))
+        options.ItemLevelCap = uint32(std::strtoul(text.c_str(), nullptr, 10));
+    else
+        return GearArgKind::Bad;
+
+    return options.ItemLevelCap == 0 && options.QualityCap == 0 ? GearArgKind::Bad : GearArgKind::Ok;
+}
+
+uint32 GearFactory::Equip(Player* bot, GearOptions const& options) const
+{
     if (!_built || !bot || !bot->IsInWorld())
-        return;
+        return 0;
+
+    if (options.Reset)
+        for (uint8 slot = EQUIPMENT_SLOT_START; slot < EQUIPMENT_SLOT_END; ++slot)
+            if (slot != EQUIPMENT_SLOT_BODY && slot != EQUIPMENT_SLOT_TABARD)
+                if (bot->GetItemByPos(INVENTORY_SLOT_BAG_0, slot))
+                    bot->DestroyItem(INVENTORY_SLOT_BAG_0, slot, true);
 
     uint32 equipped = 0;
     bool twoHanded = false;
@@ -308,11 +537,10 @@ void GearFactory::Equip(Player* bot) const
         uint32 previous = 0;
         for (uint8 slot : group.Slots)
         {
-            // Off hand is left alone for two handed weapons
             if (slot == EQUIPMENT_SLOT_OFFHAND && twoHanded)
                 continue;
 
-            if (EquipSlot(bot, group, slot, previous))
+            if (EquipSlot(bot, group, slot, previous, options))
             {
                 ++equipped;
                 if (Item const* item = bot->GetItemByPos(INVENTORY_SLOT_BAG_0, slot))
@@ -322,11 +550,18 @@ void GearFactory::Equip(Player* bot) const
                         twoHanded = IsTwoHanded(item->GetTemplate());
                 }
             }
+            else if (Item const* item = bot->GetItemByPos(INVENTORY_SLOT_BAG_0, slot))
+            {
+                previous = item->GetEntry();
+                if (slot == EQUIPMENT_SLOT_MAINHAND)
+                    twoHanded = IsTwoHanded(item->GetTemplate());
+            }
         }
     }
 
     bot->AutoUnequipOffhandIfNeed();
     TC_LOG_DEBUG("server.playerbots", "Playerbots: equipped {} items on {} (level {})", equipped, bot->GetName(), bot->GetLevel());
+    return equipped;
 }
 
 uint32 GearFactory::PickConsumable(std::vector<Consumable> const& list, uint32 level)
@@ -351,13 +586,9 @@ void GearFactory::Supply(Player* bot) const
             bot->StoreNewItem(dest, itemId, true);
     };
 
-    // a player of this level rides: the faction's basic vendor mount (Chestnut Mare / Brown Wolf) into the collection
-    if (bot->GetLevel() >= sPlayerbotsConfig.RpgMountMinLevel && bot->GetSession())
-    {
-        uint32 mount = Player::TeamForRace(bot->GetRace()) == ALLIANCE ? 6648 : 6654;
-        if (!bot->HasSpell(mount))
-            bot->GetSession()->GetCollectionMgr()->AddMount(mount, MOUNT_STATUS_NONE);
-    }
+    // a player of this level rides: riding skill, and a vendor mount of the bot's own race (a goblin gets a trike, not the
+    // Alliance horse) in the collection
+    RaceMounts::Grant(bot);
 
     topUp(PickConsumable(_food, bot->GetLevel()));
     if (bot->GetMaxPower(POWER_MANA) > 0)

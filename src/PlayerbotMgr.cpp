@@ -16,6 +16,7 @@
  */
 
 #include "PlayerbotMgr.h"
+#include "Economy/BotProfessions.h"
 #include "BotPerf.h"
 #include "CharacterCache.h"
 #include "Perf/BotPerfReporter.h"
@@ -105,6 +106,7 @@ bool PlayerbotMgr::AddRandomBot(uint32 accountId, std::string const& accountName
         uint8(sWorld->getIntConfig(CONFIG_EXPANSION)), 0, "Win", Minutes(0), 0, ClientBuild::VariantId{}, LOCALE_enUS, 0, false, true);
 
     session->LoadPermissions();
+    BotProfessions::SeedOffline(character);
     // What a random bot reacts to: dungeon finder proposals, and party and guild invitations of players
     session->SetBotPacketHandler([character](WorldPacket const& packet)
     {
@@ -373,7 +375,7 @@ void PlayerbotMgr::OnBotLoggedIn(ObjectGuid guid, BotHolder& holder)
         sRandomBotMgr->Prepare(bot);
         holder.AI = std::make_unique<PlayerbotAI>(bot, ObjectGuid::Empty, 0);
         holder.AI->AddRandomBotStrategies();
-        if (Position const* home = sRandomBotMgr->GetHome(bot->GetGUID()))
+        if (Optional<Position> home = sRandomBotMgr->GetHome(bot->GetGUID()))
             holder.AI->SetHome(*home);
         // zone channels (General, Trade, LFG...) are joined by the core on a zone change, a bot that logged in without one has none yet
         if (sPlayerbotsConfig.RandomJoinChannels && !bot->IsBeingTeleported() && bot->GetJoinedChannels().empty())

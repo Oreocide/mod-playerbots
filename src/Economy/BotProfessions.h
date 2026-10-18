@@ -18,14 +18,22 @@
 #ifndef PlayerbotsBotProfessions_h__
 #define PlayerbotsBotProfessions_h__
 
+#include "ObjectGuid.h"
+
 class Player;
 
 namespace Playerbots::BotProfessions
 {
 /// A player of level 10+ has two primary professions that go together (herbalism + alchemy, mining + blacksmithing,
-/// skinning + leatherworking...) plus cooking and fishing. The pair is chosen once from the character's guid, the skill
-/// levels follow the character's level (the gathering locks are checked against the main skill line).
+/// skinning + leatherworking...) plus cooking and fishing. The pair is chosen once from the character's guid. A character
+/// that SeedOffline has seeded already has everything at 900; others follow the character's level (the gathering locks are
+/// checked against the main skill line).
 void Maintain(Player* bot);
+
+/// Raises the profession skills of an offline character to 900 (its primaries or the pair it would draw, cooking, fishing, every
+/// expansion line), so that no skill is raised in the world and the achievements those skills complete are not announced to the
+/// guild and to nearby players.
+void SeedOffline(ObjectGuid guid);
 
 /// true when the bot has herbalism or mining
 bool CanGather(Player const* bot);

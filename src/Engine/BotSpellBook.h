@@ -35,6 +35,8 @@ class BotSpellBook
 public:
     /// Dummy, test, and broken trigger spells. GiveLevel learns these; they stall the server if left on a bot
     static bool IsJunk(SpellInfo const* spellInfo);
+    /// Starting-zone create auras (gnome Irradiated, undead Rigor Mortis) plus GiveLevel junk
+    static void StripStartingAuras(Player* bot);
     /// Removes dummy/test spells and auras (including ones applied by items, not just the spellbook)
     static void StripJunk(Player* bot);
 

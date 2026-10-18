@@ -21,6 +21,8 @@
 #include "ObjectGuid.h"
 #include "Optional.h"
 #include <ctime>
+#include <deque>
+#include <mutex>
 #include <string>
 #include <unordered_map>
 #include <unordered_set>
@@ -38,8 +40,9 @@ struct BotEvent
 
 /// Access to the playerbots_* tables of the characters database (modules/mod-playerbots/data/sql/db-characters).
 /// Everything is read once at startup (synchronous, world thread) into memory, writes go out asynchronously.
-/// All methods except IsQuestBlacklisted() must be called from the world thread; IsQuestBlacklisted()
-/// only reads data that never changes after Load() and is safe from map threads.
+/// Values and events (GetValue/SetValue/EraseValue/GetEvent/SetEvent) are locked: map threads write them
+/// (homes and anchors of bots that moved). Names and account marks are world thread only. IsQuestBlacklisted()
+/// only reads data that never changes after Load() and is safe from any thread.
 class PlayerbotRepository
 {
 public:
@@ -68,6 +71,19 @@ public:
     // playerbots_quest_blacklist
     bool IsQuestBlacklisted(uint32 questId) const { return _questBlacklist.contains(questId); }
 
+    struct MemoryLine
+    {
+        std::string Kind;
+        std::string Key;
+        std::string Payload;
+        time_t At = 0;
+    };
+
+    /// Newest slot is 0. place and goal keep 16, person keeps 32. One transaction per push.
+    void Remember(ObjectGuid bot, std::string const& kind, std::string const& key, std::string const& payload);
+    void ForgetMemory(ObjectGuid bot);
+    std::vector<MemoryLine> RecentMemory(ObjectGuid bot, uint32 limit) const;
+
 private:
     using EventKey = std::pair<uint32, std::string>;    // (bot counter, event) per owner
     struct EventKeyHash
@@ -79,10 +95,18 @@ private:
     static std::string Escaped(std::string value);
     static bool Expired(BotEvent const& event, time_t now);
 
+    mutable std::mutex _lock;   // _store and _events
     std::unordered_map<uint32, std::unordered_map<std::string, std::string>> _store;
     std::unordered_map<std::pair<uint64, std::string>, BotEvent, EventKeyHash> _events;   // ((owner << 32) | bot, event)
     std::vector<std::vector<std::string>> _names;
     std::unordered_set<uint32> _questBlacklist;
+    struct MemorySlot
+    {
+        std::string Key;
+        std::string Payload;
+        time_t At = 0;
+    };
+    std::unordered_map<uint32, std::unordered_map<std::string, std::deque<MemorySlot>>> _memory;
     bool _loaded = false;
 };
 }

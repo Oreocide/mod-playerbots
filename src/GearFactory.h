@@ -19,6 +19,10 @@
 #define PlayerbotsGearFactory_h__
 
 #include "Define.h"
+#include "ObjectGuid.h"
+#include <mutex>
+#include <string>
+#include <unordered_map>
 #include <vector>
 
 class Player;
@@ -53,6 +57,22 @@ public:
     /// Bags in the empty bag slots and pocket money of a level appropriate size (never takes anything away)
     void Provision(Player* bot) const;
 
+    /// Caps for one Equip() call. QualityCap 0 uses Playerbots.RandomGear.MaxQuality. ItemLevelCap 0 means no cap.
+    struct GearOptions
+    {
+        uint32 QualityCap = 0;
+        uint32 ItemLevelCap = 0;
+        bool Reset = false;
+    };
+
+    enum class GearArgKind { Ok, Match, Bad };
+
+    /// "white|green|blue|purple|<ilvl>|reset". Match means the caller fills ItemLevelCap from a player's average.
+    GearArgKind ParseGearArg(std::string const& arg, GearOptions& options) const;
+
+    /// How many slots changed. Keeps a worn piece that already scores at least as high, unless Reset stripped it first.
+    uint32 Equip(Player* bot, GearOptions const& options) const;
+
 private:
     struct Candidate
     {
@@ -75,7 +95,7 @@ private:
         int32 RequiredLevel = 0;
     };
 
-    bool EquipSlot(Player* bot, Group const& group, uint8 slot, uint32 excludedItem) const;
+    bool EquipSlot(Player* bot, Group const& group, uint8 slot, uint32 excludedItem, GearOptions const& options) const;
     static uint32 PickConsumable(std::vector<Consumable> const& list, uint32 level);
 
     bool _built = false;
@@ -90,6 +110,11 @@ private:
     std::vector<BagItem> _bags;
     std::vector<Consumable> _food;
     std::vector<Consumable> _drink;
+
+    // Bots that wore armor of a type their class cannot wear are re-geared once; a bot for whom no item of the right type
+    // existed (the fallback pass) is left alone until this time (ms), so the re-gear does not repeat every minute
+    mutable std::mutex _wrongTypeLock;
+    mutable std::unordered_map<ObjectGuid, uint32> _wrongTypeRetryAt;
 };
 }
 

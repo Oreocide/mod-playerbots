@@ -19,8 +19,10 @@
 #define RandomBotMgr_h__
 
 #include "ObjectGuid.h"
+#include "Optional.h"
 #include "Position.h"
 #include <memory>
+#include <shared_mutex>
 #include <string>
 #include <unordered_map>
 #include <unordered_set>
@@ -51,7 +53,8 @@ public:
     void Prepare(Player* bot);
     /// The bot was moved elsewhere on purpose (summon, teleport): its area is now where it stands
     void UpdateHome(ObjectGuid guid, uint32 mapId, Position const& home);
-    Position const* GetHome(ObjectGuid guid) const;
+    /// Copy, not a pointer: map threads write homes (UpdateHome) while other threads read them
+    Optional<Position> GetHome(ObjectGuid guid) const;
 
     /// A bot placed at a hotspot belongs there: it wanders and camps within Radius of Center instead of
     /// drifting wherever its last walk ended, until a rotation or a placement elsewhere releases it
@@ -61,7 +64,10 @@ public:
         Position Center;
         float Radius = 60.0f;
     };
-    Anchor const* GetAnchor(ObjectGuid guid) const;
+    /// Random bots standing on ground that attacks their team (an enemy-only zone, an enemy town: summoned there,
+    /// moved by a GM, left there by an old placement) go back to a valid spot. World thread, about once a minute.
+    void EvictFromEnemyGround();
+    Optional<Anchor> GetAnchor(ObjectGuid guid) const;
     void ClearAnchor(ObjectGuid guid);
     /// Map and position a bot was placed at, false if unknown
     bool GetHomeLocation(ObjectGuid guid, uint32& mapId, Position& position) const;
@@ -113,6 +119,10 @@ private:
         uint8 MinLevel = 1;
         uint8 MaxLevel = 1;
         uint32 Faction = 0; // 0 = either, otherwise ALLIANCE or HORDE
+        uint32 ZoneId = 0;  // the graveyard's zone (its AreaTable row decides who owns the ground)
+        mutable uint8 HostileMask = 0; // bit 0: inside a town that attacks Alliance bots, bit 1: Horde (filled when the hub index exists)
+        mutable uint16 Weight = 1;     // how often this zone is chosen: capitals high, desolate graveyards 1
+        mutable float Scatter = 80.0f; // yards around the graveyard a bot may stand, still inside the zone
     };
 
     struct Creation
@@ -164,6 +174,8 @@ private:
     bool NeedsRandomizeFirst(Player const* bot) const;
     uint32 StartLevel(Player const* bot) const;
     Spot const* PickSpot(uint8 level, uint32 faction, ObjectGuid except) const;
+    /// A ground point around the graveyard, inside its zone. Under the grid cap, only a grid a bot already occupies.
+    Position ScatterSpot(Spot const& spot, ObjectGuid except) const;
     bool PlaceAtHotspot(Player* bot);
 
     /// Every loaded 533 yard grid costs ~100-175 MB (terrain, vmaps, nav mesh, all spawns), so the online bots may only
@@ -174,6 +186,11 @@ private:
     bool LoadAnchor(ObjectGuid guid, Anchor& anchor);
     /// Idle bots roll again for a hotspot or the open world, a small share per minute
     void RotateBots();
+    /// Far bots: one-time level from the band weights, then a relocate every 1-5 hours with a small chance of +1 level.
+    /// A corpse with nobody near is resurrected after 60-300 seconds and placed. World thread.
+    void MaintainPopulation();
+    uint8 RollBandLevel(uint32 floor, uint32 cap) const;
+    void ApplyLevel(Player* bot, uint8 level, bool pickSpec);
 
     bool _prepared = false;
     bool _active = false;
@@ -191,10 +208,19 @@ private:
     std::vector<Spot> _spots;
     std::unordered_set<ObjectGuid> _randomized;
     std::unordered_set<ObjectGuid> _pendingRandomize;
+    // _homes, _homeMaps and _anchors are written from map threads (PlayerbotAI::OnInterrupted, rpg anchor checks)
+    // and the world thread, so every access holds _homesLock
+    mutable std::shared_mutex _homesLock;
     std::unordered_map<ObjectGuid, Position> _homes;
     std::unordered_map<ObjectGuid, uint32> _homeMaps;
     std::unordered_map<ObjectGuid, Anchor> _anchors;
     uint32 _rotateTimer = 0;
+    uint32 _populationTimer = 0;
+    std::unordered_set<ObjectGuid> _banded;                 // world thread: level already drawn from the band weights
+    std::unordered_map<ObjectGuid, uint32> _nextPopulationAt; // unix seconds of the next far relocate
+    std::unordered_map<ObjectGuid, uint32> _reviveAt;       // game time ms when a far corpse may be raised
+    mutable bool _spotHostilityKnown = false;   // Spot::HostileMask is filled
+    std::unordered_map<ObjectGuid, uint32> _evictedAt;   // world thread only: when a bot was last moved off enemy ground (ms)
     std::unique_ptr<Creation> _creation;
     std::unordered_set<uint32> _allowedMaps; // empty = every outdoor continent
     uint32 _humanTimer = 0;                  // ms with/without a real player, depending on _humansOnline

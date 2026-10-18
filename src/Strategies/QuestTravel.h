@@ -38,6 +38,8 @@ bool IsBuilt();
 uint32 GetPlanCount();
 bool PickPoi(Player* bot, uint32 questId, bool turnIn, Position& out);
 bool NearestHunt(Player* bot, Position& out);
+/// XP of one quest the bot could be doing. Does not accept or complete it.
+uint32 AbstractXp(Player* bot);
 }
 
 std::unique_ptr<Strategy> CreateQuestStrategy();

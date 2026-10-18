@@ -16,6 +16,8 @@
  */
 
 #include "PlayerbotAI.h"
+#include "Goal/GoalStore.h"
+#include "Strategies/QuestTravel.h"
 #include "BotPerf.h"
 #include "GearFactory.h"
 #include "Perf/BotPerfReporter.h"
@@ -37,6 +39,7 @@
 #include "GameTime.h"
 #include "Log.h"
 #include "RandomBotMgr.h"
+#include "Spawn/SpawnPolicy.h"
 #include "PlayerbotsConfig.h"
 #include "SocialMgr.h"
 #include "Talents/BotTalents.h"
@@ -82,6 +85,7 @@ PlayerbotAI::PlayerbotAI(Player* bot, ObjectGuid master, uint8 formationIndex)
 
 PlayerbotAI::~PlayerbotAI()
 {
+    GoalStore::Forget(_botGuid);
     SaveState();
 }
 
@@ -227,6 +231,23 @@ uint32 PlayerbotAI::RotatingSlot(uint32 max) const
 
 bool PlayerbotAI::IsActiveAlone()
 {
+    // test knob (Playerbots.Debug.ForceActive): about that many random bots run their full AI with no player near, so a
+    // headless soak exercises the map-thread AI paths. The pick is a fixed hash of the guid, no rotation.
+    if (uint32 forceActive = sPlayerbotsConfig.DebugForceActive)
+    {
+        uint32 h = uint32(_bot->GetGUID().GetCounter());
+        h ^= h >> 16;
+        h *= 0x7feb352d;
+        h ^= h >> 15;
+        h *= 0x846ca68b;
+        h ^= h >> 16;
+        if (h % std::max<uint32>(1, sPlayerbotsConfig.RandomCount) < forceActive)
+        {
+            _simClass = BotPerf::CLS_BOT_SIM_ROTATION;
+            return true;
+        }
+    }
+
     uint32 pct = sPlayerbotsConfig.BotActiveAlone;
     if (pct >= 100)
     {
@@ -293,7 +314,13 @@ bool PlayerbotAI::IsActiveAlone()
         };
 
         if (!forced)
-            forced = qualifies(nearestZoneSq, zoneRange, zoneCap) || qualifies(nearestRadiusSq, radius, radiusCap);
+        {
+            // Close enough to be on screen. The slot cap thins the outer band only: after bots stopped
+            // stacking on one graveyard, that cap was leaving the ones a player was looking at asleep.
+            constexpr float SeenYards = 100.0f;
+            bool seen = nearestRadiusSq >= 0.0f && nearestRadiusSq <= SeenYards * SeenYards;
+            forced = seen || qualifies(nearestZoneSq, zoneRange, zoneCap) || qualifies(nearestRadiusSq, radius, radiusCap);
+        }
     }
 
     // a bot a player just left does not fall asleep at once
@@ -332,7 +359,7 @@ bool PlayerbotAI::IsActiveAlone()
     return RotatingSlot(100) < pct;
 }
 
-bool PlayerbotAI::SnapToGround(bool notify)
+bool PlayerbotAI::SnapToGround(bool notify, float lift)
 {
     if (!_bot->IsInWorld() || _bot->IsBeingTeleported())
         return false;
@@ -352,12 +379,16 @@ bool PlayerbotAI::SnapToGround(bool notify)
 
     float x = _bot->GetPositionX();
     float y = _bot->GetPositionY();
-    float stand = GetStandZ(_bot, x, y, _bot->GetPositionZ());
+    float stand = GetStandZ(_bot, x, y, _bot->GetPositionZ(), lift);
     if (std::fabs(_bot->GetPositionZ() - stand) < 0.05f)
     {
         _grounded = true;
         return true;
     }
+
+    if (std::fabs(_bot->GetPositionZ() - stand) > 1.0f)
+        TC_LOG_INFO("server.playerbots.stuck", "Playerbots: ground snap for {}: map {} at ({:.1f}, {:.1f}), z {:.1f} -> {:.1f} (dz {:.1f})",
+            _bot->GetName(), _bot->GetMapId(), x, y, _bot->GetPositionZ(), stand, stand - _bot->GetPositionZ());
 
     if (notify)
         _bot->NearTeleportTo(x, y, stand, _bot->GetOrientation());
@@ -414,10 +445,14 @@ void PlayerbotAI::Update(uint32 diff)
             _bot->AttackStop();
             _bot->StopMoving();
             _bot->GetMotionMaster()->Clear();
+            // Gravity is about to be switched off, so the client will keep whatever height it was given.
+            // Tell it the floor when someone is close enough to see the hover; no lift, or they float.
+            if (!_grounded)
+                SnapToGround(sPlayerbotMgr->HasHumanWithin(_bot, 200.0f), 0.0f);
             _bot->SetDisableGravity(true);
         }
-        if (!_grounded)
-            SnapToGround(false);
+        else if (!_grounded)
+            SnapToGround(false, 0.0f);
         if (_grounded && _master.IsEmpty())
             SetHome(_bot->GetPosition());
 
@@ -431,6 +466,16 @@ void PlayerbotAI::Update(uint32 diff)
                 _idle = false;       // it was placed somewhere: the idle setup and the ground snap run again
                 _grounded = false;
             }
+        }
+        if (sPlayerbotsConfig.GoalEnable && GameTime::GetGameTimeMS() >= _nextGoalMs)
+        {
+            if (GoalStore::ReadyForAbstractXp(_bot->GetGUID(), GameTime::GetGameTimeMS()))
+                if (uint32 xp = QuestTravel::AbstractXp(_bot))
+                {
+                    _bot->GiveXP(xp, nullptr);
+                    sPlayerbotRepository->Remember(_bot->GetGUID(), "quest", "abstract", std::to_string(xp));
+                }
+            _nextGoalMs = GoalStore::OnFrozen(*this, GameTime::GetGameTimeMS());
         }
         return;
     }
@@ -456,8 +501,7 @@ void PlayerbotAI::Update(uint32 diff)
     RememberStand();
     DetectInterruption();
 
-    if (_bot->HasAura(155882))
-        _bot->RemoveAurasDueToSpell(155882);
+    BotSpellBook::StripStartingAuras(_bot);
 
     {
         BotPerf::Scope perfGear(BotPerf::M_GEAR, _bot->GetSession()->GetBotPerfClass());
@@ -536,7 +580,8 @@ void PlayerbotAI::OnInterrupted()
     // The area the bot works around is where it is now (not inside dungeons and battlegrounds, and not while
     // it follows a player)
     Map* map = _bot->GetMap();
-    if (_master.IsEmpty() && !GetMaster() && map && !map->Instanceable())
+    // never on ground that attacks the bot's team: the old home stays, and the eviction pass moves the bot back
+    if (_master.IsEmpty() && !GetMaster() && map && !map->Instanceable() && !SpawnPolicy::IsEnemyGround(_bot))
     {
         SetHome(_bot->GetPosition());
         sRandomBotMgr->UpdateHome(_botGuid, map->GetId(), _bot->GetPosition());
@@ -566,6 +611,9 @@ void PlayerbotAI::RememberStand()
     if (_bot->GetPositionZ() > _lastStand.GetPositionZ() - 8.0f && !_bot->IsFalling())
         return;
 
+    TC_LOG_INFO("server.playerbots.stuck", "Playerbots: fall rescue for {}: map {} at ({:.1f}, {:.1f}, {:.1f}) falling={}, back to ({:.1f}, {:.1f}, {:.1f})",
+        _bot->GetName(), _bot->GetMapId(), _bot->GetPositionX(), _bot->GetPositionY(), _bot->GetPositionZ(), _bot->IsFalling(),
+        _lastStand.GetPositionX(), _lastStand.GetPositionY(), _lastStand.GetPositionZ());
     _bot->GetMotionMaster()->Clear();
     _bot->StopMoving();
     _bot->NearTeleportTo(_lastStand.GetPositionX(), _lastStand.GetPositionY(), _lastStand.GetPositionZ(), _lastStand.GetOrientation());
@@ -657,6 +705,9 @@ void PlayerbotAI::AddRandomBotStrategies()
 
     if (std::unique_ptr<Strategy> pvp = CreateStrategy("pvp"))
         _engine.AddStrategy(std::move(pvp));
+
+    if (std::unique_ptr<Strategy> world = CreateStrategy("world"))
+        _engine.AddStrategy(std::move(world));
 
     if (sPlayerbotsConfig.RandomQuests)
         if (std::unique_ptr<Strategy> quest = CreateStrategy("quest"))

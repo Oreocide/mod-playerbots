@@ -17,8 +17,11 @@
 
 #include "Economy/BotProfessions.h"
 #include "DB2Stores.h"
+#include "DatabaseEnv.h"
 #include "Player.h"
+#include "Log.h"
 #include "SharedDefines.h"
+#include "StringFormat.h"
 #include <algorithm>
 #include <array>
 #include <unordered_map>
@@ -51,9 +54,20 @@ constexpr uint32 Primaries[] =
     SKILL_JEWELCRAFTING, SKILL_LEATHERWORKING, SKILL_MINING, SKILL_SKINNING, SKILL_TAILORING
 };
 
+bool CanLearn(uint8 race, uint8 classId, uint32 skill)
+{
+    return sDB2Manager.GetSkillRaceClassInfo(skill, race, classId) != nullptr;
+}
+
 bool CanLearn(Player const* bot, uint32 skill)
 {
-    return sDB2Manager.GetSkillRaceClassInfo(skill, bot->GetRace(), bot->GetClass()) != nullptr;
+    return CanLearn(bot->GetRace(), bot->GetClass(), skill);
+}
+
+// the same character always draws the same pair
+Pair const& PairFor(ObjectGuid guid)
+{
+    return Pairs[(guid.GetCounter() * 2654435761u >> 8) % Pairs.size()];
 }
 
 uint16 SkillFor(Player const* bot)
@@ -99,6 +113,76 @@ bool CanGather(Player const* bot)
     return bot->HasSkill(SKILL_HERBALISM) || bot->HasSkill(SKILL_MINING);
 }
 
+void SeedOffline(ObjectGuid guid)
+{
+    // A skill raised on a bot that is in the world completes achievements one by one, and the core announces each to the guild and to
+    // every player in range: a new bot raises dozens at once, a levelling bot a tier at a time (Maintain used to follow level * 8).
+    // Skills loaded from the database complete nothing, so before its session starts loading a character gets every profession it
+    // has, or would draw, at 900. Maintain then has nothing left to raise in the world.
+    std::string primaries;
+    for (uint32 skill : Primaries)
+        primaries += (primaries.empty() ? "" : ",") + std::to_string(skill);
+
+    QueryResult character = CharacterDatabase.PQuery("SELECT race, class FROM characters WHERE guid = {}", guid.GetCounter());
+    if (!character)
+        return;
+
+    uint8 race = (*character)[0].GetUInt8();
+    uint8 classId = (*character)[1].GetUInt8();
+
+    std::unordered_map<uint32, uint32> held;
+    if (QueryResult rows = CharacterDatabase.PQuery("SELECT skill, value FROM character_skills WHERE guid = {} AND skill IN ({}, {}, {})",
+        guid.GetCounter(), uint32(SKILL_COOKING), uint32(SKILL_FISHING), primaries))
+    {
+        do
+            held[(*rows)[0].GetUInt32()] = (*rows)[1].GetUInt32();
+        while (rows->NextRow());
+    }
+
+    // a character with a primary profession keeps its own, a fresh one draws the pair
+    std::vector<uint32> roots;
+    bool hasPrimary = std::ranges::any_of(Primaries, [&](uint32 skill) { return held.contains(skill); });
+    if (hasPrimary)
+    {
+        for (uint32 skill : Primaries)
+            if (held.contains(skill))
+                roots.push_back(skill);
+    }
+    else
+    {
+        Pair const& pair = PairFor(guid);
+        for (uint32 skill : { pair.First, pair.Second })
+            if (CanLearn(race, classId, skill))
+                roots.push_back(skill);
+    }
+
+    for (uint32 skill : { uint32(SKILL_COOKING), uint32(SKILL_FISHING) })
+        if (CanLearn(race, classId, skill))
+            roots.push_back(skill);
+
+    constexpr uint32 value = 900;
+    bool complete = std::ranges::all_of(roots, [&](uint32 root) { auto itr = held.find(root); return itr != held.end() && itr->second >= value; });
+    if (complete)
+        return;
+
+    CharacterDatabaseTransaction trans = CharacterDatabase.BeginTransaction();
+    for (uint32 root : roots)
+    {
+        std::vector<uint32> lines{ root };
+        for (uint32 child : ChildrenOf(root))
+            lines.push_back(child);
+
+        // the children are not checked, like Raise (bots that Raise already served load these lines without errors); the update
+        // keeps the profession slot of a line the character already has
+        for (uint32 line : lines)
+            trans->Append(Trinity::StringFormat("INSERT INTO character_skills (guid, skill, value, max, professionSlot) VALUES ({0}, {1}, {2}, {2}, -1) "
+                "ON DUPLICATE KEY UPDATE value = GREATEST(value, {2}), max = GREATEST(max, {2})", guid.GetCounter(), line, value).c_str());
+    }
+    // synchronous: the login query holder is queued right after this and must see the rows
+    CharacterDatabase.DirectCommitTransaction(trans);
+    TC_LOG_DEBUG("server.playerbots", "Playerbots: professions topped up for {}", guid.ToString());
+}
+
 void Maintain(Player* bot)
 {
     if (!bot || bot->GetLevel() < 10)
@@ -109,8 +193,7 @@ void Maintain(Player* bot)
     bool hasPrimary = std::ranges::any_of(Primaries, [bot](uint32 skill) { return bot->HasSkill(skill); });
     if (!hasPrimary)
     {
-        // the same character always draws the same pair
-        Pair const& pair = Pairs[(bot->GetGUID().GetCounter() * 2654435761u >> 8) % Pairs.size()];
+        Pair const& pair = PairFor(bot->GetGUID());
         for (uint32 skill : { pair.First, pair.Second })
             if (!CanLearn(bot, skill))
                 continue;

@@ -16,9 +16,13 @@
  */
 
 #include "QuestTravel.h"
+#include "AreaTriggerPackets.h"
 #include "Creature.h"
 #include "CreatureData.h"
+#include "DatabaseEnv.h"
 #include "DB2Stores.h"
+#include "GameObject.h"
+#include "GameObjectPackets.h"
 #include "Db/PlayerbotRepository.h"
 #include "Engine.h"
 #include "GameTime.h"
@@ -26,6 +30,7 @@
 #include "ItemTemplate.h"
 #include "Log.h"
 #include "MotionMaster.h"
+#include "ObjectAccessor.h"
 #include "ObjectMgr.h"
 #include "Player.h"
 #include "PlayerbotAI.h"
@@ -36,6 +41,11 @@
 #include "RandomBotMgr.h"
 #include "Travel/PhaseGuard.h"
 #include "Travel/TravelMgr.h"
+#include "World/WorldActionQueue.h"
+#include "Loot.h"
+#include "LootPackets.h"
+#include "Opcodes.h"
+#include "WorldSession.h"
 #include <mutex>
 #include <algorithm>
 #include <unordered_map>
@@ -64,13 +74,28 @@ struct Spawn
     Position Pos;
 };
 
+enum class StepKind : uint8
+{
+    Kill,
+    UseGo,
+    Talk,
+    Explore
+};
+
+struct Step
+{
+    int32 ObjectiveId = 0;
+    StepKind Kind = StepKind::Kill;
+    bool Enter = false;   // type 19, credited at the trigger; type 10 uses the area-trigger opcode
+    std::vector<uint32> Entries;
+};
+
 struct Plan
 {
     uint32 QuestId = 0;
     std::vector<uint32> Givers;    // creature entries
     std::vector<uint32> Enders;
-    // per kill objective: the creature entries that count for it
-    std::vector<std::vector<uint32>> Hunt;
+    std::vector<Step> Steps;
 };
 
 struct GiverSpot
@@ -88,10 +113,23 @@ struct Index
     std::vector<Plan> Plans;
     std::unordered_map<uint32, uint32> PlanByQuest;
     std::unordered_map<uint32, std::vector<Spawn>> Spawns;          // creature entry -> spawns
+    std::unordered_map<uint32, std::vector<Spawn>> GoSpawns;        // gameobject entry -> spawns
+    std::unordered_map<uint32, std::vector<Spawn>> AtSpawns;        // area trigger id -> position
     std::unordered_map<uint32, std::vector<GiverSpot>> GiversByMap; // map -> quest giver spawns
 };
 
 Index sIndex;
+
+std::vector<Spawn> const* StepSpawns(Step const& step, uint32 entry)
+{
+    std::unordered_map<uint32, std::vector<Spawn>> const* table = &sIndex.Spawns;
+    if (step.Kind == StepKind::UseGo)
+        table = &sIndex.GoSpawns;
+    else if (step.Kind == StepKind::Explore)
+        table = &sIndex.AtSpawns;
+    auto itr = table->find(entry);
+    return itr == table->end() ? nullptr : &itr->second;
+}
 
 constexpr float FarDistance = 250.0f;           // further than this (or on another map) the bot travels by route
 constexpr uint32 MaxRouteFailures = 2;
@@ -133,11 +171,38 @@ bool IsSimpleKillQuest(Quest const* quest)
     if (objectives.empty() || objectives.size() > 4)
         return false;
 
+    bool any = false;
     for (QuestObjective const& objective : objectives)
-        if (objective.Type != QUEST_OBJECTIVE_MONSTER || objective.ObjectID <= 0 || objective.Amount <= 0 || objective.Amount > 30)
+    {
+        if (objective.Flags & QUEST_OBJECTIVE_FLAG_OPTIONAL)
+            continue;
+        if (objective.ObjectID <= 0 || objective.Amount <= 0 || objective.Amount > 30)
             return false;
+        if (objective.Type == QUEST_OBJECTIVE_MONSTER)
+        {
+            any = true;
+            continue;
+        }
+        // an item objective is allowed only when collect or interact is on; BuildIndex still drops it unless something drops the item
+        if (objective.Type == QUEST_OBJECTIVE_ITEM && (sPlayerbotsConfig.QuestCollect || sPlayerbotsConfig.QuestInteract))
+        {
+            any = true;
+            continue;
+        }
+        if (sPlayerbotsConfig.QuestInteract && (objective.Type == QUEST_OBJECTIVE_GAMEOBJECT || objective.Type == QUEST_OBJECTIVE_TALKTO))
+        {
+            any = true;
+            continue;
+        }
+        if (sPlayerbotsConfig.QuestExplore && (objective.Type == QUEST_OBJECTIVE_AREATRIGGER || objective.Type == QUEST_OBJECTIVE_AREA_TRIGGER_ENTER))
+        {
+            any = true;
+            continue;
+        }
+        return false;
+    }
 
-    return true;
+    return any;
 }
 
 // a phase the bot did not have before: both lists are sorted
@@ -179,6 +244,35 @@ namespace QuestTravel
 {
 bool IsBuilt() { return sIndex.Built; }
 uint32 GetPlanCount() { return uint32(sIndex.Plans.size()); }
+
+uint32 AbstractXp(Player* bot)
+{
+    if (!bot || !sIndex.Built || sIndex.Plans.empty())
+        return 0;
+
+    for (auto const& [questId, status] : bot->getQuestStatusMap())
+    {
+        if (status.Status != QUEST_STATUS_INCOMPLETE && status.Status != QUEST_STATUS_COMPLETE)
+            continue;
+        if (Quest const* quest = sObjectMgr->GetQuestTemplate(questId))
+            if (uint32 xp = quest->XPValue(bot))
+                return xp;
+    }
+
+    int32 level = bot->GetLevel();
+    size_t start = size_t(bot->GetGUID().GetCounter() % sIndex.Plans.size());
+    for (size_t n = 0; n < 40 && n < sIndex.Plans.size(); ++n)
+    {
+        Plan const& plan = sIndex.Plans[(start + n) % sIndex.Plans.size()];
+        Quest const* quest = sObjectMgr->GetQuestTemplate(plan.QuestId);
+        if (!quest || bot->GetQuestMinLevel(quest) > level || bot->GetQuestLevel(quest) < level - MaxLevelsBelow)
+            continue;
+        if (!bot->CanTakeQuest(quest, false))
+            continue;
+        return quest->XPValue(bot);
+    }
+    return 0;
+}
 
 bool PickPoi(Player* bot, uint32 questId, bool turnIn, Position& out)
 {
@@ -268,7 +362,36 @@ void BuildIndex()
                 creditors[credit].push_back(entry);
 
     std::vector<Plan> drafts;
-    std::unordered_set<uint32> wanted; // creature entries whose spawns we need
+    std::unordered_set<uint32> wanted;   // creature entries whose spawns we need
+    std::unordered_set<uint32> wantedGo;
+
+    // item id -> creature entries that drop it. Only rows that are a real item, not a loot reference.
+    std::unordered_map<uint32, std::vector<uint32>> drops;
+    if (sPlayerbotsConfig.QuestCollect)
+        if (QueryResult loot = WorldDatabase.Query("SELECT Entry, Item FROM creature_loot_template WHERE Item > 0 AND ItemType = 0"))
+        {
+            do
+            {
+                Field* fields = loot->Fetch();
+                drops[fields[1].GetUInt32()].push_back(fields[0].GetUInt32());
+            }
+            while (loot->NextRow());
+        }
+
+    // item id -> chest entries whose loot table contains it. Data1 is the chest loot id.
+    std::unordered_map<uint32, std::vector<uint32>> chestDrops;
+    if (sPlayerbotsConfig.QuestInteract)
+        if (QueryResult loot = WorldDatabase.Query("SELECT gt.entry, gl.Item FROM gameobject_template gt "
+            "JOIN gameobject_loot_template gl ON gl.Entry = gt.Data1 "
+            "WHERE gt.type = 3 AND gl.Item > 0 AND gl.ItemType = 0"))
+        {
+            do
+            {
+                Field* fields = loot->Fetch();
+                chestDrops[fields[1].GetUInt32()].push_back(fields[0].GetUInt32());
+            }
+            while (loot->NextRow());
+        }
 
     // quest -> starters
     std::unordered_map<uint32, std::vector<uint32>> giversByQuest;
@@ -293,29 +416,84 @@ void BuildIndex()
         bool valid = true;
         for (QuestObjective const& objective : quest->GetObjectives())
         {
-            std::vector<uint32> entries;
-            uint32 objectiveEntry = uint32(objective.ObjectID);
-            if (CreatureTemplate const* creature = sObjectMgr->GetCreatureTemplate(objectiveEntry); creature && IsHuntable(*creature))
-                entries.push_back(objectiveEntry);
-            if (auto itr = creditors.find(objectiveEntry); itr != creditors.end())
-                entries.insert(entries.end(), itr->second.begin(), itr->second.end());
+            if (objective.Flags & QUEST_OBJECTIVE_FLAG_OPTIONAL)
+                continue;
 
-            if (entries.empty())
+            Step step;
+            step.ObjectiveId = objective.ID;
+            if (objective.Type == QUEST_OBJECTIVE_MONSTER)
+            {
+                step.Kind = StepKind::Kill;
+                uint32 objectiveEntry = uint32(objective.ObjectID);
+                if (CreatureTemplate const* creature = sObjectMgr->GetCreatureTemplate(objectiveEntry); creature && IsHuntable(*creature))
+                    step.Entries.push_back(objectiveEntry);
+                if (auto itr = creditors.find(objectiveEntry); itr != creditors.end())
+                    step.Entries.insert(step.Entries.end(), itr->second.begin(), itr->second.end());
+            }
+            else if (objective.Type == QUEST_OBJECTIVE_ITEM)
+            {
+                auto itr = drops.find(uint32(objective.ObjectID));
+                if (itr != drops.end())
+                    for (uint32 entry : itr->second)
+                        if (CreatureTemplate const* creature = sObjectMgr->GetCreatureTemplate(entry); creature && IsHuntable(*creature))
+                            step.Entries.push_back(entry);
+                if (step.Entries.empty())
+                {
+                    step.Kind = StepKind::UseGo;
+                    auto chest = chestDrops.find(uint32(objective.ObjectID));
+                    if (chest != chestDrops.end())
+                        step.Entries = chest->second;
+                }
+            }
+            else if (objective.Type == QUEST_OBJECTIVE_GAMEOBJECT)
+            {
+                step.Kind = StepKind::UseGo;
+                step.Entries.push_back(uint32(objective.ObjectID));
+            }
+            else if (objective.Type == QUEST_OBJECTIVE_TALKTO)
+            {
+                step.Kind = StepKind::Talk;
+                step.Entries.push_back(uint32(objective.ObjectID));
+            }
+            else if (objective.Type == QUEST_OBJECTIVE_AREATRIGGER || objective.Type == QUEST_OBJECTIVE_AREA_TRIGGER_ENTER)
+            {
+                step.Kind = StepKind::Explore;
+                step.Enter = objective.Type == QUEST_OBJECTIVE_AREA_TRIGGER_ENTER;
+                if (AreaTriggerEntry const* at = sAreaTriggerStore.LookupEntry(uint32(objective.ObjectID)))
+                    if (at->ContinentID && PhaseGuard::IsUsableSpawnPhase(uint32(std::max(int16(0), at->PhaseID)), uint32(std::max(int16(0), at->PhaseGroupID))))
+                    {
+                        step.Entries.push_back(at->ID);
+                        if (!sIndex.AtSpawns.contains(at->ID))
+                            sIndex.AtSpawns[at->ID].push_back({ at->ContinentID, Position(at->Pos.X, at->Pos.Y, at->Pos.Z) });
+                    }
+            }
+            else
             {
                 valid = false;
                 break;
             }
 
-            plan.Hunt.push_back(std::move(entries));
+            if (step.Entries.empty())
+            {
+                valid = false;
+                break;
+            }
+
+            plan.Steps.push_back(std::move(step));
         }
 
-        if (!valid)
+        if (!valid || plan.Steps.empty())
             continue;
 
         wanted.insert(plan.Givers.begin(), plan.Givers.end());
         wanted.insert(plan.Enders.begin(), plan.Enders.end());
-        for (std::vector<uint32> const& entries : plan.Hunt)
-            wanted.insert(entries.begin(), entries.end());
+        for (Step const& step : plan.Steps)
+        {
+            if (step.Kind == StepKind::UseGo)
+                wantedGo.insert(step.Entries.begin(), step.Entries.end());
+            else if (step.Kind != StepKind::Explore)
+                wanted.insert(step.Entries.begin(), step.Entries.end());
+        }
         drafts.push_back(std::move(plan));
     }
 
@@ -337,16 +515,33 @@ void BuildIndex()
             spawns.push_back({ data.mapId, data.spawnPoint });
     }
 
+    for (auto const& [spawnId, data] : sObjectMgr->GetAllGameObjectData())
+    {
+        if (!wantedGo.contains(data.id) || !PhaseGuard::IsUsableSpawnPhase(data.phaseId, data.phaseGroup))
+            continue;
+
+        if (!data.spawnDifficulties.empty() && std::ranges::find(data.spawnDifficulties, DIFFICULTY_NONE) == data.spawnDifficulties.end())
+            continue;
+
+        MapEntry const* map = sMapStore.LookupEntry(data.mapId);
+        if (!map || map->Instanceable())
+            continue;
+
+        std::vector<Spawn>& spawns = sIndex.GoSpawns[data.id];
+        if (spawns.size() < MaxSpawnsPerEntry)
+            spawns.push_back({ data.mapId, data.spawnPoint });
+    }
+
     // keep the plans whose giver, turn-in and every objective have a spawn near the giver
     for (Plan& plan : drafts)
     {
         auto has = [](uint32 entry) { return sIndex.Spawns.contains(entry); };
         std::erase_if(plan.Givers, [&](uint32 entry) { return !has(entry); });
         std::erase_if(plan.Enders, [&](uint32 entry) { return !has(entry); });
-        for (std::vector<uint32>& entries : plan.Hunt)
-            std::erase_if(entries, [&](uint32 entry) { return !has(entry); });
+        for (Step& step : plan.Steps)
+            std::erase_if(step.Entries, [&](uint32 entry) { return !StepSpawns(step, entry); });
 
-        if (plan.Givers.empty() || plan.Enders.empty() || std::ranges::any_of(plan.Hunt, [](auto const& entries) { return entries.empty(); }))
+        if (plan.Givers.empty() || plan.Enders.empty() || std::ranges::any_of(plan.Steps, [](Step const& step) { return step.Entries.empty(); }))
             continue;
 
         uint32 planIndex = uint32(sIndex.Plans.size());
@@ -355,12 +550,13 @@ void BuildIndex()
             for (Spawn const& spawn : sIndex.Spawns[giver])
             {
                 // hunting grounds must be on the giver's map, not too far away
-                bool reachable = std::ranges::all_of(plan.Hunt, [&](std::vector<uint32> const& entries)
+                bool reachable = std::ranges::all_of(plan.Steps, [&](Step const& step)
                 {
-                    return std::ranges::any_of(entries, [&](uint32 entry)
+                    return std::ranges::any_of(step.Entries, [&](uint32 entry)
                     {
+                        std::vector<Spawn> const* spawns = StepSpawns(step, entry);
                         float dist = 0.0f;
-                        return NearestSpawn(sIndex.Spawns[entry], spawn.MapId, spawn.Pos, &dist) && dist <= sPlayerbotsConfig.RandomQuestDistance;
+                        return spawns && NearestSpawn(*spawns, spawn.MapId, spawn.Pos, &dist) && dist <= sPlayerbotsConfig.RandomQuestDistance;
                     });
                 });
                 if (!reachable)
@@ -384,7 +580,7 @@ void BuildIndex()
     }
 
     sIndex.Built = true;
-    TC_LOG_INFO("server.playerbots", "Playerbots: quest travel knows {} kill quests ({} giver spawns)", sIndex.Plans.size(),
+    TC_LOG_INFO("server.playerbots", "Playerbots: quest travel knows {} quests ({} giver spawns)", sIndex.Plans.size(),
         [] { size_t n = 0; for (auto const& [map, spots] : sIndex.GiversByMap) n += spots.size(); return n; }());
 }
 }
@@ -412,6 +608,10 @@ public:
 
         // a bot that lives at a hotspot does town things until a rotation sends it out
         if (sRandomBotMgr->GetAnchor(bot->GetGUID()))
+            return 0.0f;
+
+        // test harness (.bot rpg): the forced rpg behavior wins over quests for a while
+        if (uint32 forcedUntil = ai.GetRpg().ForcedUntil; forcedUntil && GameTime::GetGameTimeMS() < forcedUntil)
             return 0.0f;
 
         if (!bot->IsAlive() || !bot->IsInWorld() || bot->IsInCombat() || bot->IsBeingTeleported() || bot->HasUnitState(UNIT_STATE_CASTING)
@@ -503,6 +703,7 @@ private:
         _state = State::Idle;
         _questId = 0;
         _hasDest = false;
+        _stepNotBefore = 0;
         _moveIssued = false;
         _routeFailures = 0;
         _routeAsked = false;
@@ -851,18 +1052,27 @@ private:
             return false;
         }
 
-        // first objective that still needs kills
-        QuestObjectives const& objectives = quest->GetObjectives();
-        std::vector<uint32> const* entries = nullptr;
-        for (size_t i = 0; i < objectives.size() && i < plan.Hunt.size(); ++i)
-            if (bot->GetQuestObjectiveData(objectives[i]) < objectives[i].Amount)
-            {
-                entries = &plan.Hunt[i];
-                break;
-            }
+        // first objective that is still open
+        Step const* step = nullptr;
+        for (QuestObjective const& objective : quest->GetObjectives())
+        {
+            if (objective.Flags & QUEST_OBJECTIVE_FLAG_OPTIONAL)
+                continue;
+            if (bot->GetQuestObjectiveData(objective) >= objective.Amount)
+                continue;
+            for (Step const& candidate : plan.Steps)
+                if (uint32(candidate.ObjectiveId) == objective.ID)
+                    step = &candidate;
+            break;
+        }
 
-        if (!entries)
-            return false; // completes on the next kill credit update
+        if (!step)
+            return false; // completes on the next credit update
+
+        if (step->Kind != StepKind::Kill)
+            return DoStep(ai, *step, now);
+
+        std::vector<uint32> const* entries = &step->Entries;
 
         if (Creature* target = FindNearby(bot, *entries, HuntSearchRange))
         {
@@ -966,11 +1176,159 @@ private:
             PhaseGuard::BlockQuest(_questId, "reward changed the phase");
         TC_LOG_DEBUG("server.playerbots", "Playerbots: {} turned in quest {} to {}", bot->GetName(), _questId, ender->GetName());
 
-        // Continue around the place the quest ended
+        uint32 nextId = quest->GetNextQuestInChain();
         ai.SetHome(bot->GetPosition());
         Reset();
+
+        if (Quest const* next = sObjectMgr->GetQuestTemplate(nextId))
+            if (!next->GetBreadcrumbForQuestId() && PlanFor(nextId) && bot->CanTakeQuest(next, false) && bot->CanAddQuest(next, false))
+            {
+                _questId = nextId;
+                _questStarted = now;
+                _assignedQuest = nextId;
+                Assign(nextId);
+                SetState(State::ToGiver, now);
+                TC_LOG_DEBUG("server.playerbots", "Playerbots: {} follows quest {} with {}", bot->GetName(), quest->GetQuestId(), nextId);
+                return true;
+            }
+
         _nextSelect = now + 2000;
         return true;
+    }
+
+    bool DoStep(PlayerbotAI& ai, Step const& step, uint32 now)
+    {
+        Player* bot = ai.GetBot();
+        if (now < _stepNotBefore)
+            return true;
+
+        float arrive = step.Kind == StepKind::Explore ? 1.0f : ArriveDistance;
+        if (!_hasDest)
+        {
+            Position pos;
+            uint32 mapId = 0;
+            if (!BestStep(bot, step, pos, mapId))
+            {
+                Abandon(bot);
+                return false;
+            }
+            SetDest(pos, mapId);
+        }
+
+        if (Travel(ai, now, arrive))
+            return true;
+
+        if (step.Kind == StepKind::Talk)
+        {
+            if (Creature* npc = FindNearby(bot, step.Entries, InteractDistance))
+            {
+                bot->TalkedToCreature(npc->GetEntry(), npc->GetGUID());
+                Progress(now);
+                _hasDest = false;
+                _stepNotBefore = now + 4000;
+                return true;
+            }
+        }
+        else if (step.Kind == StepKind::UseGo)
+        {
+            FindGameObjectOptions options;
+            std::vector<GameObject*> found;
+            for (uint32 entry : step.Entries)
+            {
+                options.GameObjectId = entry;
+                bot->GetGameObjectListWithOptionsInGrid(found, InteractDistance, options);
+            }
+            GameObject* go = nullptr;
+            for (GameObject* candidate : found)
+                if (candidate && (!go || bot->GetExactDistSq(candidate) < bot->GetExactDistSq(go)))
+                    go = candidate;
+            if (go)
+            {
+                WorldPackets::GameObject::GameObjUse use{ WorldPacket(CMSG_GAME_OBJ_USE) };
+                use.Guid = go->GetGUID();
+                bot->GetSession()->HandleGameObjectUseOpcode(use);
+                ObjectGuid guid = go->GetGUID();
+                sWorldActionQueue->Enqueue(bot->GetGUID(), bot->GetMapId(), guid, [guid](Player* player)
+                {
+                    GameObject* chest = ObjectAccessor::GetGameObject(*player, guid);
+                    if (!chest)
+                        return;
+                    Loot* loot = chest->GetLootForPlayer(player);
+                    if (!loot)
+                        return;
+                    WorldSession* session = player->GetSession();
+                    for (uint32 slot = 0; slot < loot->items.size() && slot < 255; ++slot)
+                        if (!loot->items[slot].is_looted)
+                            player->StoreLootItem(guid, uint8(slot), loot);
+                    WorldPackets::Loot::LootRelease release{ WorldPacket(CMSG_LOOT_RELEASE) };
+                    release.Unit = guid;
+                    session->HandleLootReleaseOpcode(release);
+                });
+                Progress(now);
+                _hasDest = false;
+                _stepNotBefore = now + 4000;
+                return true;
+            }
+        }
+        else if (step.Kind == StepKind::Explore)
+        {
+            uint32 id = step.Entries.front();
+            if (step.Enter)
+                bot->UpdateQuestObjectiveProgress(QUEST_OBJECTIVE_AREA_TRIGGER_ENTER, int32(id), 1);
+            else
+            {
+                WorldPackets::AreaTrigger::AreaTrigger packet{ WorldPacket(CMSG_AREA_TRIGGER) };
+                packet.AreaTriggerID = int32(id);
+                packet.Entered = true;
+                packet.FromClient = true;
+                bot->GetSession()->HandleAreaTriggerOpcode(packet);
+            }
+            Progress(now);
+            _hasDest = false;
+            _stepNotBefore = now + 4000;
+            return true;
+        }
+
+        return true;
+    }
+
+    bool BestStep(Player* bot, Step const& step, Position& out, uint32& outMap)
+    {
+        TravelMgr::BotReach reach = sTravelMgr->ReachFor(bot);
+        float maxSeconds = float(sPlayerbotsConfig.QuestMaxRouteMinutes) * 60.0f;
+        float bestCost = 0.0f;
+        bool found = false;
+        Position const here = bot->GetPosition();
+        for (uint32 entry : step.Entries)
+        {
+            std::vector<Spawn> const* spawns = StepSpawns(step, entry);
+            if (!spawns)
+                continue;
+            for (Spawn const& spawn : *spawns)
+            {
+                float cost = 0.0f;
+                if (reach.Valid)
+                {
+                    float seconds = 0.0f;
+                    if (!sTravelMgr->Estimate(reach, { spawn.MapId, spawn.Pos.GetPositionX(), spawn.Pos.GetPositionY(), spawn.Pos.GetPositionZ() }, cost, seconds)
+                        || seconds > maxSeconds)
+                        continue;
+                }
+                else if (spawn.MapId == bot->GetMapId())
+                    cost = here.GetExactDist2d(spawn.Pos);
+                else
+                    continue;
+
+                if (!found || cost < bestCost)
+                {
+                    found = true;
+                    bestCost = cost;
+                    out = spawn.Pos;
+                    outMap = spawn.MapId;
+                }
+            }
+        }
+        return found;
     }
 
     // Best usable item that can be picked, most valuable first; no choice needed for quests without one
@@ -1020,6 +1378,7 @@ private:
     bool _routeAsked = false;
     uint32 _routeAskedAt = 0;
     bool _hasDest = false;
+    uint32 _stepNotBefore = 0;
     bool _moveIssued = false;
     bool _hasProgressDist = false;
     float _bestDist = 0.0f;

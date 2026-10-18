@@ -16,7 +16,9 @@
  */
 
 #include "ChatCommands.h"
+#include "Db/PlayerbotRepository.h"
 #include "AiRegistry.h"
+#include "GearFactory.h"
 #include "GenericStrategies.h"
 #include "Item.h"
 #include "ItemTemplate.h"
@@ -225,6 +227,32 @@ bool Gear(PlayerbotAI& ai, std::string const&)
     return true;
 }
 
+bool AutoGear(PlayerbotAI& ai, std::string const& param)
+{
+    GearFactory::GearOptions options;
+    switch (sGearFactory->ParseGearArg(param, options))
+    {
+        case GearFactory::GearArgKind::Bad:
+            ai.TellMaster("autogear [white|green|blue|purple|<ilvl>|match|reset]");
+            return true;
+        case GearFactory::GearArgKind::Match:
+            if (Player* master = ai.GetMaster())
+                options.ItemLevelCap = uint32(master->GetAverageItemLevel());
+            else
+            {
+                ai.TellMaster("match needs a master. A GM can use .bot autogear <name> match.");
+                return true;
+            }
+            break;
+        default:
+            break;
+    }
+
+    uint32 changed = sGearFactory->Equip(ai.GetBot(), options);
+    ai.TellMaster(Trinity::StringFormat("Changed {} slots. Average item level {:.0f}.", changed, ai.GetBot()->GetAverageItemLevel()));
+    return true;
+}
+
 bool Inventory(PlayerbotAI& ai, std::string const&)
 {
     Player* bot = ai.GetBot();
@@ -285,6 +313,7 @@ bool Summon(PlayerbotAI& ai, std::string const&)
 bool Reset(PlayerbotAI& ai, std::string const&)
 {
     ai.ResetStrategies();
+    sPlayerbotRepository->ForgetMemory(ai.GetBot()->GetGUID());
     ai.TellMaster("Back to my defaults.");
     return true;
 }
@@ -437,6 +466,7 @@ void RegisterChatCommands()
     AddCommand("attack", "Attack the master's target.", Attack, true);
     AddCommand("status", "Level, health, spells and strategies.", Status);
     AddCommand("gear", "Item level and equipped items.", Gear);
+    AddCommand("autogear", "Re-gear: white, green, blue, purple, an item level, match, or reset.", AutoGear);
     AddCommand("inventory", "Bag contents and money.", Inventory);
     AddCommand("spells", "The damage and healing spells I use.", Spells);
     AddCommand("quests", "My quest log.", Quests);

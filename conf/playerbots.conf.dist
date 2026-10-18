@@ -634,6 +634,16 @@ Playerbots.Random.CreateUpTo = 0
 #        Default:     0, 150, 0, 0, 1, 1
 
 Playerbots.BotActiveAlone = 0
+
+#
+#    Playerbots.Debug.ForceActive
+#        Description: Test knob for headless soaks: about this many random bots run their full AI with no player
+#                     near (chosen by a fixed hash of the guid, so the same bots every run). Without it a server
+#                     with nobody online runs every bot frozen and the map-thread AI code is not exercised.
+#        Default:     0 - (off)
+#
+
+Playerbots.Debug.ForceActive = 0
 Playerbots.BotActiveAlone.Radius = 150
 Playerbots.BotActiveAlone.Zone = 0
 Playerbots.BotActiveAlone.Map = 0
@@ -690,7 +700,8 @@ Playerbots.Rpg.Enable = 1
 #    Playerbots.Rpg.Weight.*
 #        Description: Idle status weights (DoQuest 60, WanderNpc 20, TravelFlight 15,
 #                     GoGrind 15, GoCamp 10, Rest 5, WanderRandom 15). Capital zones
-#                     add CapitalBoost to WanderNpc and GoCamp.
+#                     add CapitalBoost to WanderNpc and GoCamp. CapitalBoost matches
+#                     AC (15).
 #
 
 Playerbots.Rpg.Weight.DoQuest = 60
@@ -700,7 +711,7 @@ Playerbots.Rpg.Weight.GoGrind = 15
 Playerbots.Rpg.Weight.GoCamp = 10
 Playerbots.Rpg.Weight.Rest = 5
 Playerbots.Rpg.Weight.WanderRandom = 15
-Playerbots.Rpg.CapitalBoost = 20
+Playerbots.Rpg.CapitalBoost = 15
 
 #
 #    Playerbots.Rpg.Weight.Gather
@@ -718,22 +729,131 @@ Playerbots.Rpg.GatherDistance = 120
 
 #
 #    Playerbots.Rpg.Duration.*
-#        Description: Milliseconds a status may last before returning to Idle.
+#        Description: Milliseconds a status may last before returning to Idle. A bot
+#                     rolls between half of this and the full value when the task starts.
+#                     WanderNpc and GoCamp are short so a city visit is not a 5 minute hover.
 #
 
 Playerbots.Rpg.Duration.DoQuest = 1800000
-Playerbots.Rpg.Duration.WanderNpc = 300000
+Playerbots.Rpg.Duration.WanderNpc = 120000
 Playerbots.Rpg.Duration.TravelFlight = 180000
 Playerbots.Rpg.Duration.GoGrind = 300000
-Playerbots.Rpg.Duration.GoCamp = 180000
+Playerbots.Rpg.Duration.GoCamp = 120000
 Playerbots.Rpg.Duration.Rest = 30000
 Playerbots.Rpg.Duration.WanderRandom = 300000
 Playerbots.Rpg.NpcStayTime = 8000
 Playerbots.Rpg.PoiStayTime = 300000
 Playerbots.Rpg.StuckTime = 90000
+
+#
+#    Playerbots.Rpg.HopChance
+#        Description: Chance per second that a bot walking on foot hops once (a player's bunny hop; only on level
+#                     navmesh ground, outdoors, not mounted or swimming). 0 = never.
+#        Default:     0.03
+#
+#    Playerbots.Rpg.HopMinInterval
+#        Description: Milliseconds between two hops of one bot
+#        Default:     12000
+#
+#    Playerbots.Rpg.IdleHopChance
+#        Description: Chance per resting roll that a standing bot hops on the spot. 0 = never.
+#        Default:     0.04
+#
+#    Playerbots.Rpg.GreetEmotes / GreetDistance / GreetCooldown / GreetChance
+#        Description: A resting bot waves, says hello, greets or bows (a text emote) at a player within GreetDistance
+#                     yards: at most once per GreetCooldown ms, and then with chance GreetChance.
+#        Default:     1 / 12 / 300000 / 0.4
+#
+
+#
+#    Playerbots.Spawn.Evict
+#        Description: A random bot that logs in on ground that attacks its faction (an enemy-only zone, an enemy town) is
+#                     placed on a valid spot, and once a minute bots found there are moved off it. Turn off to stop
+#                     bots being teleported and their homes rewritten.
+#        Default:     1
+#
+#    Playerbots.Gear.ClassArmorOnly
+#        Description: Armor slots only take the armor type of the bot's class (ChrClasses.ArmorTypeMask: plate for a
+#                     warrior, cloth for a mage). A bot wearing another type is re-geared once. Turn off for the old rule.
+#        Default:     1
+#
+#    Playerbots.Mounts.RacialGrant
+#        Description: Bots learn riding (apprentice at level 10, journeyman at 20) and get one ground mount of their own
+#                     race in the collection (account wide) from Rpg.MountMinLevel. Turn off to stop writing collections.
+#        Default:     1
+#
+
+Playerbots.Spawn.Evict = 1
+
+#
+#    Playerbots.Rpg.SellJunk
+#        Description: A bot that visits a vendor sells the grey items it carries (the client's "sell all junk" request).
+#        Default:     1
+#
+#    Playerbots.Rpg.Train / Playerbots.Rpg.TrainMaxPerVisit
+#        Description: A bot that visits a trainer learns spells it can use and afford (profession recipes mostly: the
+#                     class spells of this game version are learned on level-up). Up to TrainMaxPerVisit spells per
+#                     visit, picked at random among those it qualifies for. A trainer with nothing for the bot is not worth
+#                     a trip. The core's own trainer handler does the checks and the charging.
+#        Default:     1 / 8
+#
+
+Playerbots.Rpg.SellJunk = 1
+Playerbots.Rpg.Train = 1
+Playerbots.Rpg.TrainMaxPerVisit = 8
+Playerbots.Rpg.Mailbox = 1
+Playerbots.Rpg.BuyFood = 1
+Playerbots.AH.Post = 1
+Playerbots.AH.MaxPostsPerVisit = 3
+Playerbots.AH.VisitCooldown = 1800000
+Playerbots.Gear.ClassArmorOnly = 1
+Playerbots.Mounts.RacialGrant = 1
+
+Playerbots.Rpg.HopChance = 0.03
+Playerbots.Rpg.HopMinInterval = 12000
+Playerbots.Rpg.IdleHopChance = 0.04
+Playerbots.Rpg.GreetEmotes = 1
+Playerbots.Rpg.GreetDistance = 12
+Playerbots.Rpg.GreetCooldown = 300000
+Playerbots.Rpg.GreetChance = 0.4
 Playerbots.Rpg.RepairDurability = 80
 Playerbots.Rpg.SellBagSpace = 80
 Playerbots.Rpg.MountMinLevel = 20
+
+# A nearby bot answers a wave, hello, bow, cheer, laugh, salute, thanks or welcome, once per player per GreetCooldown.
+# A resting bot sits on a chair within 15 yards.
+# Off keeps today's activity weights. On, a near bot plays a row from playerbots_goal and a far bot only stores one.
+Playerbots.Goal.Enable = 0
+Playerbots.Memory.Enable = 0
+Playerbots.Quest.Collect = 0
+Playerbots.Quest.Interact = 0
+Playerbots.Quest.Explore = 0
+Playerbots.Quest.AbstractXp = 0
+Playerbots.Bg.Objectives = 0
+Playerbots.World.Reactions = 0
+
+Playerbots.React.ReturnEmotes = 1
+Playerbots.React.Chairs = 1
+
+# A blacksmith in a city walks to a forge, works, and makes one recipe it can pay for.
+Playerbots.Rpg.Weight.Craft = 8
+Playerbots.Rpg.Duration.Craft = 45000
+
+# Far bots land in these bands. Level 90 is a step above each other band, not most of the bots.
+# A bot inside a band gets a random level in it. The relocate is 1-5 hours, with a small chance of one level.
+Playerbots.Population.Weight.1-19 = 10
+Playerbots.Population.Weight.20-39 = 10
+Playerbots.Population.Weight.40-59 = 10
+Playerbots.Population.Weight.60-69 = 10
+Playerbots.Population.Weight.70-79 = 10
+Playerbots.Population.Weight.80-84 = 10
+Playerbots.Population.Weight.85-89 = 10
+Playerbots.Population.Weight.90 = 12
+Playerbots.Population.TeleportMin = 3600
+Playerbots.Population.TeleportMax = 18000
+Playerbots.Population.LevelUpChance = 8
+Playerbots.Population.ReviveMin = 60
+Playerbots.Population.ReviveMax = 300
 
 #
 #    Playerbots.Remote.Port

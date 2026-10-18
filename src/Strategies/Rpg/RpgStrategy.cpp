@@ -1,9 +1,11 @@
 #include "RpgStrategy.h"
+#include "Ambient.h"
 #include "CellImpl.h"
 #include "Creature.h"
 #include "DB2Stores.h"
 #include "DBCEnums.h"
 #include "Economy/BotProfessions.h"
+#include "Goal/GoalStore.h"
 #include "Economy/GatherNodes.h"
 #include "Engine.h"
 #include "GameObject.h"
@@ -24,6 +26,9 @@
 #include "Travel/HubIndex.h"
 #include "Travel/MoveToward.h"
 #include "RandomBotMgr.h"
+#include "Spawn/SpawnPolicy.h"
+#include "SpellInfo.h"
+#include "SpellMgr.h"
 #include "Travel/Taxi.h"
 #include "UnitDefines.h"
 #include "WorldSession.h"
@@ -35,6 +40,15 @@ namespace Playerbots
 namespace
 {
 constexpr float Relevance = 11.0f;
+
+// Each task lasts somewhere between half and all of its configured duration, so a city visit is not a fixed 5 minutes
+uint32 RollRpgDuration(RpgStatus status)
+{
+    uint32 cap = sPlayerbotsConfig.RpgDurationMs[uint8(status)];
+    if (cap <= 2000)
+        return cap;
+    return urand(cap / 2, cap);
+}
 
 bool InCapital(Player const* bot)
 {
@@ -70,17 +84,17 @@ void NoteProgress(RpgInfo& rpg, Player* bot, uint32 now)
     }
 }
 
-// The hotspot a random bot belongs to, nullptr if it has none or has been moved away from it
-RandomBotMgr::Anchor const* CurrentAnchor(Player const* bot)
+// The hotspot a random bot belongs to (a copy), empty if it has none or has been moved away from it
+Optional<RandomBotMgr::Anchor> CurrentAnchor(Player const* bot)
 {
-    RandomBotMgr::Anchor const* anchor = sRandomBotMgr->GetAnchor(bot->GetGUID());
+    Optional<RandomBotMgr::Anchor> anchor = sRandomBotMgr->GetAnchor(bot->GetGUID());
     if (!anchor)
-        return nullptr;
+        return {};
 
     if (bot->GetMapId() != anchor->MapId || bot->GetExactDist2d(anchor->Center) > anchor->Radius * 4.0f + 300.0f)
     {
         sRandomBotMgr->ClearAnchor(bot->GetGUID());
-        return nullptr;
+        return {};
     }
 
     return anchor;
@@ -91,12 +105,15 @@ void RandomChangeStatus(PlayerbotAI& ai, uint32 now)
     Player* bot = ai.GetBot();
     RpgInfo& rpg = ai.GetRpg();
 
+    if (GoalStore::TryBegin(ai, now))
+        return;
+
     std::vector<std::pair<RpgStatus, uint32>> weighted;
     uint32 sum = 0;
 
     // A bot placed at a hotspot lives there: town activities only. One that ended up far from it (summoned,
     // pushed to another map) is released
-    RandomBotMgr::Anchor const* anchor = CurrentAnchor(bot);
+    Optional<RandomBotMgr::Anchor> anchor = CurrentAnchor(bot);
 
     auto add = [&](RpgStatus status)
     {
@@ -108,6 +125,8 @@ void RandomChangeStatus(PlayerbotAI& ai, uint32 now)
         if (status == RpgStatus::DoQuest && !FirstLogQuest(bot, true) && !QuestTravel::IsBuilt())
             return;
         if (status == RpgStatus::Gather && (bot->GetLevel() < 10 || !GatherNodes::Count() || !BotProfessions::CanGather(bot)))
+            return;
+        if (status == RpgStatus::Craft && (!InCapital(bot) || !bot->HasSkill(SKILL_BLACKSMITHING)))
             return;
         if (status == RpgStatus::TravelFlight)
         {
@@ -127,6 +146,7 @@ void RandomChangeStatus(PlayerbotAI& ai, uint32 now)
     add(RpgStatus::GoCamp);
     add(RpgStatus::Rest);
     add(RpgStatus::Gather);
+    add(RpgStatus::Craft);
     add(RpgStatus::WanderRandom);
 
     if (weighted.empty() || !sum)
@@ -151,6 +171,10 @@ void RandomChangeStatus(PlayerbotAI& ai, uint32 now)
     rpg.Begin(chosen, now);
 }
 
+constexpr float NpcArriveYards = 3.5f;             // service NPCs only answer within their combat reach + 4 yards: stop well inside that
+constexpr uint32 NoPathBlockMs = 10 * 60 * 1000;   // an NPC the navmesh cannot reach is skipped this long
+constexpr uint32 NoPathPauseMs = 3000;             // and the bot stands still this long before choosing again
+
 bool WalkOrStuck(PlayerbotAI& ai, uint32 now)
 {
     Player* bot = ai.GetBot();
@@ -161,17 +185,32 @@ bool WalkOrStuck(PlayerbotAI& ai, uint32 now)
     NoteProgress(rpg, bot, now);
     if (now - rpg.LastProgress >= sPlayerbotsConfig.RpgStuckTime)
     {
+        // Stuck: stop and pick something else. No height-snap teleport: a bot must never be moved to a floor the navmesh
+        // did not put it on (it fell through the world that way).
         bot->GetMotionMaster()->Clear();
         bot->StopMoving();
-        float z;
-        if (TryGetStandZ(bot, bot->GetPositionX(), bot->GetPositionY(), bot->GetPositionZ(), z))
-            bot->NearTeleportTo(bot->GetPositionX(), bot->GetPositionY(), z, bot->GetOrientation());
+        if (!rpg.Target.IsEmpty())
+            rpg.BlockTarget(rpg.Target, now, NoPathBlockMs);
         rpg.ChangeToIdle();
         rpg.Started = now;
         return true;
     }
 
-    return MoveToward(bot, rpg.Dest, 5.0f);
+    MoveResult result = MoveAlongMesh(bot, rpg.Dest, NpcArriveYards);
+    if (result == MoveResult::NoPath)
+    {
+        // The navmesh has no way there: skip this target for a while instead of waiting out the stuck timer
+        bot->GetMotionMaster()->Clear();
+        bot->StopMoving();
+        if (!rpg.Target.IsEmpty())
+            rpg.BlockTarget(rpg.Target, now, NoPathBlockMs);
+        rpg.ChangeToIdle();
+        rpg.Started = now;
+        rpg.WaitUntil = now + NoPathPauseMs;
+        return true;
+    }
+
+    return result == MoveResult::Moving;
 }
 
 // a player who stops standing around stays on his feet, now and then waves or laughs, and only sits to eat or drink
@@ -179,6 +218,9 @@ bool DoRest(PlayerbotAI& ai, uint32 now)
 {
     Player* bot = ai.GetBot();
     RpgInfo& rpg = ai.GetRpg();
+
+    if (Ambient::TryChair(ai))
+        return true;
 
     bool needsRest = bot->GetHealthPct() < 70.0f
         || (bot->GetPowerType() == POWER_MANA && bot->GetMaxPower(POWER_MANA) && bot->GetPowerPct(POWER_MANA) < 50.0f);
@@ -192,10 +234,121 @@ bool DoRest(PlayerbotAI& ai, uint32 now)
     if (bot->GetStandState() != UNIT_STAND_STATE_STAND)
         bot->SetStandState(UNIT_STAND_STATE_STAND);
 
+    // a player standing around greets someone who comes close, otherwise emotes now and then and hops once in a while
     static constexpr Emote IdleEmotes[] = { EMOTE_ONESHOT_WAVE, EMOTE_ONESHOT_LAUGH, EMOTE_ONESHOT_CHEER, EMOTE_ONESHOT_POINT, EMOTE_ONESHOT_YES, EMOTE_ONESHOT_NO, EMOTE_ONESHOT_TALK };
-    if (roll_chance(30))
-        bot->HandleEmoteCommand(IdleEmotes[urand(0, std::size(IdleEmotes) - 1)]);
+    if (!Ambient::GreetNearbyPlayer(ai, now))
+    {
+        if (roll_chance(30))
+            bot->HandleEmoteCommand(IdleEmotes[urand(0, std::size(IdleEmotes) - 1)]);
+        Ambient::IdleHop(ai, now);
+    }
     rpg.WaitUntil = now + urand(8000, 25000);
+    return true;
+}
+
+// Anvil, Forge, Black Anvil, Black Forge (SpellFocusObject, build 12.1.0.69933)
+bool IsForge(GameObject const* go)
+{
+    uint32 focus = go->GetGOInfo()->GetSpellFocusType();
+    return focus == 1 || focus == 3 || focus == 543 || focus == 623;
+}
+
+uint32 PickCraftSpell(Player* bot)
+{
+    std::vector<uint32> spells;
+    for (auto const& [id, known] : bot->GetSpellMap())
+    {
+        if (known.state == PLAYERSPELL_REMOVED || known.disabled)
+            continue;
+
+        SpellInfo const* info = sSpellMgr->GetSpellInfo(id, DIFFICULTY_NONE);
+        if (!info || !info->IsAbilityOfSkillType(SKILL_BLACKSMITHING))
+            continue;
+
+        bool makesItem = false;
+        for (SpellEffectInfo const& effect : info->GetEffects())
+            if (effect.Effect == SPELL_EFFECT_CREATE_ITEM && effect.ItemType)
+                makesItem = true;
+        if (!makesItem)
+            continue;
+
+        bool canPay = true;
+        for (size_t i = 0; i < info->Reagent.size(); ++i)
+            if (info->Reagent[i] > 0 && info->ReagentCount[i] > 0 && !bot->HasItemCount(uint32(info->Reagent[i]), uint32(info->ReagentCount[i])))
+                canPay = false;
+        if (canPay)
+            spells.push_back(id);
+    }
+
+    if (spells.empty())
+        return 0;
+    return spells[urand(0, uint32(spells.size() - 1))];
+}
+
+bool DoCraft(PlayerbotAI& ai, uint32 now)
+{
+    Player* bot = ai.GetBot();
+    RpgInfo& rpg = ai.GetRpg();
+
+    if (!rpg.HasDest)
+    {
+        FindGameObjectOptions options;
+        options.GameObjectType = GAMEOBJECT_TYPE_SPELL_FOCUS;
+        std::vector<GameObject*> objects;
+        bot->GetGameObjectListWithOptionsInGrid(objects, 80.0f, options);
+
+        GameObject* best = nullptr;
+        float bestDist = 80.0f;
+        for (GameObject* go : objects)
+        {
+            if (!go || !IsForge(go))
+                continue;
+            if (SpawnPolicy::IsSplitDistrict(bot->GetMapId(), go->GetAreaId(), go->GetPositionX(), go->GetPositionY(), go->GetPositionZ(), Player::TeamForRace(bot->GetRace())))
+                continue;
+            float dist = bot->GetExactDist2d(go);
+            if (dist < bestDist)
+            {
+                bestDist = dist;
+                best = go;
+            }
+        }
+
+        if (!best)
+        {
+            rpg.ChangeToIdle();
+            return true;
+        }
+
+        rpg.Target = best->GetGUID();
+        rpg.SetDest(best->GetPosition());
+    }
+
+    MoveResult result = MoveAlongMesh(bot, rpg.Dest, 3.0f);
+    if (result == MoveResult::NoPath)
+    {
+        rpg.ChangeToIdle();
+        rpg.Started = now;
+        return true;
+    }
+    if (result == MoveResult::Moving)
+        return true;
+
+    if (!rpg.Working)
+    {
+        bot->SetEmoteState(EMOTE_STATE_WORK);
+        rpg.Working = true;
+        rpg.WaitUntil = now + urand(3000, 6000);
+        return true;
+    }
+
+    // NodeEntry marks the one item this visit already tried to make
+    if (!rpg.NodeEntry)
+    {
+        rpg.NodeEntry = 1;
+        if (uint32 spell = PickCraftSpell(bot))
+            bot->CastSpell(bot, spell);
+        rpg.WaitUntil = now + urand(4000, 8000);
+    }
     return true;
 }
 
@@ -223,8 +376,10 @@ public:
         if (rpg.WaitUntil && now < rpg.WaitUntil)
             return true;
 
+        Ambient::WalkingHop(ai, now);
+
         // whatever ended a gathering early (timeout, new activity) must not leave the bot kneeling
-        if (rpg.Working && rpg.Status != RpgStatus::Gather)
+        if (rpg.Working && rpg.Status != RpgStatus::Gather && rpg.Status != RpgStatus::Craft)
         {
             bot->SetEmoteState(EMOTE_ONESHOT_NONE);
             rpg.Working = false;
@@ -232,9 +387,12 @@ public:
 
         if (rpg.Status != RpgStatus::Idle)
         {
-            uint32 duration = sPlayerbotsConfig.RpgDurationMs[uint8(rpg.Status)];
-            if (rpg.TimedOut(now, duration))
+            if (!rpg.DurationMs)
+                rpg.DurationMs = RollRpgDuration(rpg.Status);
+            if (rpg.TimedOut(now, rpg.DurationMs))
             {
+                if (rpg.Status == RpgStatus::Rest)
+                    bot->SetStandState(UNIT_STAND_STATE_STAND);
                 rpg.ChangeToIdle();
                 rpg.Started = now;
             }
@@ -259,6 +417,8 @@ public:
                 return DoFlight(ai, now);
             case RpgStatus::Gather:
                 return DoGather(ai, now);
+            case RpgStatus::Craft:
+                return DoCraft(ai, now);
             case RpgStatus::DoQuest:
                 return DoQuest(ai, now);
         }
@@ -275,23 +435,35 @@ private:
         if (IsMovingOnFoot(bot))
             return true;
 
+        // a hop (or anything else) that stopped the walk early: carry on to the same point instead of choosing a new direction
+        if (rpg.HasDest && bot->GetExactDist2d(rpg.Dest) > 3.0f)
+        {
+            MoveResult resumed = MoveAlongMesh(bot, rpg.Dest, 3.0f);
+            if (resumed == MoveResult::Moving)
+                return true;
+        }
+
         Position dest = bot->GetPosition();
         float radius = std::max(5.0f, sPlayerbotsConfig.RandomWanderRadius);
         float hop = frand(radius * 0.25f, radius);
         float angle = frand(-float(M_PI), float(M_PI));
 
         // an anchored bot wanders around its hotspot: a hop that would leave it turns back towards the centre
-        if (RandomBotMgr::Anchor const* anchor = CurrentAnchor(bot))
+        if (Optional<RandomBotMgr::Anchor> anchor = CurrentAnchor(bot))
         {
             if (bot->GetExactDist2d(anchor->Center) + hop > anchor->Radius)
                 angle = bot->GetAbsoluteAngle(anchor->Center.GetPositionX(), anchor->Center.GetPositionY()) + frand(-float(M_PI) / 4.0f, float(M_PI) / 4.0f);
         }
 
         bot->MovePositionToFirstCollision(dest, hop, angle);
-        dest.m_positionZ = GetStandZ(bot, dest.GetPositionX(), dest.GetPositionY(), ai.GetHome().GetPositionZ());
         rpg.SetDest(dest);
         rpg.LastProgress = now;
-        MoveToward(bot, dest, 3.0f);
+        if (MoveAlongMesh(bot, dest, 3.0f) == MoveResult::NoPath)
+        {
+            // a point the mesh cannot reach: try another one shortly
+            rpg.HasDest = false;
+            rpg.WaitUntil = now + 1000;
+        }
         return true;
     }
 
@@ -401,7 +573,7 @@ private:
             bool found = false;
 
             // an anchored bot camps at a service NPC of its own town, or at its marker
-            if (RandomBotMgr::Anchor const* anchor = CurrentAnchor(bot))
+            if (Optional<RandomBotMgr::Anchor> anchor = CurrentAnchor(bot))
             {
                 found = true;
                 target = anchor->Center;
@@ -448,8 +620,33 @@ private:
         Player* bot = ai.GetBot();
         RpgInfo& rpg = ai.GetRpg();
 
+        if (rpg.Target.IsEmpty() && rpg.ForceKind >= 0)
+        {
+            // test harness (.bot rpg <bot> innkeeper): walk to the nearest service of that kind, wherever it is
+            HubSpot const* spot = HubIndex::Nearest(bot, HubKind(rpg.ForceKind), 4000.0f);
+            if (!spot)
+            {
+                rpg.ChangeToIdle();
+                rpg.Started = now;
+                return true;
+            }
+
+            if (Creature* npc = bot->FindNearestCreature(spot->Entry, 60.0f, true))
+                rpg.Target = npc->GetGUID();
+            else
+            {
+                rpg.SetDest(spot->Pos);
+                if (WalkOrStuck(ai, now))
+                    return true;
+
+                rpg.ChangeToIdle();   // arrived but the NPC is not there
+                rpg.Started = now;
+                return true;
+            }
+        }
+
         if (rpg.Target.IsEmpty())
-            rpg.Target = ChooseNpcTarget(bot);
+            rpg.Target = ChooseNpcTarget(bot, &rpg.BadTargets, now);
 
         WorldObject* object = !rpg.Target.IsEmpty() ? ObjectAccessor::GetWorldObject(*bot, rpg.Target) : nullptr;
         if (!object)
@@ -469,9 +666,23 @@ private:
             return true;
 
         TryInteract(bot, object);
-        rpg.WaitUntil = now + sPlayerbotsConfig.RpgNpcStayTime;
+        // do not walk straight back to the same NPC; an innkeeper visit is a short stop
+        rpg.BlockTarget(object->GetGUID(), now, urand(90 * 1000, 180 * 1000));
+        uint32 stay = sPlayerbotsConfig.RpgNpcStayTime;
+        if (Creature const* npc = object->ToCreature(); npc && npc->HasNpcFlag(UNIT_NPC_FLAG_INNKEEPER))
+            stay = urand(2000, 4000);
+        else if (stay > 2000)
+            stay = urand(stay / 2, stay);
+        bool forced = rpg.ForceKind >= 0;
+        rpg.WaitUntil = now + stay;
         rpg.Target.Clear();
         rpg.HasDest = false;
+        if (forced)
+        {
+            // harness visit done: stand around like a player, then the normal rolls resume
+            rpg.Begin(RpgStatus::Rest, now);
+            rpg.WaitUntil = now + sPlayerbotsConfig.RpgNpcStayTime;
+        }
         return true;
     }
 

@@ -27,6 +27,8 @@
 #include "GridDefines.h"
 #include "Log.h"
 #include "Map.h"
+#include "MapManager.h"
+#include "Spawn/SpawnPolicy.h"
 #include "ObjectMgr.h"
 #include "Player.h"
 #include "SharedDefines.h"
@@ -271,6 +273,24 @@ bool IsBuilt()
     return sIndex.Built;
 }
 
+namespace
+{
+// a service NPC inside a town that attacks the bot's team is no destination for it
+bool UsableBy(Player const* bot, HubSpot const& spot)
+{
+    Team team = Player::TeamForRace(bot->GetRace());
+    uint32 areaId = 0;
+    if (Map* map = sMapMgr->FindMap(spot.MapId, 0))
+        areaId = map->GetAreaId(bot->GetPhaseShift(), spot.Pos);
+    if (SpawnPolicy::IsSplitDistrict(spot.MapId, areaId, spot.Pos.GetPositionX(), spot.Pos.GetPositionY(), spot.Pos.GetPositionZ(), team))
+        return false;
+
+    if (spot.Cluster < 0 || size_t(spot.Cluster) >= sIndex.Clusters.size())
+        return true;
+    return IsOpenTo(sIndex.Clusters[size_t(spot.Cluster)], team);
+}
+}
+
 HubSpot const* Nearest(Player const* bot, HubKind kind, float maxDist)
 {
     if (!bot || !sIndex.Built)
@@ -292,7 +312,7 @@ HubSpot const* Nearest(Player const* bot, HubKind kind, float maxDist)
         for (HubSpot const& spot : kindMap.Spots)
         {
             float dist = here.GetExactDist2d(spot.Pos);
-            if (dist < bestDist)
+            if (dist < bestDist && UsableBy(bot, spot))
             {
                 bestDist = dist;
                 best = &spot;
@@ -310,7 +330,7 @@ HubSpot const* Nearest(Player const* bot, HubKind kind, float maxDist)
                 {
                     HubSpot const& spot = kindMap.Spots[index];
                     float dist = here.GetExactDist2d(spot.Pos);
-                    if (dist < bestDist)
+                    if (dist < bestDist && UsableBy(bot, spot))
                     {
                         bestDist = dist;
                         best = &spot;
