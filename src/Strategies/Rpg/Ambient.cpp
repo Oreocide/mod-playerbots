@@ -27,6 +27,7 @@
 #include "PathGenerator.h"
 #include "Player.h"
 #include "PlayerbotAI.h"
+#include "Travel/PlayerJump.h"
 #include "PlayerbotMgr.h"
 #include "Db/PlayerbotRepository.h"
 #include "PlayerbotsConfig.h"
@@ -73,8 +74,7 @@ bool TryHop(Player* bot, float minDist, float maxDist)
         || path.GetPathLength() > bot->GetExactDist2d(target) * 1.6f + 1.0f)
         return false;
 
-    bot->GetMotionMaster()->MoveJump(EVENT_JUMP, target, HopSpeed, HopMinHeight, HopMaxHeight);
-    return true;
+    return StartPlayerJump(bot, target);
 }
 
 void WalkingHop(PlayerbotAI& ai, uint32 now)

@@ -16,6 +16,7 @@
  */
 
 #include "PlayerbotAI.h"
+#include "Travel/PlayerJump.h"
 #include "Travel/StuckDiagnosis.h"
 #include "BotSession.h"
 #include "Goal/GoalStore.h"
@@ -363,7 +364,7 @@ bool PlayerbotAI::IsActiveAlone()
 
 bool PlayerbotAI::SnapToGround(bool notify, float lift)
 {
-    if (!_bot->IsInWorld() || _bot->IsBeingTeleported())
+    if (!_bot->IsInWorld() || _bot->IsBeingTeleported() || IsPlayerJumping(_bot))
         return false;
 
 
@@ -709,7 +710,7 @@ void PlayerbotAI::OnInterrupted()
 
 void PlayerbotAI::RememberStand()
 {
-    if (!_bot->IsInWorld() || _bot->IsBeingTeleported() || _bot->IsInFlight())
+    if (!_bot->IsInWorld() || _bot->IsBeingTeleported() || _bot->IsInFlight() || IsPlayerJumping(_bot))
         return;
 
     float stand = 0.0f;

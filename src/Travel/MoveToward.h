@@ -45,6 +45,7 @@ struct MeshMoveStats
     uint32 Steep = 0;     // with a cliff segment
     uint32 Repaired = 0;  // paths given a detour around geometry (Move.AvoidBlockedPaths)
     uint32 Rejected = 0;  // paths refused for a cliff segment
+    uint32 Hops = 0;      // jumps over low obstacles (Move.HopLowObstacles)
 };
 MeshMoveStats GetMeshMoveStats();
 }

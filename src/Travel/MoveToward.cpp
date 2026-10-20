@@ -19,6 +19,7 @@
 #include "PlayerbotsConfig.h"
 #include "Spawn/SpawnPolicy.h"
 #include "PathRepair.h"
+#include "PlayerJump.h"
 #include "StuckDiagnosis.h"
 #include "Random.h"
 #include "SpellAuras.h"
@@ -130,6 +131,15 @@ float MountDistance(Player* bot)
 // bots through walls and left them on the wrong floor.
 constexpr float SegmentMinProgress = 5.0f;   // a path that ends short of the target must get the bot at least this much closer
 constexpr float MeshEndMaxZ = 3.5f;          // a mesh end point or a standing bot this far above/below the target is not "there"
+constexpr float HopSpeed = 8.0f;             // yards per second along the ground
+constexpr float HopMinHeight = 0.4f;
+constexpr float HopMaxHeight = 1.3f;
+constexpr uint32 HopCooldownMs = 4000;
+constexpr float HopReach = 3.0f;             // a running bot this close to the start of a low obstacle jumps (the timing is estimated)
+constexpr float HopMaxReach = 8.0f;          // the longest jump, a mounted run covers more in the air
+constexpr float HopMaxLandingDz = 1.5f;
+constexpr float HopLeadMs = 80.0f;           // the jump starts this much before the obstacle
+constexpr float JumpAirSeconds = 0.824f;     // the standard jump of every race: 7.96 yd/s upward against gravity 19.29
 constexpr float NearArriveSlack = 1.5f;      // an NPC behind a counter: the mesh ends here at best; the interaction check decides.
                                              // With the 3.5 yd arrival of rpg walks this stays inside the NPC interaction range
                                              // (the NPC's combat reach + 4 yd)
@@ -148,6 +158,9 @@ std::atomic<uint32> sPathsKneeOnly{ 0 };
 std::atomic<uint32> sPathsSteep{ 0 };
 std::atomic<uint32> sPathsRepaired{ 0 };
 std::atomic<uint32> sPathsRejected{ 0 };
+std::atomic<uint32> sHops{ 0 };
+std::mutex sHopLock;
+std::unordered_map<ObjectGuid, uint32> sHopAt;   // game time ms: when a bot may hop again
 std::atomic<uint32> sNextBlockedLog{ 0 };   // game time ms: at most one blocked-path line a second
 
 bool LaunchWalkPath(Player* bot, Movement::PointsArray const& points)
@@ -321,6 +334,10 @@ MoveResult MoveAlongMesh(Player* bot, Position const& dest, float arriveYards, f
     if (SpawnPolicy::IsEnemyGroundAt(bot, bot->GetMapId(), dest))
         return MoveResult::NoPath;
 
+    // in the air of a jump: nothing to plan until the bot has landed
+    if (IsPlayerJumping(bot))
+        return MoveResult::Moving;
+
     float dist = bot->GetExactDist2d(dest);
     float dz = std::fabs(bot->GetPositionZ() - dest.GetPositionZ());
 
@@ -427,6 +444,70 @@ MoveResult MoveAlongMesh(Player* bot, Position const& dest, float arriveYards, f
         }
     }
 
+    // Playerbots.Move.HopLowObstacles: a low obstacle on level ground (a curb, a low fence, a crate) is jumped, on the run, the way a
+    // player jumps it. The path is launched whole; a jump is timed for the moment the bot reaches the obstacle and lands one jump's
+    // reach further along the path, so the bot keeps its running speed through the jump. Anything that stops the run first cancels it
+    if (sPlayerbotsConfig.MoveHopLowObstacles && !bot->IsInWater() && !bot->IsUnderWater() && !bot->IsFalling())
+    {
+        Movement::PointsArray const& walk = *launch;
+        size_t low = FirstLowSegment(bot, walk);
+        if (low + 1 < walk.size())
+        {
+            float speed = std::max(bot->GetSpeed(MOVE_RUN), 1.0f);
+            float toObstacle = 0.0f;
+            for (size_t i = 0; i < low; ++i)
+                toObstacle += std::hypot(walk[i + 1].x - walk[i].x, walk[i + 1].y - walk[i].y);
+
+            // where one jump from the obstacle ends: the run speed times the air time along the path (the mesh point beyond it)
+            float reach = std::clamp(speed * JumpAirSeconds, 1.5f, HopMaxReach);
+            G3D::Vector3 landing = walk[low + 1];
+            float remaining = reach;
+            for (size_t i = low; i + 1 < walk.size(); ++i)
+            {
+                float length = std::hypot(walk[i + 1].x - walk[i].x, walk[i + 1].y - walk[i].y);
+                if (length >= remaining && length > 0.01f)
+                {
+                    float t = remaining / length;
+                    landing = walk[i] + (walk[i + 1] - walk[i]) * t;
+                    break;
+                }
+                remaining -= length;
+                landing = walk[i + 1];
+            }
+            if (std::fabs(landing.z - walk[low].z) > HopMaxLandingDz)
+                landing = walk[low + 1];
+
+            // a bump in the ground can look like a low obstacle: not a hop after hop
+            uint32 now = GameTime::GetGameTimeMS();
+            bool allowed = true;
+            {
+                std::lock_guard lock(sHopLock);
+                if (sHopAt.size() > 4096)
+                    sHopAt.clear();
+                uint32& next = sHopAt[bot->GetGUID()];
+                if (int32(now - next) < 0)
+                    allowed = false;
+                else
+                    next = now + HopCooldownMs;
+            }
+
+            if (allowed)
+            {
+                Position from(walk[low].x, walk[low].y, walk[low].z);
+                Position to(landing.x, landing.y, landing.z);
+                uint32 delay = uint32(std::max(0.0f, toObstacle / speed * 1000.0f - HopLeadMs));
+                bot->m_Events.AddEventAtOffset([bot, from, to]()
+                {
+                    // still running along this path and at the obstacle
+                    if (!bot->IsInWorld() || !IsMovingOnFoot(bot) || bot->GetExactDist2d(from) > HopReach)
+                        return;
+                    if (StartPlayerJump(bot, to))
+                        ++sHops;
+                }, Milliseconds(delay));
+            }
+        }
+    }
+
     // Playerbots.Move.LogBlockedPaths: measures how often the mesh leads through geometry it does not know (fences, doors, a Hero's Call board)
     if (sPlayerbotsConfig.MoveLogBlockedPaths)
     {
@@ -460,6 +541,6 @@ bool MoveToward(Player* bot, Position const& dest, float arriveYards, float stan
 
 MeshMoveStats GetMeshMoveStats()
 {
-    return { sMeshLaunched.load(), sMeshNoPath.load(), sPathsChecked.load(), sPathsBlocked.load(), sPathsKneeOnly.load(), sPathsSteep.load(), sPathsRepaired.load(), sPathsRejected.load() };
+    return { sMeshLaunched.load(), sMeshNoPath.load(), sPathsChecked.load(), sPathsBlocked.load(), sPathsKneeOnly.load(), sPathsSteep.load(), sPathsRepaired.load(), sPathsRejected.load(), sHops.load() };
 }
 }

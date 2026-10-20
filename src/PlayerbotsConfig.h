@@ -35,6 +35,7 @@ struct Config
     uint32 DynamicTickIdleMaxMs = 2500;
     uint32 DynamicTickDeadMs = 2000;
     bool MoveFallbacks = false;        // a destination with no mesh path is tried at other heights, then through cone-sampled stepping stones
+    bool MoveHopLowObstacles = false;   // jump low obstacles on level ground instead of walking through them
     bool MoveAvoidBlockedPaths = false; // detour around geometry the mesh does not know, refuse cliff segments
     bool MoveLogBlockedPaths = false;  // log mesh paths that cross VMAP or game object geometry (measurement only, changes nothing)
     bool GearEquipUpgrades = false;    // an item in the bags that beats what the bot wears is put on (won rolls, traded gifts)
