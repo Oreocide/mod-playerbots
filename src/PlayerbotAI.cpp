@@ -866,6 +866,22 @@ void PlayerbotAI::MaintainGear(uint32 diff)
     if (!_bot->IsAlive() || _bot->IsInCombat())
         return;
 
+    // Playerbots.Gear.RerollVersion: a one-off new roll of the gear of every random bot, the first time it is active after the version was raised
+    uint32 rerollVersion = sPlayerbotsConfig.GearRerollVersion;
+    if (rerollVersion)
+    {
+        Optional<std::string> done = sPlayerbotRepository->GetValue(_botGuid, "gearv");
+        uint32 doneVersion = done ? uint32(std::strtoul(done->c_str(), nullptr, 10)) : 0;
+        if (doneVersion < rerollVersion)
+        {
+            GearFactory::GearOptions options;
+            options.Reset = true;
+            uint32 changed = sGearFactory->Equip(_bot, options);
+            sPlayerbotRepository->SetValue(_botGuid, "gearv", std::to_string(rerollVersion));
+            TC_LOG_DEBUG("server.playerbots", "Playerbots: {} rerolled its gear ({} slots, version {})", _bot->GetName(), changed, rerollVersion);
+        }
+    }
+
     if (sGearFactory->NeedsGear(_bot))
         sGearFactory->Equip(_bot);
 

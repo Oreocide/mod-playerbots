@@ -437,7 +437,7 @@ bool GearFactory::EquipSlot(Player* bot, Group const& group, uint8 slot, uint32 
     // without counting against MaxScan. If nothing legal exists the second pass takes what the old rule took.
     auto search = [&](bool strict) -> std::pair<uint32, float>
     {
-        uint32 bestId = 0;
+        std::vector<std::pair<uint32, float>> found;
         float bestScore = -1.f;
         uint32 scanned = 0;
         uint32 iterations = 0;
@@ -464,13 +464,26 @@ bool GearFactory::EquipSlot(Player* bot, Group const& group, uint8 slot, uint32 
                 continue;
 
             float score = ScoreItem(bot, proto, strict);
-            if (score > bestScore)
-            {
-                bestScore = score;
-                bestId = proto->GetId();
-            }
+            found.emplace_back(proto->GetId(), score);
+            bestScore = std::max(bestScore, score);
         }
-        return { bestId, bestScore };
+
+        if (found.empty())
+            return { 0, -1.f };
+
+        // Playerbots.Gear.Variety: any item scoring within this percentage of the best is as good a pick as the best one, so two
+        // warlocks of the same level do not wear the same shoulders. 0 = always the best item
+        uint32 variety = sPlayerbotsConfig.GearVariety;
+        if (variety == 0 || bestScore <= 0.f)
+        {
+            auto top = std::ranges::max_element(found, [](auto const& a, auto const& b) { return a.second < b.second; });
+            return *top;
+        }
+
+        float floor = bestScore * (1.0f - float(variety) / 100.0f);
+        std::vector<std::pair<uint32, float>> pool;
+        std::ranges::copy_if(found, std::back_inserter(pool), [floor](auto const& entry) { return entry.second >= floor; });
+        return pool[urand(0, uint32(pool.size() - 1))];
     };
 
     auto [itemId, bestScore] = search(true);

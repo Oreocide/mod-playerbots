@@ -56,6 +56,8 @@ void Config::Load()
     MoveAvoidBlockedPaths = sConfigMgr->GetBoolDefault("Playerbots.Move.AvoidBlockedPaths", false);
     MoveLogBlockedPaths = sConfigMgr->GetBoolDefault("Playerbots.Move.LogBlockedPaths", false);
     MountsVariety = sConfigMgr->GetBoolDefault("Playerbots.Mounts.Variety", false);
+    GearRerollVersion = uint32(std::max(0, sConfigMgr->GetIntDefault("Playerbots.Gear.RerollVersion", 0)));
+    GearVariety = uint32(std::clamp(sConfigMgr->GetIntDefault("Playerbots.Gear.Variety", 0), 0, 50));
     GearHunterPets = sConfigMgr->GetBoolDefault("Playerbots.Gear.HunterPets", false);
     GearStockPotions = sConfigMgr->GetBoolDefault("Playerbots.Gear.StockPotions", false);
     GearEquipUpgrades = sConfigMgr->GetBoolDefault("Playerbots.Gear.EquipUpgrades", false);
