@@ -69,7 +69,13 @@ public:
         bool stale = !_valid || (_interval == 0 ? _tick != clock->Tick : clock->NowMs - _stamp >= _interval);
         if (stale)
         {
-            _value = Calculate(ai);
+            T next = Calculate(ai);
+            bool differs = true;
+            if constexpr (requires(T const& a, T const& b) { a == b; })
+                differs = !_valid || !(next == _value);
+            if (differs)
+                _changed = clock->NowMs;
+            _value = std::move(next);
             _tick = clock->Tick;
             _stamp = clock->NowMs;
             _valid = true;
@@ -79,6 +85,10 @@ public:
 
     void Invalidate() { _valid = false; }
 
+    /// Game time ms of the last calculation that gave another value than the one before (a value without ==
+    /// counts every calculation as a change). 0 until first calculated. "No progress for N seconds" checks use it
+    uint32_t LastChangedMs() const { return _changed; }
+
 protected:
     virtual T Calculate(PlayerbotAI& ai) = 0;
 
@@ -86,6 +96,7 @@ private:
     T _value{};
     uint32_t _tick = 0;
     uint32_t _stamp = 0;
+    uint32_t _changed = 0;
     uint32_t _interval;
     bool _valid = false;
 };

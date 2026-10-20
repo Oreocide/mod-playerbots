@@ -152,6 +152,47 @@ public:
     void InitTriggers(std::vector<TriggerNode>& triggers) override { triggers.push_back({ "enemy", { { "loop a", 10.0f } } }); }
 };
 
+class ChainAction : public LogAction
+{
+public:
+    ChainAction() : LogAction("chain") { }
+    std::vector<NextAction> GetContinuers() const override { return { { "chain2", 0.0f } }; }
+};
+
+class Chain2Action : public LogAction
+{
+public:
+    Chain2Action() : LogAction("chain2") { }
+    bool IsUseful(PlayerbotAI&) override { return !F.Passive; }   // Passive reused as "second step not wanted"
+};
+
+class StateNodeStrategy : public Strategy
+{
+public:
+    StateNodeStrategy() : Strategy("statenodes") { }
+    void InitTriggers(std::vector<TriggerNode>& triggers) override
+    {
+        AddTrigger("enemy", { { "attack", 20.0f } }, StrategyStates::Combat);
+        AddTrigger("low health", { { "potion", 10.0f } }, StrategyStates::NonCombat);
+        triggers = GetTriggers();
+    }
+    void OnStateChanged(PlayerbotAI&, uint8_t from, uint8_t to) override { F.Counter = int(from) * 10 + int(to); }
+};
+
+class ChainStrategy : public Strategy
+{
+public:
+    ChainStrategy() : Strategy("chainer") { }
+    void InitTriggers(std::vector<TriggerNode>& triggers) override { triggers.push_back({ "enemy", { { "chain", 40.0f } } }); }
+};
+
+class EventStrategy : public Strategy
+{
+public:
+    EventStrategy() : Strategy("evented") { }
+    void InitTriggers(std::vector<TriggerNode>& triggers) override { triggers.push_back({ "event:ready check", { { "attack", 30.0f } } }); }
+};
+
 void Register()
 {
     AiRegistry& r = sPlayerbotsAi;
@@ -181,6 +222,14 @@ void Register()
     r.AddStrategy<MultStrategy>("passive");
     r.AddStrategy<LegacyStrategy>("legacy");
     r.AddStrategy<LoopStrategy>("loop");
+    r.AddAction<ChainAction>("chain");
+    r.AddAction<Chain2Action>("chain2");
+    r.AddStrategy<StateNodeStrategy>("statenodes");
+    r.AddStrategy<ChainStrategy>("chainer");
+    r.AddStrategy<EventStrategy>("evented");
+    r.AddTrigger("gated", 1000, [](PlayerbotAI&) { ++F.TriggerCalls; return true; }, IntervalMode::Gate);
+    r.AddTrigger("gated jitter", 1000, [](PlayerbotAI&) { ++F.TriggerCalls; return true; }, IntervalMode::Gate, 500);
+    r.AddValue<int>("changing", 0, [](PlayerbotAI&) { return F.Counter; });
     AiRegistry::SetErrorSink([](std::string const& message) { Errors.push_back(message); });
 }
 
@@ -399,6 +448,119 @@ int main()
         bot.Context.BeginTick(1500);
         CHECK(!t->IsActive(bot.Ai));                 // recomputed: Counter 1 -> false
         CHECK(F.TriggerCalls == 2);
+    }
+
+    {   // a gate trigger fires at most once per interval, and every strategy in one tick sees the same answer
+        Reset();
+        Bot bot;
+        Trigger* t = bot.Context.GetTrigger("gated");
+        bot.Context.BeginTick(0);
+        CHECK(t->IsActive(bot.Ai));
+        CHECK(t->IsActive(bot.Ai));                  // same tick: same answer
+        bot.Context.BeginTick(300);
+        CHECK(!t->IsActive(bot.Ai));                 // gate closed, not the cached true
+        bot.Context.BeginTick(999);
+        CHECK(!t->IsActive(bot.Ai));
+        bot.Context.BeginTick(1000);
+        CHECK(t->IsActive(bot.Ai));                  // interval passed
+        CHECK(F.TriggerCalls == 2);
+    }
+    {   // jitter only lengthens the wait, by at most jitterMs
+        Reset();
+        Bot bot;
+        Trigger* t = bot.Context.GetTrigger("gated jitter");
+        uint32_t now = 0;
+        bot.Context.BeginTick(now);
+        CHECK(t->IsActive(bot.Ai));
+        for (int round = 0; round < 20; ++round)
+        {
+            uint32_t fired = now;
+            now += 999;
+            bot.Context.BeginTick(now);
+            CHECK(!t->IsActive(bot.Ai));             // never before the base interval
+            uint32_t waited = 999;
+            while (true)
+            {
+                now += 10;
+                waited += 10;
+                bot.Context.BeginTick(now);
+                if (t->IsActive(bot.Ai))
+                    break;
+                CHECK(waited <= 1600);               // 1000 + 500 jitter (+ the 10 ms step)
+                if (waited > 1600)
+                    break;
+            }
+            CHECK(now - fired >= 1000);
+        }
+    }
+    {   // a value remembers when it last changed
+        Reset();
+        Bot bot;
+        auto* value = dynamic_cast<CalculatedValue<int>*>(bot.Context.GetValueBase("changing"));
+        CHECK(value != nullptr);
+        F.Counter = 1;
+        bot.Context.BeginTick(100);
+        CHECK(value->Get(bot.Ai) == 1);
+        CHECK(value->LastChangedMs() == 100);
+        bot.Context.BeginTick(200);
+        CHECK(value->Get(bot.Ai) == 1);
+        CHECK(value->LastChangedMs() == 100);        // same value: not a change
+        F.Counter = 2;
+        bot.Context.BeginTick(300);
+        CHECK(value->Get(bot.Ai) == 2);
+        CHECK(value->LastChangedMs() == 300);
+    }
+    {   // trigger nodes are evaluated only in their situations; the state hook reaches the strategy
+        Reset();
+        Bot bot;
+        bot.Eng.AddStrategy(Make("statenodes"));
+        F.Enemy = true;
+        F.Low = true;
+        CHECK(std::string(bot.Tick(0, StrategyStates::Combat)) == "attack");
+        Log.clear();
+        CHECK(std::string(bot.Tick(10, StrategyStates::NonCombat)) == "potion");
+        bot.Eng.NotifyStateChanged(bot.Ai, StrategyStates::NonCombat, StrategyStates::Combat);
+        CHECK(F.Counter == 2 * 10 + 1);
+    }
+    {   // a continuer is offered once on the next tick, and dropped when it is not useful or too old
+        Reset();
+        Bot bot;
+        bot.Eng.AddStrategy(Make("chainer"));
+        F.Enemy = true;
+        CHECK(std::string(bot.Tick(0)) == "chain");
+        F.Enemy = false;
+        CHECK(std::string(bot.Tick(100)) == "chain2");  // enemy gone, the follow-up still runs
+        CHECK(bot.Tick(200) == nullptr);                // and only once
+
+        F.Enemy = true;
+        CHECK(std::string(bot.Tick(300)) == "chain");
+        F.Enemy = false;
+        F.Passive = true;                               // second step no longer useful
+        CHECK(bot.Tick(400) == nullptr);
+
+        F.Passive = false;
+        F.Enemy = true;
+        CHECK(std::string(bot.Tick(500)) == "chain");
+        F.Enemy = false;
+        CHECK(bot.Tick(500 + 4000) == nullptr);         // expired
+        F.Enemy = true;
+        CHECK(std::string(bot.Tick(6000)) == "chain");
+        bot.Eng.NotifyStateChanged(bot.Ai, StrategyStates::Combat, StrategyStates::NonCombat);
+        F.Enemy = false;
+        CHECK(bot.Tick(6100) == nullptr);               // a state change drops it
+    }
+    {   // events live for one tick and answer through the "event:<name>" trigger
+        Reset();
+        Bot bot;
+        bot.Eng.AddStrategy(Make("evented"));
+        CHECK(bot.Tick(0) == nullptr);
+        bot.Context.Raise("ready check", "starter", 42);
+        CHECK(!bot.Context.HasEvent("ready check"));    // not visible before the next tick
+        CHECK(std::string(bot.Tick(10)) == "attack");
+        AiEvent const* event = bot.Context.GetEvent("ready check");
+        CHECK(event && event->Payload == "starter" && event->Value == 42);
+        CHECK(bot.Tick(20) == nullptr);                 // one tick only
+        CHECK(!bot.Context.HasEvent("ready check"));
     }
 
     if (Failures)

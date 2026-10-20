@@ -22,12 +22,23 @@
 #include "Trigger.h"
 #include "Value.h"
 #include <memory>
+#include <mutex>
 #include <string>
 #include <unordered_map>
 #include <unordered_set>
+#include <vector>
 
 namespace Playerbots
 {
+/// Something that happened to the bot that a strategy may answer once ("ready check", "loot roll", "trade request").
+/// Raised by whatever notices it (a poll of game state, a hook); lives for exactly one AI tick
+struct AiEvent
+{
+    std::string Name;
+    std::string Payload;
+    uint64_t Value = 0;     // a guid counter, an id... whatever the producer and the action agree on
+};
+
 /// The actions, triggers and values of one bot, created from the AiRegistry the first time they are asked for.
 /// Instances live as long as the bot, so values keep their cache and actions their own state
 class AiContext
@@ -38,7 +49,30 @@ public:
     {
         ++_clock.Tick;
         _clock.NowMs = nowMs;
+
+        // events raised since the last tick are visible during this one, then gone
+        std::lock_guard lock(_eventLock);
+        _events = std::move(_incomingEvents);
+        _incomingEvents.clear();
     }
+
+    /// Raises an event for the next AI tick. Safe to call from any thread. A trigger named "event:<name>" is active
+    /// during the tick that sees it (strategies offer the answering action through it)
+    void Raise(std::string name, std::string payload = {}, uint64_t value = 0)
+    {
+        std::lock_guard lock(_eventLock);
+        _incomingEvents.push_back({ std::move(name), std::move(payload), value });
+    }
+
+    /// The event of this tick with that name, nullptr if there is none. Only from the bot's own AI tick
+    AiEvent const* GetEvent(std::string const& name) const
+    {
+        for (AiEvent const& event : _events)
+            if (event.Name == name)
+                return &event;
+        return nullptr;
+    }
+    bool HasEvent(std::string const& name) const { return GetEvent(name) != nullptr; }
 
     uint32_t GetTick() const { return _clock.Tick; }
     uint32_t GetNowMs() const { return _clock.NowMs; }
@@ -95,6 +129,9 @@ private:
     std::unordered_map<std::string, std::unique_ptr<Trigger>> _triggers;
     std::unordered_map<std::string, std::unique_ptr<ValueBase>> _values;
     std::unordered_set<std::string> _reported;
+    std::mutex _eventLock;
+    std::vector<AiEvent> _incomingEvents;   // raised, not yet visible
+    std::vector<AiEvent> _events;           // visible during the current tick
 };
 }
 

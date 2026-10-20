@@ -64,11 +64,11 @@ public:
 
     /// Trigger from a callable bool(PlayerbotAI&)
     template <typename F>
-    void AddTrigger(std::string name, uint32_t intervalMs, F fn)
+    void AddTrigger(std::string name, uint32_t intervalMs, F fn, IntervalMode mode = IntervalMode::Cache, uint32_t jitterMs = 0)
     {
-        AddTrigger(std::move(name), [intervalMs, fn](std::string const&) -> std::unique_ptr<Trigger>
+        AddTrigger(std::move(name), [intervalMs, fn, mode, jitterMs](std::string const&) -> std::unique_ptr<Trigger>
         {
-            return std::make_unique<LambdaTrigger<F>>(intervalMs, fn);
+            return std::make_unique<LambdaTrigger<F>>(intervalMs, fn, mode, jitterMs);
         });
     }
 

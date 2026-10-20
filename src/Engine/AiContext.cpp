@@ -20,6 +20,25 @@
 
 namespace Playerbots
 {
+namespace
+{
+/// "event:<name>": active during the tick that sees a raised event of that name
+class EventTrigger final : public Trigger
+{
+public:
+    EventTrigger(AiContext const& context, std::string name) : _context(context), _name(std::move(name)) { }
+
+protected:
+    bool Check(PlayerbotAI&) override { return _context.HasEvent(_name); }
+
+private:
+    AiContext const& _context;
+    std::string _name;
+};
+
+constexpr std::string_view EventPrefix = "event:";
+}
+
 void AiContext::ReportMissing(std::string const& what)
 {
     if (_reported.insert(what).second)
@@ -48,7 +67,11 @@ Trigger* AiContext::GetTrigger(std::string const& name)
     if (itr != _triggers.end())
         return itr->second.get();
 
-    std::unique_ptr<Trigger> trigger = sPlayerbotsAi.CreateTrigger(name);
+    std::unique_ptr<Trigger> trigger;
+    if (name.compare(0, EventPrefix.size(), EventPrefix) == 0)
+        trigger = std::make_unique<EventTrigger>(*this, name.substr(EventPrefix.size()));
+    else
+        trigger = sPlayerbotsAi.CreateTrigger(name);
     if (!trigger)
     {
         ReportMissing("unknown trigger " + name);

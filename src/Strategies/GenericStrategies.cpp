@@ -1185,15 +1185,15 @@ void RegisterGenericAi()
     AddTriggerStrategy(r, "death", { { "dead", { { "revive", Priority::Revive } } } });
     AddTriggerStrategy(r, "teleport", { { "master away", { { "teleport to master", Priority::Teleport } } } });
     AddTriggerStrategy(r, "combat", { { "needs heal", { { "heal", Priority::Heal } } }, { "has combat target", { { "attack", Priority::Attack } } } });
-    AddTriggerStrategy(r, "loot", { { "corpse to loot", { { "loot", Priority::Loot } } } });
-    AddTriggerStrategy(r, "consume", { { "should consume", { { "eat/drink", Priority::Consume } } } });
+    AddTriggerStrategy(r, "loot", { { "corpse to loot", { { "loot", Priority::Loot } }, StrategyStates::NonCombat } });
+    AddTriggerStrategy(r, "consume", { { "should consume", { { "eat/drink", Priority::Consume } }, StrategyStates::NonCombat } });
     AddTriggerStrategy(r, "follow", { { "follow master", { { "follow", Priority::Idle } } } });
     AddTriggerStrategy(r, "stay", { { "alive", { { "stay", Priority::Idle } } } });
-    AddTriggerStrategy(r, "wander", { { "idle alone", { { "wander", Priority::Idle } } } });
-    AddTriggerStrategy(r, "travel", { { "traveling", { { "travel", Priority::Travel } } } });
-    AddTriggerStrategy(r, "buff", { { "needs buff", { { "buff", Priority::Buff } } } });
+    AddTriggerStrategy(r, "wander", { { "idle alone", { { "wander", Priority::Idle } }, StrategyStates::NonCombat } });
+    AddTriggerStrategy(r, "travel", { { "traveling", { { "travel", Priority::Travel } }, StrategyStates::NonCombat } });
+    AddTriggerStrategy(r, "buff", { { "needs buff", { { "buff", Priority::Buff } }, StrategyStates::NonCombat } });
     AddTriggerStrategy(r, "pvp", { { "pvp zone", { { "pvp", Priority::Pvp } } } });
-    AddTriggerStrategy(r, "world", { { "world react", { { "world react", Priority::World } } } });
+    AddTriggerStrategy(r, "world", { { "world react", { { "world react", Priority::World } }, StrategyStates::NonCombat } });
     r.AddStrategy("rpg", [](std::string const&) { return CreateRpgStrategy(); });
     r.AddStrategy("quest", [](std::string const&) { return CreateQuestStrategy(); });
 

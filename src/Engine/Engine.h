@@ -20,6 +20,7 @@
 
 #include "Multiplier.h"
 #include <cstdint>
+#include <functional>
 #include <memory>
 #include <string>
 #include <string_view>
@@ -74,6 +75,9 @@ public:
     virtual std::vector<NextAction> GetPrerequisites() const { return {}; }
     /// Tried when this action is impossible or failed (healthstone -> healing potion), offered just below
     virtual std::vector<NextAction> GetAlternatives() const { return {}; }
+    /// Offered again on the next tick at the relevance this action ran with, for a few seconds (a move that needs a
+    /// second step, a heal that is followed by a bandage). Dropped as soon as one is not useful
+    virtual std::vector<NextAction> GetContinuers() const { return {}; }
 
     /// Argument of a chat command ("co" with "+dps,-follow"), set before Execute by Engine::ExecuteAction
     std::string const& GetParam() const { return _param; }
@@ -88,6 +92,8 @@ struct TriggerNode
 {
     std::string Trigger;
     std::vector<NextAction> Handlers;
+    /// Situations this node is evaluated in (a loot or buff trigger is not looked at in combat)
+    uint8_t States = StrategyStates::All;
 };
 
 class Strategy
@@ -106,6 +112,8 @@ public:
 
     virtual void InitTriggers(std::vector<TriggerNode>& /*triggers*/) { }
     virtual void InitMultipliers(std::vector<std::unique_ptr<Multiplier>>& /*multipliers*/) { }
+    /// The bot went from one situation to another (StrategyStates): reset what belongs to the old one
+    virtual void OnStateChanged(PlayerbotAI& /*ai*/, uint8_t /*from*/, uint8_t /*to*/) { }
 
     /// Called once when the strategy joins an engine
     void Init()
@@ -121,7 +129,10 @@ public:
 
 protected:
     void AddAction(std::unique_ptr<Action> action) { _actions.push_back(std::move(action)); }
-    void AddTrigger(std::string trigger, std::vector<NextAction> handlers) { _triggers.push_back({ std::move(trigger), std::move(handlers) }); }
+    void AddTrigger(std::string trigger, std::vector<NextAction> handlers, uint8_t states = StrategyStates::All)
+    {
+        _triggers.push_back({ std::move(trigger), std::move(handlers), states });
+    }
 
 private:
     std::string _name;
@@ -139,7 +150,7 @@ enum class ActionResult
     Failed
 };
 
-using StrategyFactory = std::unique_ptr<Strategy> (*)(std::string_view name);
+using StrategyFactory = std::function<std::unique_ptr<Strategy>(std::string_view name)>;
 
 class Engine
 {
@@ -160,6 +171,9 @@ public:
     /// Executes the most relevant action, returns its name or nullptr if nothing was done
     char const* DoNextAction(PlayerbotAI& ai, uint8_t state = StrategyStates::All);
 
+    /// The bot's situation changed: tells every strategy and drops the continuers of the old one
+    void NotifyStateChanged(PlayerbotAI& ai, uint8_t from, uint8_t to);
+
     /// Runs one action by name now (chat commands), ignoring strategies and multipliers
     ActionResult ExecuteAction(PlayerbotAI& ai, std::string const& name, std::string param = {});
 
@@ -174,8 +188,17 @@ private:
     void Push(Action* action, float relevance, bool skipPrerequisites);
     void PushAll(std::vector<NextAction> const& next, float forcedRelevance);
 
+    struct Pending
+    {
+        Action* Act;
+        float Relevance;
+        uint32_t ExpiresAtMs;
+    };
+
     AiContext& _context;
     std::vector<std::unique_ptr<Strategy>> _strategies;
+    /// Continuers of the action that ran last, merged into the next tick's baskets
+    std::vector<Pending> _pending;
     /// Reused every tick, a fresh vector per bot per tick was the biggest allocation in the AI loop
     std::vector<Basket> _baskets;
     std::vector<Multiplier*> _activeMultipliers;

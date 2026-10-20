@@ -32,6 +32,9 @@ constexpr float PrerequisiteBonus = 0.002f;
 constexpr float RetryBonus = 0.001f;
 constexpr float AlternativeBonus = 0.003f;
 
+// How long a continuer stays on offer; the next tick normally takes it at once, this covers a long tick delay
+constexpr uint32_t PendingExpireMs = 3000;
+
 std::string_view Trim(std::string_view text)
 {
     while (!text.empty() && text.front() == ' ')
@@ -184,10 +187,25 @@ void Engine::PushAll(std::vector<NextAction> const& next, float forcedRelevance)
         Push(_context.GetAction(entry.Name), forcedRelevance > 0.0f ? forcedRelevance : entry.Relevance, false);
 }
 
+void Engine::NotifyStateChanged(PlayerbotAI& ai, uint8_t from, uint8_t to)
+{
+    _pending.clear();
+    for (std::unique_ptr<Strategy> const& strategy : _strategies)
+        strategy->OnStateChanged(ai, from, to);
+}
+
 char const* Engine::DoNextAction(PlayerbotAI& ai, uint8_t state)
 {
     _baskets.clear();
     _activeMultipliers.clear();
+
+    // what the last action asked to be offered again: once, if it is still wanted
+    uint32_t now = _context.GetNowMs();
+    for (Pending const& pending : _pending)
+        if (int32_t(pending.ExpiresAtMs - now) > 0 && pending.Act->IsUseful(ai))
+            Push(pending.Act, pending.Relevance, false);
+    _pending.clear();
+
     {
         PerfScope scan("(relevance scan)");
         for (std::unique_ptr<Strategy> const& strategy : _strategies)
@@ -200,6 +218,9 @@ char const* Engine::DoNextAction(PlayerbotAI& ai, uint8_t state)
 
             for (TriggerNode const& node : strategy->GetTriggers())
             {
+                if (!(node.States & state))
+                    continue;
+
                 Trigger* trigger = _context.GetTrigger(node.Trigger);
                 if (!trigger || !trigger->IsActive(ai))
                     continue;
@@ -254,7 +275,12 @@ char const* Engine::DoNextAction(PlayerbotAI& ai, uint8_t state)
 
         PerfScope run(action->GetName());
         if (action->Execute(ai))
+        {
+            for (NextAction const& next : action->GetContinuers())
+                if (Action* continuer = _context.GetAction(next.Name))
+                    _pending.push_back({ continuer, relevance, now + PendingExpireMs });
             return action->GetName();
+        }
 
         PushAll(action->GetAlternatives(), relevance + AlternativeBonus);
     }
