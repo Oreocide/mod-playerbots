@@ -29,6 +29,7 @@ struct Config
     uint32 MaxBotsPerPlayer = 4;
     uint32 UpdateInterval = 250;       // ms between two AI ticks of the same bot
     uint32 ScanInterval = 1500;        // ms a bot waits after a grid search (enemy, corpse) found nothing
+    bool LootRoll = false;             // bots answer group loot rolls: need an upgrade, greed what sells, pass what they cannot use
     bool PerfMonEnabled = false;       // time engine ticks and actions, shown by ".bot perf"
     uint32 PerfMonMemorySeconds = 30;       // RSS and jemalloc stats line (0 = off)
     std::string PerfMonChatDriver;     // "<messages per second> <say|yell|emote|channel|guild|mix>": start the synthetic chat driver once bots are online

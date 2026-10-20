@@ -31,6 +31,7 @@ void Config::Load()
     MaxBotsPerPlayer = sConfigMgr->GetIntDefault("Playerbots.MaxBotsPerPlayer", 4);
     UpdateInterval = std::max(50, sConfigMgr->GetIntDefault("Playerbots.UpdateInterval", 250));
     ScanInterval = uint32(std::clamp(sConfigMgr->GetIntDefault("Playerbots.ScanInterval", 1500), 0, 30000));
+    LootRoll = sConfigMgr->GetBoolDefault("Playerbots.Loot.Roll", false);
     PerfMonEnabled = sConfigMgr->GetBoolDefault("Playerbots.PerfMon.Enable", false);
     PerfMonMemorySeconds = uint32(std::clamp(sConfigMgr->GetIntDefault("Playerbots.PerfMon.MemorySeconds", 30), 0, 3600));
     RandomJoinChannels = sConfigMgr->GetBoolDefault("Playerbots.Random.JoinChannels", false);

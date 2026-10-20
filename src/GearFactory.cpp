@@ -519,6 +519,43 @@ GearFactory::GearArgKind GearFactory::ParseGearArg(std::string const& arg, GearO
     return options.ItemLevelCap == 0 && options.QualityCap == 0 ? GearArgKind::Bad : GearArgKind::Ok;
 }
 
+GearFactory::UpgradeInfo GearFactory::GetUpgradeInfo(Player const* bot, ItemTemplate const* proto) const
+{
+    UpgradeInfo info;
+    if (!_built || !bot || !proto)
+        return info;
+
+    std::vector<uint8> slots;
+    for (Group const& group : _groups)
+        if (std::ranges::find(group.InventoryTypes, uint8(proto->GetInventoryType())) != group.InventoryTypes.end())
+            slots.insert(slots.end(), group.Slots.begin(), group.Slots.end());
+    if (slots.empty())
+        return info;
+
+    info.Equippable = true;
+    if (bot->CanUseItem(proto) != EQUIP_ERR_OK || !proto->IsUsableByLootSpecialization(bot, false))
+        return info;
+    if (!FitsClassArmor(bot, proto) || !FitsWeapon(bot, proto) || HasForeignPrimary(proto, PrimaryItemMod(bot->GetPrimaryStat())))
+        return info;
+
+    float score = ScoreItem(bot, proto, true);
+    if (score < 0.f)
+        return info;
+
+    info.Usable = true;
+    for (uint8 slot : slots)
+    {
+        Item const* worn = bot->GetItemByPos(INVENTORY_SLOT_BAG_0, slot);
+        if (!worn)
+        {
+            info.Margin = std::max(info.Margin, score);
+            continue;
+        }
+        info.Margin = std::max(info.Margin, score - std::max(ScoreItem(bot, worn->GetTemplate(), true), 0.f));
+    }
+    return info;
+}
+
 uint32 GearFactory::Equip(Player* bot, GearOptions const& options) const
 {
     if (!_built || !bot || !bot->IsInWorld())

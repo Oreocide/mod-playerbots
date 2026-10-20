@@ -57,6 +57,16 @@ public:
     /// Bags in the empty bag slots and pocket money of a level appropriate size (never takes anything away)
     void Provision(Player* bot) const;
 
+    /// What a found item is worth to the bot: worn at all (some equipment slot takes it), usable by the bot (class, armor type,
+    /// primary stat, level, skill) and how much its score beats the worst piece worn in the best slot for it (an empty slot = its
+    /// whole score, 0 = no gain). Same scoring as Equip. Used for loot rolls
+    struct UpgradeInfo
+    {
+        bool Equippable = false;
+        bool Usable = false;
+        float Margin = 0.0f;
+    };
+    UpgradeInfo GetUpgradeInfo(Player const* bot, ItemTemplate const* proto) const;
     /// Caps for one Equip() call. QualityCap 0 uses Playerbots.RandomGear.MaxQuality. ItemLevelCap 0 means no cap.
     struct GearOptions
     {

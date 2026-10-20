@@ -29,6 +29,7 @@
 #include "ObjectAccessor.h"
 #include "ObjectMgr.h"
 #include "ActivityMgr.h"
+#include "Social/LootRolls.h"
 #include "Social/BotSocialMgr.h"
 #include "Player.h"
 #include "PlayerbotAI.h"
@@ -81,7 +82,8 @@ AddBotResult PlayerbotMgr::AddBot(Player* master, std::string const& characterNa
         masterSession->GetBattlenetAccountId(), std::string(), masterSession->GetAccountExpansion(), std::string(masterSession->GetOS()),
         masterSession->GetTimezoneOffset(), masterSession->GetClientBuild(), masterSession->GetClientBuildVariant(),
         masterSession->GetSessionDbLocaleIndex(),
-        nullptr, [guid = character->Guid](WorldSession* botSession) { botSession->LoginHeadlessPlayer(guid); });
+        // a party bot sees loot rolls; dungeon finder proposals are not its business (it never queues alone)
+        [guid = character->Guid](WorldPacket const& packet) { LootRolls::OnBotPacket(guid, packet); }, [guid = character->Guid](WorldSession* botSession) { botSession->LoginHeadlessPlayer(guid); });
 
     ObjectGuid guid = character->Guid;
 
@@ -102,7 +104,11 @@ bool PlayerbotMgr::AddRandomBot(uint32 accountId, std::string const& accountName
     WorldSession* session = CreateBotSession(accountId, std::string(accountName), bnetAccountId, std::string(), uint8(sWorld->getIntConfig(CONFIG_EXPANSION)),
         "Win", Minutes(0), 0, ClientBuild::VariantId{}, LOCALE_enUS,
         // what a random bot reacts to: dungeon finder proposals (party and guild invitations are found by BotSocialMgr's scan)
-        [character](WorldPacket const& packet) { sActivityMgr->OnBotPacket(character, packet); },
+        [character](WorldPacket const& packet)
+        {
+            sActivityMgr->OnBotPacket(character, packet);
+            LootRolls::OnBotPacket(character, packet);
+        },
         [character](WorldSession* botSession) { botSession->LoginHeadlessPlayer(character); });
 
     BotProfessions::SeedOffline(character);

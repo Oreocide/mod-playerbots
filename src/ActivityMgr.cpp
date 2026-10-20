@@ -16,6 +16,7 @@
  */
 
 #include "ActivityMgr.h"
+#include "Social/LootRolls.h"
 #include "BotSession.h"
 #include "ArenaTeam.h"
 #include "BattlegroundMgr.h"
@@ -214,6 +215,7 @@ void ActivityMgr::OnBotPacket(ObjectGuid bot, WorldPacket const& packet)
 
 void ActivityMgr::Update(uint32 diff)
 {
+    LootRolls::Update(diff);
     _clock += diff;
     AnswerProposals();
 
