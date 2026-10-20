@@ -26,6 +26,7 @@
 #include "Position.h"
 #include "Rotation/RotationRunner.h"
 #include "Strategies/Rpg/RpgInfo.h"
+#include "Travel/MovePriority.h"
 #include "Travel/RouteFollower.h"
 #include <algorithm>
 #include <atomic>
@@ -125,6 +126,8 @@ public:
     Position const& GetHome() const { return _home; }
     RpgInfo& GetRpg() { return _rpg; }
     RouteFollower& GetRoute() { return _route; }
+    /// What BotMover is doing for this bot: the priority of the running move, so one mover does not undo another
+    BotMoveState& GetMoveState() { return _moveState; }
     RotationRunner& GetRotation() { return _rotation; }
     /// The bot is about to be moved by its own doing (a flight, a portal, a hearthstone): not an interruption
     void NoteExpectedMove() { _expectedMove = true; }
@@ -182,6 +185,7 @@ private:
     uint32 _talentSpec = 0;
     RpgInfo _rpg;
     RouteFollower _route;
+    BotMoveState _moveState;
     RotationRunner _rotation;
     bool _expectedMove = false;
     Position _lastStand;

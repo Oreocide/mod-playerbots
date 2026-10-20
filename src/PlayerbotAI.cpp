@@ -47,6 +47,7 @@
 #include "StringFormat.h"
 #include "Engine/CastPolicy.h"
 #include "Engine/TickPolicy.h"
+#include "Travel/BotMover.h"
 #include "Travel/MoveToward.h"
 #include "Random.h"
 #include "Spell.h"
@@ -689,6 +690,7 @@ void PlayerbotAI::OnInterrupted()
     _rpg.WaitUntil = 0;
     _chaseTarget.Clear();
     _forcedTarget.Clear();
+    NoteStopped(_moveState);
     _bot->GetMotionMaster()->Clear();
 
     // The area the bot works around is where it is now (not inside dungeons and battlegrounds, and not while
@@ -999,6 +1001,10 @@ void PlayerbotAI::TellMaster(std::string_view text) const
 
 void PlayerbotAI::Follow(Player* master)
 {
+    // a positioning or avoid move (BotMover) is not undone by the follow generator
+    if (MoveHeldAbove(_bot, MovePriority::Follow))
+        return;
+
     if (_chaseTarget == master->GetGUID() && _bot->GetMotionMaster()->GetCurrentMovementGeneratorType() == FOLLOW_MOTION_TYPE)
         return;
 
@@ -1021,6 +1027,10 @@ void PlayerbotAI::Stay()
 
 void PlayerbotAI::Chase(Unit* target, bool ranged)
 {
+    // a positioning or avoid move (BotMover) is not undone by the chase generator
+    if (MoveHeldAbove(_bot, MovePriority::Chase))
+        return;
+
     if (_chaseTarget == target->GetGUID() && _bot->GetMotionMaster()->GetCurrentMovementGeneratorType() == CHASE_MOTION_TYPE)
         return;
 

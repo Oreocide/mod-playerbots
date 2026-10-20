@@ -16,6 +16,7 @@
  */
 
 #include "GenericStrategies.h"
+#include "Travel/BotMover.h"
 #include "Cmd/ChatCommands.h"
 #include "Engine/AiContext.h"
 #include "Engine/AiRegistry.h"
