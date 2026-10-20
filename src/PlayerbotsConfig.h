@@ -54,6 +54,7 @@ struct Config
     bool MoveAvoidBlockedPaths = false; // detour around geometry the mesh does not know, refuse cliff segments
     bool MoveLogBlockedPaths = false;  // log mesh paths that cross VMAP or game object geometry (measurement only, changes nothing)
     bool MountsVariety = false;        // random bots own several ground mounts by level instead of one vendor mount
+    bool GearHunterPets = false;       // random hunters of level 10 and up without a beast get a tamed one
     bool GearStockPotions = false;     // random bots carry a few health potions (and mana potions for mana users) of their level, for Combat.UsePotions
     bool GearEquipUpgrades = false;    // an item in the bags that beats what the bot wears is put on (won rolls, traded gifts)
     bool RotationUtility = false;      // rotations may use the utility list and the dispel, resurrection, group buff and crowd control targets

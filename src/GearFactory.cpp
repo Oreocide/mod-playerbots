@@ -27,6 +27,7 @@
 #include "ObjectMgr.h"
 #include "CollectionMgr.h"
 #include "Economy/BotProfessions.h"
+#include "Economy/HunterPets.h"
 #include "Economy/RaceMounts.h"
 #include "Player.h"
 #include "PlayerbotsConfig.h"
@@ -710,6 +711,10 @@ void GearFactory::Supply(Player* bot) const
     // a player of this level rides: riding skill, and a vendor mount of the bot's own race (a goblin gets a trike, not the
     // Alliance horse) in the collection
     RaceMounts::Grant(bot);
+
+    // Playerbots.Gear.HunterPets: a hunter without a beast tames one (hunter.rot calls, feeds and revives it from then on)
+    if (sPlayerbotsConfig.GearHunterPets)
+        HunterPets::Grant(bot);
 
     topUp(PickConsumable(_food, bot->GetLevel()));
     if (bot->GetMaxPower(POWER_MANA) > 0)
