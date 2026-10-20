@@ -48,6 +48,14 @@ Upstream reference = `34fd0ebd` (TC master merged 2026-10-14). Core paths are re
 
 **Final core footprint for bots ("minimal kit"):** `game/Server/WorldSession.h`, `game/Server/WorldSession.cpp`, `game/Handlers/CharacterHandler.cpp` (`LoginBotPlayer` only), `game/Entities/Player/Player.cpp` (frozen early return only), `game/Maps/Map.cpp` (two frozen skips). No other core file differs from upstream for bot reasons. The kit is frozen: no new lines without explicit user approval.
 
+## Update 2026-10-19 (user)
+
+| Item | Decision |
+|---|---|
+| Lazy navmesh (`LazyMMap`, `mmap.LazyForFrozenGrids`) | **dropped for good**: not coming back. The census (`gridstock`) showed only ~40 grids hold nothing but dormant bots (~1.2 GB), and the earlier run saved memory but raised CPU (367 -> 527 ms/s). No code or conf for it remains. |
+| Visibility grid load for headless sessions | **core option kept**: `WorldSession::SetHeadlessLoadsVisibilityGrids` / `LoadsVisibilityGrids` (WorldSession.h) + one `if` in `DelayedUnitRelocation::Visit` (GridNotifiers.cpp), module key `Playerbots.NoVisibilityGridLoad`. 1000 bots: loaded grids ~293 -> ~118, RSS 19.7 -> 14.8 GB. Human walk-through passed. |
+| Grids nobody is near | `GridCleanUpDelay` lowered 300000 -> 120000 (world-wide, `docker/etc/worldserver.conf`). Warm-pinned hub grids stay (explicit unload lock). |
+
 ## Effect on earlier P0 items
 
 - G1 (BotPerf untracked): becomes part of the BotPerf decision above. No core edit in P0.
@@ -73,3 +81,14 @@ Known costs of the module-only route: two log lines per bot login and one ERROR 
 `Logger.network.opcode`, shipped in the conf); the LFG id sweep; no push notification for GM kicks of a bot; the scale benchmark numbers that
 depended on the removed gates have to be measured again. A change in stock `HandlePlayerLoginOpcode` (ordering of the
 "loading" state and the legit check) makes `StartBotLogin` log an error and the bot fail to log in.
+
+## Addendum (2026-10-18): headless sessions in the core
+
+The owner reversed the "no hook at all" decision for one universal hook: `WorldSession::SetHeadless(packetSink)`,
+`InitializeSession(onInitialized)` and `LoginHeadlessPlayer(guid)` (about 45 lines, nothing bot-specific, nothing in the core
+creates a headless session). With it the module no longer needs: the queue-flag trick around `Update`, the opcode route into the
+stock login (and its two log lines per login), the ERROR line per packet (and the `Logger.network.opcode` mute), the online-flag
+repair, and the LFG proposal id sweep (the id comes from `SMSG_LFG_PROPOSAL_UPDATE` again). Character creation reads
+`SMSG_CREATE_CHAR` again (server-limit code), and a game master's `.kick` ends a bot again. Party and guild invites stay polled.
+Loot rolls (`SMSG_START_LOOT_ROLL`: loot object and slot) now reach the module too, so the loot-roll core hook that gap G44 asked
+for is not needed; the reply is the public `WorldSession::HandleLootRoll`.

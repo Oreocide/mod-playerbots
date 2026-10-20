@@ -1,6 +1,6 @@
 # Playerbots: P0 baselines
 
-Source: the scale-benchmark workstream (`/home/brandon/trinitycore-tracking/perf/FINDINGS_AND_PLAN.md`, Update 2/3, 2026-10-15). I re-ran nothing for this file: the user is playing on the live server, and a second session is creating characters on it. All numbers are single runs, ±15%, no human online, docker `MapUpdate.Threads = 1`.
+Source: the scale-benchmark workstream (`perf/FINDINGS_AND_PLAN.md` in the local tracking folder, Update 2/3, 2026-10-15). I re-ran nothing for this file: the user is playing on the live server, and a second session is creating characters on it. All numbers are single runs, ±15%, no human online, docker `MapUpdate.Threads = 1`.
 
 ## What exists (usable as the P0 baseline)
 

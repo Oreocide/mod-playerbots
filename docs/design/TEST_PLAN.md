@@ -1,6 +1,6 @@
 # Playerbots v1: test plan
 
-Server: docker `trinity-worldserver`. Logs: `/home/brandon/TrinityCore/docker/logs/Server.log`. Poll with `tail -n N` only, never `docker logs --since` (it rescans a multi-GB json log).
+Server: docker `trinity-worldserver`. Logs: `docker/logs/Server.log`. Poll with `tail -n N` only, never `docker logs --since` (it rescans a multi-GB json log).
 
 ## Rules for every run
 

@@ -21,6 +21,8 @@
 
 ## Movement (BotMover), used by every behavior below
 
+`BotMover` (`mod:src/Travel/BotMover.*`, built 2026-10-18) is the facade over two modes: **travel** = `MoveAlongMesh` (`MoveToward.cpp`) and **combat** = `MoveCombat` (keeps attacking, 1 yd arrival, may cut into a walk, `MovePriority` arbitration: Travel < Follow < Chase < Position < Avoid). `SnapToMesh` is the forceDest=false end-point snap (G9). Exception (user, 2026-10-18, G45): boarding a transport while following may use a short non-mesh deck step.
+
 | Aspect | Rule | Core API | Conf |
 |---|---|---|---|
 | Path | `PathGenerator` only (`Movement/PathGenerator.h:58-85`). Accept NORMAL; follow INCOMPLETE in segments (re-path at the segment end, ≥5 yd progress per segment). Never SHORTCUT/NOPATH, never `MoveSplineInit::MoveTo` with a raw point (it bee-lines on NOPATH, `Movement/Spline/MoveSplineInit.cpp:293-303`) | `MoveSplineInit::MovebyPath` | H |

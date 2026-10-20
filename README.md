@@ -7,9 +7,9 @@ idea of ownerless "random bots" are carried over, but the code is a retail-nativ
 class AI does not apply to the current client, so rotations, talents, travel, quests, gear and professions are rebuilt on
 retail data (DB2, `phase_area`, taxi paths, ChrClasses, traits).
 
-> **Read the requirements first.** The module needs a TrinityCore with the module framework (`modules/`, not upstream)
-> and one small, generic "dormant player" hook. Everything else uses stock TrinityCore. Patches for those two are not
-> published yet, see [Requirements](#requirements).
+> **Read the requirements first.** The module needs a TrinityCore with three small, generic hooks that are not upstream: the
+> module framework (`modules/`), headless sessions and dormant players. None of them is bot-specific. Patches are not published
+> yet, see [Requirements](#requirements).
 
 ## What it is
 
@@ -76,21 +76,21 @@ dedicated playerbots database (a module cannot open a fifth connection pool, so 
 
 ## Requirements
 
-- A TrinityCore **fork based on master `34fd0ebd`** (12.1.5, client build 70391) with the two core changes below.
-  Bot sessions, login, ticking, invites and the dungeon finder all run on stock public API; see
-  [docs/design/CORE_EXIT.md](docs/design/CORE_EXIT.md).
+- A TrinityCore **fork based on master `34fd0ebd`** (12.1.5, client build 70391) with the three core changes below. Everything
+  else uses stock public API; see [docs/design/CORE_EXIT.md](docs/design/CORE_EXIT.md).
 - MySQL/MariaDB with the usual four TrinityCore databases (`auth`, `characters`, `world`, `hotfixes`).
 - A client-extracted `dbc` / `maps` / `vmaps` / **`mmaps`** set. Bots move on mmaps only, there is no fallback.
 - g++ with C++20 (same as the core) for the build; the engine unit tests need only g++.
 
-**Core changes the module depends on** (not upstream, patches are not published yet). Both are generic, any module can use them:
+**Core changes the module depends on** (not upstream, patches are not published yet). All three are generic, any module can use them:
 
 Paths are relative to the TrinityCore root.
 
 | Part | Files | What it does |
 |---|---|---|
 | Module framework | `modules/CMakeLists.txt`, `modules/ModulesLoader.cpp.in.cmake`, `modules/ModulesScriptLoader.h`, `src/server/CMakeLists.txt`, `src/server/worldserver/CMakeLists.txt`, `src/server/worldserver/Main.cpp`, `src/server/database/Updater/DBUpdater.*`, `src/server/database/Updater/UpdateFetcher.*` | builds `modules/*`, loads their scripts, applies `modules/*/data/sql/db-*` through the DB updater |
-| Dormant players | `src/server/game/Server/WorldSession.h/.cpp` (`SetDormant`/`IsDormant`), `src/server/game/Entities/Player/Player.cpp`, `src/server/game/Maps/Map.cpp` (about 20 lines) | a script can mark a session dormant: its player stays in the world but skips `Unit::Update` and the map's cell visits. Nothing in the core sets it. The module uses it for bots nobody can see |
+| Headless sessions | `src/server/game/Server/WorldSession.h/.cpp` (`SetHeadless`, `IsHeadless`, `InitializeSession(callback)`), `src/server/game/Handlers/CharacterHandler.cpp` (`LoginHeadlessPlayer`), about 45 lines | a session without client connection that a script drives: packets for the client go to a callback of the script, the session is never idle-kicked, leaves the account's online flags alone and ends when kicked. Nothing in the core creates one. The module uses it for bots |
+| Dormant players | `src/server/game/Server/WorldSession.h` (`SetDormant`/`IsDormant`), `src/server/game/Entities/Player/Player.cpp`, `src/server/game/Maps/Map.cpp` (about 20 lines) | a script can mark a session dormant: its player stays in the world but skips `Unit::Update` and the map's cell visits. Nothing in the core sets it. The module uses it for bots nobody can see |
 
 Without the dormant hook the module still runs, but every bot costs a full `Player::Update` and keeps its grids active.
 
@@ -182,14 +182,6 @@ What the first start creates:
 
 Start small. `Playerbots.BotActiveAlone = 0` (default) keeps bots that nobody can see frozen, which is what makes hundreds of
 bots affordable; raising it wakes grids across the world. See [docs/REFERENCE.md](docs/REFERENCE.md) for every scale option.
-
-### Log noise
-
-Bots have no client, so the core would log a line at ERROR level for every packet it sends them ("Prevented sending ... to
-non existent socket"). `conf/playerbots.conf.dist` ships `Logger.network.opcode=0,Server`, which turns that category off (it
-also hides the same message for real players). Every bot login still writes two harmless lines ("Account ... can't login with
-that character", the stock login handler is used without a character list). Count the first kind with
-`grep -c "Prevented sending" Server.log` if you want to check that the mute is active.
 
 ## Configuration
 

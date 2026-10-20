@@ -154,7 +154,7 @@ The bots run the existing hand-written `.rot` rotations (`RotationRunner`). Assi
 
 ### Pilot: Firelands (user decision 2026-10-15)
 
-- Firelands has local script work in `src/server/scripts/Kalimdor/Firelands/`: `boss_alysrazor.cpp`, `boss_baleroc.cpp`, `boss_lord_rhyolith.cpp`, `boss_majordomo_staghelm.cpp`, `boss_ragnaros_firelands.cpp`, `instance_firelands.cpp`. Beth'tilac and Shannox have **no script** in our tree. DBM references are under `/home/brandon/references/dbm`.
+- Firelands has local script work in `src/server/scripts/Kalimdor/Firelands/`: `boss_alysrazor.cpp`, `boss_baleroc.cpp`, `boss_lord_rhyolith.cpp`, `boss_majordomo_staghelm.cpp`, `boss_ragnaros_firelands.cpp`, `instance_firelands.cpp`. Beth'tilac and Shannox have **no script** in our tree. DBM references are under a local clone of DeadlyBossMods.
 - First boss: a scripted one with clear ground hazards. Candidates are Baleroc (simplest positioning) or Lord Rhyolith (many ground effects). Choose after reading which AreaTrigger/DynamicObject spells each script spawns; Ragnaros comes last. Hints are authored for it from DBM/BigWigs timers and the Journal sections; then the rest of the instance.
 - Run the core support gate (CLAUDE.md) on every spell a hint names before relying on it.
 

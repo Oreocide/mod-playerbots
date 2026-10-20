@@ -2,7 +2,7 @@
 
 Every API or data that is missing or unsupported for v1, with the minimal change. Core paths are relative to `src/server/game/`. `mod:` = `modules/mod-playerbots/`. Confidence H/M/L.
 
-Tracking pointer: `/home/brandon/trinitycore-tracking/` (project convention, CLAUDE.md "Tracking files").
+Tracking pointer: the local `trinitycore-tracking/` folder (outside this repository) (project convention, CLAUDE.md "Tracking files").
 
 ## Repo hygiene / defects
 
@@ -86,3 +86,11 @@ Tracking pointer: `/home/brandon/trinitycore-tracking/` (project convention, CLA
 | ID | Gap | Evidence | Minimal change | Conf |
 |---|---|---|---|---|
 | G28 | Chat modules for later (mod-ollama-chat) are AGPL-3. Linking them makes the binary AGPL-3, including the network-source duty. Unlicensed AC bot modules cannot be copied | INVENTORY §2 | DECIDED 2026-10-17: ported as the separate module mod-ollama under AGPL-3 (own private repo, never pushed); the network-source duty applies if it is ever distributed | H |
+
+## AC port (2026-10-18, plan: AC `src/Ai` decision + movement logic, native port)
+
+| ID | Gap | Evidence | Minimal change | Conf |
+|---|---|---|---|---|
+| G44 | Bots could not learn that a loot roll started (`Loot::_rolls` private, packets to bots dropped). **Resolved 2026-10-18 without a roll-specific core hook:** the core now has generic headless sessions with a packet sink (`WorldSession::SetHeadless`, see `mod:src/BotSession.h`), so a bot sees `SMSG_START_LOOT_ROLL` (loot object + slot). Still to do in the module (phase 7): party bots are created in `PlayerbotMgr::AddBot` with a nullptr sink (give them one, NOT through `ActivityMgr::OnBotPacket`, which would auto-accept LFG proposals); the sink runs on the sending (map) thread: parse there, queue `WorldSession::HandleLootRoll` through `WorldActionQueue`. The user's 2026-10-18 permission for a temporary loot-roll core hook is therefore not needed | `Loot/Loot.h:247-277,355`; `mod:src/BotSession.h` | module only | H |
+| G45 | Following a master onto a transport (boat/zeppelin/elevator) needs a deck move that is not a mesh path (AC `FollowActions.cpp:~100-170`: `MovePoint(generatePath=false)` + `AddPassenger`) | `AC: Ai/Base/Actions/FollowActions.cpp` | **User allowed an exception to mmaps-only for boarding (2026-10-18)**: only the last few yards from the dock/deck entry point onto a `Transport`, never off a transport, never for far bots (they use virtual travel). Document the exception in BEHAVIORS.md Movement | M |
+| G46 | `BotMover` was designed but never built; the mesh mover was `MoveAlongMesh` only (travel-tuned: `AttackStop`, 5 yd arrival, 5 yd progress, no relaunch while moving) | `mod:src/Travel/MoveToward.cpp:213` | **Built 2026-10-18** (module only, not deployed, not play-tested): `Travel/BotMover.{h,cpp}` (`CanMove`, `SnapToMesh` = G9 workaround, `MoveCombat`, `MoveHeldAbove`) + pure `Travel/MovePriority.h` (tested in `tests/bot_mover_test.cpp`); `PlayerbotAI::Chase/Follow` do not override a held higher-priority move | H |

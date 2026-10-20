@@ -4,7 +4,7 @@ Scope: town-life behaviors (idle, wander, hop, emote, mount, taxi, service NPCs)
 The design candidate is the existing local module `modules/mod-playerbots` (86 source files, 18.2k LOC, mostly not play-tested: `NOTES.md:12-27`). AzerothCore mod-playerbots is a design reference only.
 
 Path roots:
-- `AC:` = `/home/brandon/azerothcore-wotlk/modules/mod-playerbots/` (commit 5d213ed8, 2026-09-19).
+- `AC:` = `modules/mod-playerbots/` in the AzerothCore tree (commit 5d213ed8, 2026-09-19).
 - `mod:` = `modules/mod-playerbots/`.
 - Core paths = `src/server/game/`.
 

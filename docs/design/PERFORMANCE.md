@@ -1,6 +1,6 @@
 # Playerbots v1: performance, pause and throttle
 
-Target (user, 2026-10-15): **100 ACTIVE, 1000 logged in.** `mod:` = `modules/mod-playerbots/`. Core paths are relative to `src/server/game/`. Measured numbers come from `/home/brandon/trinitycore-tracking/perf/FINDINGS_AND_PLAN.md` (single runs, ±15%, no human online).
+Target (user, 2026-10-15): **100 ACTIVE, 1000 logged in.** `mod:` = `modules/mod-playerbots/`. Core paths are relative to `src/server/game/`. Measured numbers come from `perf/FINDINGS_AND_PLAN.md` in the local tracking folder (single runs, ±15%, no human online).
 
 ## Cost model (measured; M because single runs)
 
