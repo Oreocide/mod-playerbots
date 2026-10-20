@@ -55,6 +55,7 @@ struct Config
     bool MoveAvoidBlockedPaths = false; // detour around geometry the mesh does not know, refuse cliff segments
     bool MoveLogBlockedPaths = false;  // log mesh paths that cross VMAP or game object geometry (measurement only, changes nothing)
     bool MountsVariety = false;        // random bots own several ground mounts by level instead of one vendor mount
+    bool CommandMaintenance = false;   // the owner command "maintenance" (free repair and food)
     uint32 GearRerollVersion = 0;      // raise it to give every random bot a new gear roll once (0 = off)
     uint32 GearVariety = 0;            // percent of the best score an item may fall short of and still be picked (autogear and random gear)
     bool GearHunterPets = false;       // random hunters of level 10 and up without a beast get a tamed one

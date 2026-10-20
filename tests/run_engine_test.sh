@@ -55,3 +55,6 @@ g++ $FLAGS "$HERE/rotation_files_test.cpp" "$SRC/Rotation/RotationScript.cpp" -o
 
 g++ $FLAGS "$HERE/loot_roll_rules_test.cpp" -o "$OUT/playerbots_loot_roll_rules_test"
 "$OUT/playerbots_loot_roll_rules_test"
+
+g++ $FLAGS "$HERE/command_text_test.cpp" -o "$OUT/playerbots_command_text_test"
+"$OUT/playerbots_command_text_test"

@@ -60,6 +60,7 @@ struct ChatCommandInfo
     std::string Help;
     bool Persist = true;     // changes something worth saving (strategies), not a pure query
     bool Leave = false;      // asks the manager to log the bot out instead of running an action
+    bool WhisperOnly = false; // changes items or the character: ignored in party chat while Command.Prefix is empty ("use the door")
 };
 
 class ChatCommandTable

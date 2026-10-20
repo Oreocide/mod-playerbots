@@ -346,18 +346,55 @@ public:
         return false;
     }
 
-    // .bot add <character>
-    static bool HandleBotAddCommand(ChatHandler* handler, std::string name)
+    // .bot add <character>[,<character>...] | *: characters of your account (* = all that are not online yet, until the limit)
+    static bool HandleBotAddCommand(ChatHandler* handler, std::string names)
     {
-        AddBotResult result = sPlayerbotMgr->AddBot(handler->GetPlayer(), name);
-        if (result != AddBotResult::Ok)
+        Player* master = handler->GetPlayer();
+        std::vector<std::string> list;
+        if (names == "*")
         {
-            handler->SendSysMessage(GetAddBotError(result));
+            QueryResult result = CharacterDatabase.PQuery("SELECT name FROM characters WHERE account = {} AND guid <> {} AND deleteInfos_Name IS NULL ORDER BY level DESC",
+                master->GetSession()->GetAccountId(), master->GetGUID().GetCounter());
+            if (result)
+                do
+                    list.push_back((*result)[0].GetString());
+                while (result->NextRow());
+        }
+        else
+            for (std::string_view part : Trinity::Tokenize(names, ',', false))
+                list.emplace_back(part);
+
+        std::vector<std::string> started;
+        std::string firstError;
+        for (std::string const& name : list)
+        {
+            AddBotResult result = sPlayerbotMgr->AddBot(master, name);
+            if (result == AddBotResult::Ok)
+                started.push_back(name);
+            else if (names != "*" || result == AddBotResult::TooManyBots)
+            {
+                if (firstError.empty())
+                    firstError = Trinity::StringFormat("{}: {}", name, GetAddBotError(result));
+                if (result == AddBotResult::TooManyBots)
+                    break;
+            }
+        }
+
+        if (!firstError.empty())
+            handler->SendSysMessage(firstError.c_str());
+
+        if (started.empty())
+        {
+            if (firstError.empty())
+                handler->SendSysMessage("No character to log in.");
             handler->SetSentErrorMessage(true);
             return false;
         }
 
-        handler->PSendSysMessage("Logging in %s...", name.c_str());
+        std::string joined;
+        for (std::string const& name : started)
+            joined += (joined.empty() ? "" : ", ") + name;
+        handler->PSendSysMessage("Logging in %s...", joined.c_str());
         return true;
     }
 

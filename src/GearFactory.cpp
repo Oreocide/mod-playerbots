@@ -706,7 +706,7 @@ uint32 GearFactory::PickConsumable(std::vector<Consumable> const& list, uint32 l
     return itr == list.end() ? 0 : itr->ItemId;
 }
 
-void GearFactory::Supply(Player* bot) const
+void GearFactory::StockFood(Player* bot) const
 {
     if (!_built || !bot || !bot->IsInWorld())
         return;
@@ -721,6 +721,16 @@ void GearFactory::Supply(Player* bot) const
             bot->StoreNewItem(dest, itemId, true);
     };
 
+    topUp(PickConsumable(_food, bot->GetLevel()));
+    if (bot->GetMaxPower(POWER_MANA) > 0)
+        topUp(PickConsumable(_drink, bot->GetLevel()));
+}
+
+void GearFactory::Supply(Player* bot) const
+{
+    if (!_built || !bot || !bot->IsInWorld())
+        return;
+
     // a player of this level rides: riding skill, and a vendor mount of the bot's own race (a goblin gets a trike, not the
     // Alliance horse) in the collection
     RaceMounts::Grant(bot);
@@ -729,9 +739,7 @@ void GearFactory::Supply(Player* bot) const
     if (sPlayerbotsConfig.GearHunterPets)
         HunterPets::Grant(bot);
 
-    topUp(PickConsumable(_food, bot->GetLevel()));
-    if (bot->GetMaxPower(POWER_MANA) > 0)
-        topUp(PickConsumable(_drink, bot->GetLevel()));
+    StockFood(bot);
 
     // Playerbots.Gear.StockPotions: a few potions of the bot's level for Combat.UsePotions (a bot with fewer than 2 gets back to 3)
     if (sPlayerbotsConfig.GearStockPotions && bot->GetLevel() >= PotionMinLevel)

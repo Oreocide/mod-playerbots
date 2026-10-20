@@ -54,6 +54,8 @@ public:
 
     /// Tops up food and drink appropriate for the level so the consume strategy has something to use
     void Supply(Player* bot) const;
+    /// Only the food and drink part of Supply (the owner command "maintenance")
+    void StockFood(Player* bot) const;
     /// A food, drink or potion that Supply hands out for free: a bot must not sell what it is given (auction house, vendor)
     bool IsStocked(uint32 itemId) const { return _stocked.contains(itemId); }
 

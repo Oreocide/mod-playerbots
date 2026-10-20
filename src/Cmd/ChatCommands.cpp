@@ -16,6 +16,9 @@
  */
 
 #include "ChatCommands.h"
+#include "BotCommands.h"
+#include "CommandText.h"
+#include "ItemCommands.h"
 #include "Social/WhisperFallback.h"
 #include "Db/PlayerbotRepository.h"
 #include "AiRegistry.h"
@@ -25,6 +28,9 @@
 #include "ItemTemplate.h"
 #include "Log.h"
 #include "ObjectAccessor.h"
+#include "DB2Stores.h"
+#include "Group.h"
+#include "World/WorldActionQueue.h"
 #include "ObjectMgr.h"
 #include "Player.h"
 #include "Travel/TravelMgr.h"
@@ -193,6 +199,116 @@ bool Attack(PlayerbotAI& ai, std::string const&)
         ai.GetEngine().AddStrategy(CreateStrategy("combat"));
         ai.SetForcedTarget(target->GetGUID());
         ai.TellMaster(Trinity::StringFormat("Attacking {}.", target->GetName()));
+    }
+    return true;
+}
+
+// Release the spirit: the game puts the ghost at the graveyard (nobody runs). Outside the world queue the repop handler is not safe to call
+bool Release(PlayerbotAI& ai, std::string const&)
+{
+    Player* bot = ai.GetBot();
+    if (bot->IsAlive() || bot->HasPlayerFlag(PLAYER_FLAGS_GHOST))
+    {
+        ai.TellMaster(bot->IsAlive() ? "I am alive." : "I already released.");
+        return true;
+    }
+
+    sWorldActionQueue->Enqueue(bot->GetGUID(), bot->GetMapId(), ObjectGuid::Empty, [](Player* player)
+    {
+        if (player->IsAlive() || player->HasPlayerFlag(PLAYER_FLAGS_GHOST))
+            return;
+        if (PlayerbotAI* target = sPlayerbotMgr->GetAI(player))
+            target->NoteExpectedMove();
+        player->RemovePet(nullptr, PET_SAVE_NOT_IN_SLOT, true);
+        player->BuildPlayerRepop();
+        player->RepopAtGraveyard();
+    });
+    ai.TellMaster("Releasing my spirit.");
+    return true;
+}
+
+// Back to life by the bot's own routine: a resurrection offer, the spirit healer or, as before, on the spot
+bool Revive(PlayerbotAI& ai, std::string const&)
+{
+    if (ai.GetBot()->IsAlive())
+    {
+        ai.TellMaster("I am alive.");
+        return true;
+    }
+    ai.GetEngine().ExecuteAction(ai, "revive");
+    ai.TellMaster("Coming back.");
+    return true;
+}
+
+bool Flee(PlayerbotAI& ai, std::string const&)
+{
+    ai.GetBot()->AttackStop();
+    ai.ClearForcedTarget();
+    ai.ClearChaseTarget();
+    ai.GetRoute().Cancel();
+    ai.GetEngine().RemoveStrategy("stay");
+    ai.GetEngine().AddStrategy(CreateStrategy("follow"));
+    ai.TellMaster("Running to you.");
+    return true;
+}
+
+bool Who(PlayerbotAI& ai, std::string const&)
+{
+    Player* bot = ai.GetBot();
+    ChrSpecializationEntry const* spec = bot->GetPrimarySpecializationEntry();
+    ai.TellMaster(Trinity::StringFormat("Level {} {} {}, {}.", bot->GetLevel(), spec ? spec->Name[sWorld->GetDefaultDbcLocale()] : "", GetClassName(bot),
+        GetRoleName(ai.GetRole())));
+    return true;
+}
+
+bool Attackers(PlayerbotAI& ai, std::string const&)
+{
+    std::vector<ObjectGuid> guids = ai.GetContext().GetValue<std::vector<ObjectGuid>>("attackers", ai);
+    std::vector<std::string> names;
+    for (ObjectGuid const& guid : guids)
+        if (Unit* enemy = ObjectAccessor::GetUnit(*ai.GetBot(), guid))
+            names.push_back(Trinity::StringFormat("{} {:.0f}%", enemy->GetName(), enemy->GetHealthPct()));
+    if (names.empty())
+        ai.TellMaster("Nothing is attacking us.");
+    else
+        TellLines(ai, "Enemies: ", names);
+    return true;
+}
+
+bool TargetInfo(PlayerbotAI& ai, std::string const&)
+{
+    if (Unit* target = ai.SelectCombatTarget())
+        ai.TellMaster(Trinity::StringFormat("Fighting {} ({:.0f}% health, {:.0f} yards).", target->GetName(), target->GetHealthPct(), ai.GetBot()->GetDistance(target)));
+    else
+        ai.TellMaster("No target.");
+    return true;
+}
+
+bool Drink(PlayerbotAI& ai, std::string const&)
+{
+    ActionResult result = ai.GetEngine().ExecuteAction(ai, "eat/drink");
+    ai.TellMaster(result == ActionResult::Ok ? "Eating and drinking." : "I have nothing to eat or drink, or I do not need it.");
+    return true;
+}
+
+bool Rebuff(PlayerbotAI& ai, std::string const&)
+{
+    ai.GetEngine().ExecuteAction(ai, "buff");
+    ai.TellMaster("Buffing.");
+    return true;
+}
+
+bool GiveLeader(PlayerbotAI& ai, std::string const&)
+{
+    Player* bot = ai.GetBot();
+    Group* group = bot->GetGroup();
+    Player* master = ai.GetMaster();
+    if (!group || !master || group->GetLeaderGUID() != bot->GetGUID() || !group->IsMember(master->GetGUID()))
+        ai.TellMaster("I am not leading the group.");
+    else
+    {
+        group->ChangeLeader(master->GetGUID());
+        ai.TellMaster("You lead now.");
     }
     return true;
 }
@@ -437,7 +553,7 @@ bool Help(PlayerbotAI& ai, std::string const& param)
     return true;
 }
 
-void AddCommand(char const* name, char const* help, CommandFn fn, bool persist = false)
+void AddCommand(char const* name, char const* help, CommandFn fn, bool persist = false, bool whisperOnly = false)
 {
     std::string action = std::string("cmd ") + name;
     sPlayerbotsAi.AddAction(action, [action, fn](std::string const&) -> std::unique_ptr<Action> { return std::make_unique<CommandAction>(action, fn); });
@@ -446,6 +562,7 @@ void AddCommand(char const* name, char const* help, CommandFn fn, bool persist =
     info.Action = action;
     info.Help = help;
     info.Persist = persist;
+    info.WhisperOnly = whisperOnly;
     GetChatCommands().Add(name, info);
 }
 }
@@ -466,11 +583,28 @@ void RegisterChatCommands()
     AddCommand("assist", "Fight the master's enemies.", Assist, true);
     AddCommand("attack", "Attack the master's target.", Attack, true);
     AddCommand("status", "Level, health, spells and strategies.", Status);
+    AddCommand("who", "My level, specialization and role.", Who);
+    AddCommand("release", "Release my spirit.", Release);
+    AddCommand("revive", "Come back to life.", Revive);
+    AddCommand("flee", "Stop fighting and run to the master.", Flee, true);
+    AddCommand("attackers", "The enemies fighting the group.", Attackers);
+    AddCommand("target", "What I am fighting.", TargetInfo);
+    AddCommand("drink", "Eat and drink now.", Drink);
+    AddCommand("rebuff", "Cast my buffs now.", Rebuff);
+    AddCommand("leader", "Give the group lead to the master.", GiveLeader);
     AddCommand("gear", "Item level and equipped items.", Gear);
     AddCommand("autogear", "Re-gear: white, green, blue, purple, an item level, match, or reset.", AutoGear);
     AddCommand("inventory", "Bag contents and money.", Inventory);
     AddCommand("spells", "The damage and healing spells I use.", Spells);
     AddCommand("quests", "My quest log.", Quests);
+    AddCommand("spec", "spec [name]: my specializations, or switch to one.", SpecCommand, false, true);
+    AddCommand("maintenance", "Free repair and food and drink (Playerbots.Command.Maintenance).", MaintenanceCommand, false, true);
+    AddCommand("equip", "equip <item links>: wear items from my bags.", EquipItems, false, true);
+    AddCommand("unequip", "unequip <item links>: take items off.", UnequipItems, false, true);
+    AddCommand("use", "use <item link>: use an item (on your target if it needs one).", UseItems, false, true);
+    AddCommand("sell", "sell <item links | grey>: to the vendor you have selected, I must stand next to it.", SellItems, false, true);
+    AddCommand("buy", "buy <item links> [count]: from the vendor you have selected, I must stand next to it.", BuyItems, false, true);
+    AddCommand("destroy", "destroy <item links>: delete items from my bags.", DestroyItems, false, true);
     AddCommand("summon", "Teleport to the master.", Summon);
     AddCommand("reset", "Back to the default strategies.", Reset, true);
     AddCommand("co", "Combat strategies: co +name,-name,~name,? .", Combat, true);
@@ -504,6 +638,9 @@ ChatOutcome HandleBotChat(PlayerbotAI& ai, Player* speaker, std::string text, bo
     if (group && !StripPrefix(text, sPlayerbotsConfig.CommandPrefix))
         return outcome;
 
+    // a line addressed to the bot is answered by the next AI tick, not after an idle delay (Playerbots.DynamicTick)
+    ai.WakeUp();
+
     ChatCommandTable const& table = GetChatCommands();
     BotTraits traits = GetTraits(ai, speaker);
     bool claimed = false;   // a chat module took the whisper, tried once however many parts it has
@@ -527,6 +664,10 @@ ChatOutcome HandleBotChat(PlayerbotAI& ai, Player* speaker, std::string text, bo
             }
             continue;
         }
+
+        // an ordinary party line that starts with a command word is not an order when anything may start one
+        if (group && parsed->Info->WhisperOnly && sPlayerbotsConfig.CommandPrefix.empty())
+            continue;
 
         outcome.Known = true;
         if (parsed->Info->Leave)
