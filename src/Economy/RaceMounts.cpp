@@ -16,6 +16,7 @@
  */
 
 #include "RaceMounts.h"
+#include "MountVariety.h"
 #include "CollectionMgr.h"
 #include "DB2Stores.h"
 #include "Log.h"
@@ -149,6 +150,9 @@ void Grant(Player* bot)
         if (bot->GetSkillValue(SKILL_RIDING) < 150)
             bot->SetSkill(SKILL_RIDING, 2, 150, 150);
     }
+
+    if (sPlayerbotsConfig.MountsVariety && level >= sPlayerbotsConfig.RpgMountMinLevel)
+        MountVariety::Grant(bot);
 
     if (level < sPlayerbotsConfig.RpgMountMinLevel || PickKnown(bot))
         return;

@@ -4,6 +4,7 @@
 #include "DB2Stores.h"
 #include "GridDefines.h"
 #include "Log.h"
+#include "Economy/MountVariety.h"
 #include "Economy/RaceMounts.h"
 #include "GameTime.h"
 #include "Map.h"
@@ -106,7 +107,7 @@ uint32 PickMountSpell(Player* bot)
     // using whatever the character really has.
     PlayerbotAI* ai = sPlayerbotMgr->GetAI(bot);
     if (!ai || !ai->GetMaster())
-        return RaceMounts::PickKnown(bot);
+        return sPlayerbotsConfig.MountsVariety ? MountVariety::PickRide(bot) : RaceMounts::PickKnown(bot);
 
     uint32 ground = 0;
     for (auto const& [spellId, spell] : bot->GetSpellMap())

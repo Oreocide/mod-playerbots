@@ -38,6 +38,7 @@ struct Config
     bool MoveHopLowObstacles = false;   // jump low obstacles on level ground instead of walking through them
     bool MoveAvoidBlockedPaths = false; // detour around geometry the mesh does not know, refuse cliff segments
     bool MoveLogBlockedPaths = false;  // log mesh paths that cross VMAP or game object geometry (measurement only, changes nothing)
+    bool MountsVariety = false;        // random bots own several ground mounts by level instead of one vendor mount
     bool GearEquipUpgrades = false;    // an item in the bags that beats what the bot wears is put on (won rolls, traded gifts)
     bool LootRoll = false;             // bots answer group loot rolls: need an upgrade, greed what sells, pass what they cannot use
     bool CastSupervisorEnable = false; // wait for a cast that is preparing; cancel it when the target died or a heal is wasted
