@@ -26,12 +26,16 @@
 #include "Pet.h"
 #include "Player.h"
 #include "PlayerbotAI.h"
+#include "PlayerbotsConfig.h"
 #include "RotationFacts.h"
 #include "RotationMgr.h"
+#include "Spell.h"
+#include "SpellAuras.h"
 #include "SpellHistory.h"
 #include "SpellInfo.h"
 #include "SpellMgr.h"
 #include <algorithm>
+#include <vector>
 #include <cmath>
 
 namespace Playerbots
@@ -39,7 +43,71 @@ namespace Playerbots
 namespace
 {
 constexpr uint32 MaxFailedCasts = 4;     // spells tried and refused in one turn
+constexpr uint32 AfterCastDelayMs = 750;      // DynamicTick: wait after an instant on-GCD cast (half a typical global cooldown)
 constexpr float TargetRange = 40.0f;      // allies the bot may pick
+
+// "magic", "curse", "poison", "disease", "enrage"; anything else = the four kinds a player can dispel
+uint32 DispelKindMask(std::string_view kind)
+{
+    if (kind == "magic")
+        return 1u << DISPEL_MAGIC;
+    if (kind == "curse")
+        return 1u << DISPEL_CURSE;
+    if (kind == "poison")
+        return 1u << DISPEL_POISON;
+    if (kind == "disease")
+        return 1u << DISPEL_DISEASE;
+    if (kind == "enrage")
+        return 1u << DISPEL_ENRAGE;
+    return DISPEL_ALL_MASK;
+}
+
+/// An aura of a dispel kind on the unit: harmful ones (on an ally) or beneficial ones (on an enemy)
+bool HasDispellableAura(Unit const* unit, uint32 mask, bool harmful)
+{
+    for (auto const& [id, application] : unit->GetAppliedAuras())
+    {
+        Aura const* aura = application->GetBase();
+        if (!aura || !aura->GetSpellInfo()->Dispel || !(mask & (1u << aura->GetSpellInfo()->Dispel)))
+            continue;
+        if (application->IsPositive() != !harmful)
+            continue;
+        return true;
+    }
+    return false;
+}
+
+bool HasAuraNamed(Unit const* unit, std::string const& normalizedName)
+{
+    for (auto const& [id, application] : unit->GetAppliedAuras())
+    {
+        Aura const* aura = application->GetBase();
+        if (aura && aura->GetSpellInfo()->SpellName && NormalizeSpellName(aura->GetSpellInfo()->SpellName->Str[LOCALE_enUS]) == normalizedName)
+            return true;
+    }
+    return false;
+}
+
+/// Enemies the bot can pick among: its target, then whatever attacks it or a group member
+std::vector<Unit*> CandidateEnemies(PlayerbotAI& ai, Unit* enemy)
+{
+    Player* bot = ai.GetBot();
+    std::vector<Unit*> list;
+    auto add = [&](Unit* unit)
+    {
+        if (unit && unit->IsAlive() && bot->IsWithinDistInMap(unit, TargetRange) && bot->IsValidAttackTarget(unit) && std::ranges::find(list, unit) == list.end())
+            list.push_back(unit);
+    };
+    add(enemy);
+    for (Unit* attacker : bot->getAttackers())
+        add(attacker);
+    if (Group* group = bot->GetGroup())
+        for (GroupReference const& ref : group->GetMembers())
+            if (Player* member = ref.GetSource(); member && member != bot && member->IsInMap(bot))
+                for (Unit* attacker : member->getAttackers())
+                    add(attacker);
+    return list;
+}
 }
 
 std::string NormalizeSpellName(std::string_view name)
@@ -56,6 +124,7 @@ void RotationRunner::InvalidateIfNeeded(Player* bot)
     if (spec != _spec || bot->GetLevel() != _level || bot->GetSpellMap().size() != _spellCount)
     {
         _spells.clear();
+        _known.clear();
         _spec = spec;
         _level = bot->GetLevel();
         _spellCount = bot->GetSpellMap().size();
@@ -92,6 +161,29 @@ std::vector<uint32> const& RotationRunner::Resolve(Player* bot, std::string cons
         itr->second.push_back(spellId);
     }
 
+    return itr->second;
+}
+
+bool RotationRunner::Knows(Player* bot, std::string const& name)
+{
+    InvalidateIfNeeded(bot);
+
+    std::string key = NormalizeSpellName(name);
+    auto [itr, inserted] = _known.try_emplace(key, false);
+    if (!inserted)
+        return itr->second;
+
+    for (auto const& [spellId, playerSpell] : bot->GetSpellMap())
+    {
+        if (playerSpell.state == PLAYERSPELL_REMOVED || !playerSpell.active || playerSpell.disabled)
+            continue;
+        SpellInfo const* info = sSpellMgr->GetSpellInfo(spellId, DIFFICULTY_NONE);
+        if (info && info->SpellName && NormalizeSpellName(info->SpellName->Str[LOCALE_enUS]) == key)
+        {
+            itr->second = true;
+            break;
+        }
+    }
     return itr->second;
 }
 
@@ -183,6 +275,110 @@ Unit* RotationRunner::ResolveTarget(PlayerbotAI& ai, std::string const& what, Un
         return nullptr;
     }
 
+    // the group utility targets are off until Playerbots.Rotation.Utility
+    if (!sPlayerbotsConfig.RotationUtility
+        && (what == "dead_ally" || what == "lowest_mana_ally" || what == "cc_target" || what == "enemy_healer" || what.starts_with("ally_without_buff.")
+            || what.starts_with("dispellable_ally") || what.starts_with("dispellable_enemy")))
+        return nullptr;
+
+    // group members: the bot first, then the others in range
+    auto forEachAlly = [&](auto&& visit)
+    {
+        visit(bot);
+        if (Group* group = bot->GetGroup())
+        {
+            for (GroupReference const& ref : group->GetMembers())
+                if (Player* member = ref.GetSource(); member && member != bot && member->IsInMap(bot) && bot->IsWithinDistInMap(member, TargetRange))
+                    visit(member);
+        }
+        else if (Player* master = ai.GetMaster(); master && master->IsInMap(bot) && bot->IsWithinDistInMap(master, TargetRange))
+            visit(master);
+    };
+
+    // a dead group member to resurrect (the spell decides whether it may be cast in combat); unreleased bodies first
+    if (what == "dead_ally")
+    {
+        Unit* best = nullptr;
+        forEachAlly([&](Player* member)
+        {
+            if (member->IsAlive() || member->IsResurrectRequested())
+                return;
+            if (!best || (best->ToPlayer()->HasPlayerFlag(PLAYER_FLAGS_GHOST) && !member->HasPlayerFlag(PLAYER_FLAGS_GHOST)))
+                best = member;
+        });
+        return best;
+    }
+
+    // the ally with the least mana (innervate, power infusion)
+    if (what == "lowest_mana_ally")
+    {
+        Unit* best = nullptr;
+        forEachAlly([&](Player* member)
+        {
+            if (!member->IsAlive() || member->GetMaxPower(POWER_MANA) == 0)
+                return;
+            if (!best || member->GetPowerPct(POWER_MANA) < best->GetPowerPct(POWER_MANA))
+                best = member;
+        });
+        return best;
+    }
+
+    // a living ally who lacks a buff (a group buff): "ally_without_buff.arcane_intellect"
+    if (what.starts_with("ally_without_buff."))
+    {
+        std::string buff = NormalizeSpellName(what.substr(18));
+        Unit* found = nullptr;
+        forEachAlly([&](Player* member)
+        {
+            if (!found && member->IsAlive() && !HasAuraNamed(member, buff))
+                found = member;
+        });
+        return found;
+    }
+
+    // an ally with a harmful aura of a dispel kind: "dispellable_ally", "dispellable_ally.magic|curse|poison|disease"
+    if (what.starts_with("dispellable_ally"))
+    {
+        uint32 mask = DispelKindMask(what.size() > 17 ? std::string_view(what).substr(17) : std::string_view());
+        Unit* found = nullptr;
+        forEachAlly([&](Player* member)
+        {
+            if (!found && member->IsAlive() && HasDispellableAura(member, mask, true))
+                found = member;
+        });
+        return found;
+    }
+
+    // an enemy with a beneficial aura of a dispel kind (purge, spellsteal, tranquilizing shot): "dispellable_enemy[.magic|enrage]"
+    if (what.starts_with("dispellable_enemy"))
+    {
+        uint32 mask = DispelKindMask(what.size() > 18 ? std::string_view(what).substr(18) : std::string_view());
+        if (mask == DISPEL_ALL_MASK)
+            mask = 1u << DISPEL_MAGIC;
+        for (Unit* candidate : CandidateEnemies(ai, enemy))
+            if (HasDispellableAura(candidate, mask, false))
+                return candidate;
+        return nullptr;
+    }
+
+    // an enemy that is not the main target and not crowd controlled yet, when there are at least two (polymorph, shackle, hex)
+    if (what == "cc_target")
+    {
+        for (Unit* candidate : CandidateEnemies(ai, enemy))
+            if (candidate != enemy && !candidate->HasBreakableByDamageCrowdControlAura())
+                return candidate;
+        return nullptr;
+    }
+
+    // an enemy that is casting a heal (interrupt it first)
+    if (what == "enemy_healer")
+    {
+        for (Unit* candidate : CandidateEnemies(ai, enemy))
+            if (Spell const* spell = candidate->GetCurrentSpell(CURRENT_GENERIC_SPELL); spell && spell->GetSpellInfo()->HasEffect(SPELL_EFFECT_HEAL))
+                return candidate;
+        return nullptr;
+    }
+
     // an enemy that attacks a group member instead of the tank (taunt it)
     if (what == "loose_enemy")
     {
@@ -237,7 +433,7 @@ bool RotationRunner::Run(PlayerbotAI& ai, std::string const& listName, Unit* ene
             continue;
 
         Unit* target = ResolveTarget(ai, entry.Target, enemy);
-        if (!target || !target->IsAlive())
+        if (!target || target->IsAlive() == (entry.Target == "dead_ally"))
             continue;
 
         for (uint32 spellId : Resolve(bot, entry.Spell))
@@ -274,7 +470,13 @@ bool RotationRunner::Run(PlayerbotAI& ai, std::string const& listName, Unit* ene
             {
                 cast = true;
                 if (!entry.OffGcd)
+                {
+                    // Playerbots.DynamicTick: nothing on the global cooldown can be cast before it ends, so the next
+                    // decision waits for the cast, or about half a global cooldown (interrupts and defensives are off it)
+                    int32 castTime = spellInfo->CalcCastTime();
+                    ai.RequestDelay(castTime > 0 ? uint32(castTime) + 50 : AfterCastDelayMs);
                     return true;
+                }
                 break;
             }
 

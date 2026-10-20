@@ -44,6 +44,8 @@ public:
 
     /// The spells of a name (or id) the bot knows
     std::vector<uint32> const& Resolve(Player* bot, std::string const& name);
+    /// Whether the bot knows a spell or talent of that name, passive ones included (fact talent.NAME)
+    bool Knows(Player* bot, std::string const& name);
 
     /// Enemies in combat near the bot / near its target / in 30 yards, counted once per AI tick
     uint32 EnemiesAround(PlayerbotAI& ai, Unit const* target, uint8 which);
@@ -53,6 +55,7 @@ private:
     void InvalidateIfNeeded(Player* bot);
 
     std::unordered_map<std::string, std::vector<uint32>> _spells;   // normalized name -> known spell ids
+    std::unordered_map<std::string, bool> _known;                   // normalized name -> known, passives included
     size_t _spellCount = 0;
     uint32 _spec = 0;
     uint32 _level = 0;

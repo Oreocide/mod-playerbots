@@ -101,9 +101,11 @@ bool SplitAuraFact(std::vector<std::string> const& parts, std::string& scope, st
 bool IsKnownRotationFact(std::string const& name)
 {
     static constexpr std::string_view Flags[] = { "in_combat", "moving", "mounted", "solo", "pet", "pet.alive", "target.boss", "target.elite",
-        "target.casting", "target.moving", "target.in_melee", "target.targeting_me", "target.is_player", "role.tank", "role.healer", "role.dps" };
+        "target.casting", "target.moving", "target.in_melee", "target.targeting_me", "target.is_player", "role.tank", "role.healer", "role.dps",
+        "self.has_aggro", "self.casting", "target.cc", "target.has_magic_buff", "target.has_enrage", "target.has_magic_debuff", "target.has_curse",
+        "target.has_poison", "target.has_disease" };
     static constexpr std::string_view Numbers[] = { "self.hp", "self.power", "self.power.value", "target.hp", "target.distance", "target.level_diff",
-        "enemies", "enemies.target", "enemies.ranged", "group.size", "group.lowest_hp", "group.injured" };
+        "target.power", "enemies", "enemies.target", "enemies.ranged", "group.size", "group.lowest_hp", "group.injured" };
 
     if (std::ranges::find(Flags, name) != std::end(Flags) || std::ranges::find(Numbers, name) != std::end(Numbers))
         return true;
@@ -111,6 +113,9 @@ bool IsKnownRotationFact(std::string const& name)
     std::vector<std::string> parts = Split(name);
     Powers power;
     if (parts[0] == "self" && parts.size() >= 2 && parts.size() <= 3 && FindPower(parts[1], power) && (parts.size() == 2 || parts[2] == "pct"))
+        return true;
+
+    if (parts[0] == "talent" && parts.size() == 2 && !parts[1].empty())
         return true;
 
     std::string scope, spell, tail;
@@ -189,6 +194,12 @@ bool BotFacts::Number(std::string const& name, double& value) const
     if (name == "self.power") { value = bot->GetMaxPower(bot->GetPowerType()) ? bot->GetPowerPct(bot->GetPowerType()) : 0.0; return true; }
     if (name == "self.power.value") { value = double(bot->GetPower(bot->GetPowerType())); return true; }
     if (name == "target.hp") { value = _target ? _target->GetHealthPct() : 0.0; return true; }
+    if (name == "target.power")
+    {
+        Powers type = _target ? _target->GetPowerType() : POWER_MANA;
+        value = _target && _target->GetMaxPower(type) ? double(_target->GetPowerPct(type)) : 0.0;
+        return true;
+    }
     if (name == "target.distance") { value = _target ? double(bot->GetExactDist(_target)) : 9999.0; return true; }
     if (name == "target.level_diff") { value = _target ? double(int32(_target->GetLevelForTarget(bot)) - int32(bot->GetLevel())) : 0.0; return true; }
     if (name == "enemies") { value = double(_runner.EnemiesAround(_ai, bot, 0)); return true; }
@@ -253,6 +264,48 @@ bool BotFacts::Flag(std::string const& name, bool& value) const
     if (name == "role.healer") { value = _ai.GetRole() == BotRole::Healer; return true; }
     if (name == "role.dps") { value = _ai.GetRole() == BotRole::MeleeDps || _ai.GetRole() == BotRole::RangedDps; return true; }
 
+    if (name == "self.has_aggro")
+    {
+        value = false;
+        for (Unit* attacker : bot->getAttackers())
+            if (attacker->IsAlive() && attacker->GetVictim() == bot)
+            {
+                value = true;
+                break;
+            }
+        return true;
+    }
+    if (name == "self.casting") { value = bot->HasUnitState(UNIT_STATE_CASTING); return true; }
+    if (name == "target.cc") { value = _target && _target->HasBreakableByDamageCrowdControlAura(); return true; }
+
+    // dispel kinds on the target: beneficial ones to purge, harmful ones to cleanse
+    struct KindFact
+    {
+        char const* Name;
+        DispelType Type;
+        bool Harmful;
+    };
+    static constexpr KindFact KindFacts[] = { { "target.has_magic_buff", DISPEL_MAGIC, false }, { "target.has_enrage", DISPEL_ENRAGE, false },
+        { "target.has_magic_debuff", DISPEL_MAGIC, true }, { "target.has_curse", DISPEL_CURSE, true }, { "target.has_poison", DISPEL_POISON, true },
+        { "target.has_disease", DISPEL_DISEASE, true } };
+    for (KindFact const& kind : KindFacts)
+    {
+        if (name != kind.Name)
+            continue;
+        value = false;
+        if (_target)
+            for (auto const& [id, application] : _target->GetAppliedAuras())
+            {
+                Aura const* aura = application->GetBase();
+                if (aura && aura->GetSpellInfo()->Dispel == uint32(kind.Type) && application->IsPositive() != kind.Harmful)
+                {
+                    value = true;
+                    break;
+                }
+            }
+        return true;
+    }
+
     if (name == "target.boss")
     {
         Creature const* creature = _target ? _target->ToCreature() : nullptr;
@@ -284,6 +337,11 @@ bool BotFacts::Flag(std::string const& name, bool& value) const
     if (parts[0] == "spell" && parts.size() == 3 && parts[2] == "known")
     {
         value = !_runner.Resolve(bot, parts[1]).empty();
+        return true;
+    }
+    if (parts[0] == "talent" && parts.size() == 2)
+    {
+        value = _runner.Knows(bot, parts[1]);
         return true;
     }
 

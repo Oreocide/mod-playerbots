@@ -57,6 +57,7 @@ void Config::Load()
     MountsVariety = sConfigMgr->GetBoolDefault("Playerbots.Mounts.Variety", false);
     GearStockPotions = sConfigMgr->GetBoolDefault("Playerbots.Gear.StockPotions", false);
     GearEquipUpgrades = sConfigMgr->GetBoolDefault("Playerbots.Gear.EquipUpgrades", false);
+    RotationUtility = sConfigMgr->GetBoolDefault("Playerbots.Rotation.Utility", false);
     LootRoll = sConfigMgr->GetBoolDefault("Playerbots.Loot.Roll", false);
     CastSupervisorEnable = sConfigMgr->GetBoolDefault("Playerbots.CastSupervisor.Enable", false);
     PerfMonEnabled = sConfigMgr->GetBoolDefault("Playerbots.PerfMon.Enable", false);

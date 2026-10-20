@@ -807,7 +807,7 @@ public:
             if (useRotation)
             {
                 // an interrupt or a defensive first, then the rotation of the specialization
-                if (!rotation.Run(ai, "interrupt", target, true) && !rotation.Run(ai, "defensive", target, true))
+                if (!rotation.Run(ai, "interrupt", target, true) && !rotation.Run(ai, "defensive", target, true) && !(sPlayerbotsConfig.RotationUtility && rotation.Run(ai, "utility", target, true)))
                     rotation.Run(ai, "combat", target, true);
             }
             else

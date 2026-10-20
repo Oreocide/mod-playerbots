@@ -55,6 +55,7 @@ struct Config
     bool MountsVariety = false;        // random bots own several ground mounts by level instead of one vendor mount
     bool GearStockPotions = false;     // random bots carry a few health potions (and mana potions for mana users) of their level, for Combat.UsePotions
     bool GearEquipUpgrades = false;    // an item in the bags that beats what the bot wears is put on (won rolls, traded gifts)
+    bool RotationUtility = false;      // rotations may use the utility list and the dispel, resurrection, group buff and crowd control targets
     bool LootRoll = false;             // bots answer group loot rolls: need an upgrade, greed what sells, pass what they cannot use
     bool CastSupervisorEnable = false; // wait for a cast that is preparing; cancel it when the target died or a heal is wasted
     bool PerfMonEnabled = false;       // time engine ticks and actions, shown by ".bot perf"
