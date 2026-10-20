@@ -3,6 +3,7 @@
 spec 1467 Devastation Evoker
 buffs:
   Blessing of the Bronze | target=self ooc if !buff.Blessing_of_the_Bronze
+  Return | target=dead_ally
 interrupt:
   Quell | target=casting_enemy
 defensive:
@@ -18,10 +19,13 @@ combat:
   Disintegrate | if !moving && self.essence >= 3
   Azure Strike | if enemies >= 3 || moving
   Living Flame
+utility:
+  Cauterizing Flame | target=dispellable_ally.curse
 
 spec 1468 Preservation Evoker
 buffs:
   Blessing of the Bronze | target=self ooc if !buff.Blessing_of_the_Bronze
+  Return | target=dead_ally
 interrupt:
   Quell | target=casting_enemy
 defensive:
@@ -37,10 +41,15 @@ combat:
   Disintegrate | if !moving
   Azure Strike
   Living Flame | if !moving
+utility:
+  Naturalize | target=dispellable_ally.poison
+  Naturalize | target=dispellable_ally.magic
+  Cauterizing Flame | target=dispellable_ally.curse
 
 spec 1473 Augmentation Evoker
 buffs:
   Blessing of the Bronze | target=self ooc if !buff.Blessing_of_the_Bronze
+  Return | target=dead_ally
 interrupt:
   Quell | target=casting_enemy
 defensive:
@@ -53,3 +62,5 @@ combat:
   Eruption | if self.essence >= 2
   Azure Strike | if enemies >= 3
   Living Flame
+utility:
+  Cauterizing Flame | target=dispellable_ally.curse

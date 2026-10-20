@@ -18,6 +18,8 @@ combat:
   Heart Strike
   Blood Boil
   Death Coil
+utility:
+  Raise Ally | target=dead_ally
 
 spec 251 Frost Death Knight
 interrupt:
@@ -34,6 +36,8 @@ combat:
   Obliterate
   Howling Blast | if buff.Rime
   Frost Strike
+utility:
+  Raise Ally | target=dead_ally
 
 spec 252 Unholy Death Knight
 buffs:
@@ -56,3 +60,5 @@ combat:
   Scourge Strike
   Clawing Shadows
   Death Coil
+utility:
+  Raise Ally | target=dead_ally

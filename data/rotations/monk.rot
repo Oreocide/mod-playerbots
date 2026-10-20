@@ -17,6 +17,11 @@ combat:
   Rising Sun Kick
   Tiger Palm
   Roll | if target.distance > 10 && target.distance < 25
+buffs:
+  Resuscitate | target=dead_ally
+utility:
+  Detox | target=dispellable_ally.poison
+  Detox | target=dispellable_ally.disease
 
 spec 269 Windwalker Monk
 interrupt:
@@ -33,6 +38,11 @@ combat:
   Spinning Crane Kick | if enemies >= 3
   Blackout Kick
   Tiger Palm
+buffs:
+  Resuscitate | target=dead_ally
+utility:
+  Detox | target=dispellable_ally.poison
+  Detox | target=dispellable_ally.disease
 
 spec 270 Mistweaver Monk
 interrupt:
@@ -49,3 +59,9 @@ combat:
   Blackout Kick
   Tiger Palm
   Spinning Crane Kick | if enemies >= 3
+buffs:
+  Resuscitate | target=dead_ally
+utility:
+  Detox | target=dispellable_ally.magic
+  Detox | target=dispellable_ally.poison
+  Detox | target=dispellable_ally.disease

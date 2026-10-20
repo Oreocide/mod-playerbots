@@ -3,6 +3,7 @@
 spec 262 Elemental Shaman
 buffs:
   Lightning Shield | target=self ooc if !buff.Lightning_Shield
+  Ancestral Spirit | target=dead_ally
 interrupt:
   Wind Shear | target=casting_enemy
 defensive:
@@ -19,11 +20,15 @@ combat:
   Lava Burst
   Frost Shock | if moving
   Lightning Bolt
+utility:
+  Cleanse Spirit | target=dispellable_ally.curse
+  Purge | target=dispellable_enemy.magic
 
 spec 263 Enhancement Shaman
 buffs:
   Lightning Shield | target=self ooc if !buff.Lightning_Shield
   Windfury Weapon | target=self ooc if !buff.Windfury_Weapon
+  Ancestral Spirit | target=dead_ally
 interrupt:
   Wind Shear | target=casting_enemy
 defensive:
@@ -39,11 +44,15 @@ combat:
   Lava Lash
   Ice Strike
   Lightning Bolt | if buff.Maelstrom_Weapon.stacks >= 3
+utility:
+  Cleanse Spirit | target=dispellable_ally.curse
+  Purge | target=dispellable_enemy.magic
 
 spec 264 Restoration Shaman
 buffs:
   Earth Shield | target=tank ooc if !target.buff.Earth_Shield
   Lightning Shield | target=self ooc if !buff.Lightning_Shield
+  Ancestral Spirit | target=dead_ally
 interrupt:
   Wind Shear | target=casting_enemy
 defensive:
@@ -59,3 +68,7 @@ combat:
   Flame Shock | if debuff.Flame_Shock.remains < 3
   Lava Burst
   Lightning Bolt
+utility:
+  Purify Spirit | target=dispellable_ally.magic
+  Purify Spirit | target=dispellable_ally.curse
+  Purge | target=dispellable_enemy.magic

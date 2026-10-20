@@ -18,6 +18,12 @@ combat:
   Holy Shock
   Crusader Strike
   Consecration | if enemies >= 2
+buffs:
+  Redemption | target=dead_ally
+utility:
+  Cleanse | target=dispellable_ally.magic
+  Cleanse | target=dispellable_ally.poison
+  Cleanse | target=dispellable_ally.disease
 
 spec 66 Protection Paladin
 interrupt:
@@ -37,10 +43,16 @@ combat:
   Hammer of the Righteous
   Hand of Reckoning | if !target.targeting_me
   Crusader Strike
+buffs:
+  Redemption | target=dead_ally
+utility:
+  Cleanse Toxins | target=dispellable_ally.poison
+  Cleanse Toxins | target=dispellable_ally.disease
 
 spec 70 Retribution Paladin
 buffs:
   Retribution Aura | target=self if !buff.Retribution_Aura
+  Redemption | target=dead_ally
 interrupt:
   Rebuke | target=casting_enemy
 defensive:
@@ -59,3 +71,6 @@ combat:
   Hammer of Wrath
   Crusader Strike
   Consecration | if enemies >= 2
+utility:
+  Cleanse Toxins | target=dispellable_ally.poison
+  Cleanse Toxins | target=dispellable_ally.disease

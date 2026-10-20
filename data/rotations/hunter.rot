@@ -20,6 +20,9 @@ combat:
   Kill Command
   Cobra Shot
   Steady Shot
+utility:
+  Tranquilizing Shot | target=dispellable_enemy.enrage
+  Misdirection | offgcd target=tank
 
 spec 254 Marksmanship Hunter
 buffs:
@@ -37,6 +40,9 @@ combat:
   Multi-Shot | if enemies >= 3
   Arcane Shot
   Steady Shot
+utility:
+  Tranquilizing Shot | target=dispellable_enemy.enrage
+  Misdirection | offgcd target=tank
 
 spec 255 Survival Hunter
 buffs:
@@ -55,3 +61,6 @@ combat:
   Raptor Strike
   Mongoose Bite
   Harpoon | if target.distance > 10 && target.distance < 30
+utility:
+  Tranquilizing Shot | target=dispellable_enemy.enrage
+  Misdirection | offgcd target=tank

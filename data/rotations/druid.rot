@@ -4,6 +4,8 @@ spec 102 Balance Druid
 buffs:
   Mark of the Wild | target=self ooc if !buff.Mark_of_the_Wild
   Moonkin Form | target=self ooc if !buff.Moonkin_Form
+  Mark of the Wild | target=ally_without_buff.mark_of_the_wild
+  Revive | target=dead_ally
 interrupt:
   Solar Beam | target=casting_enemy
 defensive:
@@ -19,11 +21,19 @@ combat:
   Starfire | if enemies >= 3 && !moving
   Wrath | if !moving
   Moonfire | if moving
+utility:
+  Remove Corruption | target=dispellable_ally.curse
+  Remove Corruption | target=dispellable_ally.poison
+  Soothe | target=dispellable_enemy.enrage
+  Rebirth | target=dead_ally
+  Innervate | offgcd target=lowest_mana_ally if target.power < 35
 
 spec 103 Feral Druid
 buffs:
   Mark of the Wild | target=self ooc if !buff.Mark_of_the_Wild
   Cat Form | target=self ooc if !buff.Cat_Form
+  Mark of the Wild | target=ally_without_buff.mark_of_the_wild
+  Revive | target=dead_ally
 interrupt:
   Skull Bash | target=casting_enemy
 defensive:
@@ -39,11 +49,18 @@ combat:
   Thrash | if enemies >= 2 && debuff.Thrash.remains < 3
   Swipe | if enemies >= 3
   Shred
+utility:
+  Remove Corruption | target=dispellable_ally.curse
+  Remove Corruption | target=dispellable_ally.poison
+  Soothe | target=dispellable_enemy.enrage
+  Rebirth | target=dead_ally
 
 spec 104 Guardian Druid
 buffs:
   Mark of the Wild | target=self ooc if !buff.Mark_of_the_Wild
   Bear Form | target=self ooc if !buff.Bear_Form
+  Mark of the Wild | target=ally_without_buff.mark_of_the_wild
+  Revive | target=dead_ally
 interrupt:
   Skull Bash | target=casting_enemy
 defensive:
@@ -59,10 +76,17 @@ combat:
   Moonfire | if debuff.Moonfire.remains < 3
   Maul | if self.rage >= 60
   Swipe
+utility:
+  Remove Corruption | target=dispellable_ally.curse
+  Remove Corruption | target=dispellable_ally.poison
+  Soothe | target=dispellable_enemy.enrage
+  Rebirth | target=dead_ally
 
 spec 105 Restoration Druid
 buffs:
   Mark of the Wild | target=self ooc if !buff.Mark_of_the_Wild
+  Mark of the Wild | target=ally_without_buff.mark_of_the_wild
+  Revive | target=dead_ally
 interrupt:
   Skull Bash | target=casting_enemy
 defensive:
@@ -79,3 +103,10 @@ combat:
   Moonfire | if debuff.Moonfire.remains < 3
   Sunfire | if debuff.Sunfire.remains < 3
   Wrath | if !moving
+utility:
+  Nature's Cure | target=dispellable_ally.magic
+  Nature's Cure | target=dispellable_ally.curse
+  Nature's Cure | target=dispellable_ally.poison
+  Soothe | target=dispellable_enemy.enrage
+  Rebirth | target=dead_ally
+  Innervate | offgcd target=lowest_mana_ally if target.power < 35

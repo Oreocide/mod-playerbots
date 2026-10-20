@@ -3,6 +3,8 @@
 spec 256 Discipline Priest
 buffs:
   Power Word: Fortitude | target=self ooc if !buff.Power_Word:_Fortitude
+  Power Word: Fortitude | target=ally_without_buff.power_word:_fortitude
+  Resurrection | target=dead_ally
 interrupt:
   Silence | target=casting_enemy
 defensive:
@@ -20,10 +22,16 @@ combat:
   Penance
   Mind Blast
   Smite
+utility:
+  Purify | target=dispellable_ally.magic
+  Purify | target=dispellable_ally.disease
+  Dispel Magic | target=dispellable_enemy.magic
 
 spec 257 Holy Priest
 buffs:
   Power Word: Fortitude | target=self ooc if !buff.Power_Word:_Fortitude
+  Power Word: Fortitude | target=ally_without_buff.power_word:_fortitude
+  Resurrection | target=dead_ally
 interrupt:
   Silence | target=casting_enemy
 defensive:
@@ -43,11 +51,17 @@ combat:
   Shadow Word: Pain | if debuff.Shadow_Word:_Pain.remains < 3
   Holy Fire
   Smite
+utility:
+  Purify | target=dispellable_ally.magic
+  Purify | target=dispellable_ally.disease
+  Dispel Magic | target=dispellable_enemy.magic
 
 spec 258 Shadow Priest
 buffs:
   Power Word: Fortitude | target=self ooc if !buff.Power_Word:_Fortitude
   Shadowform | target=self ooc if !buff.Shadowform
+  Power Word: Fortitude | target=ally_without_buff.power_word:_fortitude
+  Resurrection | target=dead_ally
 interrupt:
   Silence | target=casting_enemy
 defensive:
@@ -62,3 +76,5 @@ combat:
   Mind Blast
   Shadow Word: Death | if target.hp < 20
   Mind Flay
+utility:
+  Dispel Magic | target=dispellable_enemy.magic

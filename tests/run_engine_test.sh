@@ -50,5 +50,8 @@ g++ $FLAGS "$HERE/group_tactics_test.cpp" -o "$OUT/playerbots_group_tactics_test
 g++ $FLAGS "$HERE/positioning_test.cpp" -o "$OUT/playerbots_positioning_test"
 "$OUT/playerbots_positioning_test"
 
+g++ $FLAGS "$HERE/rotation_files_test.cpp" "$SRC/Rotation/RotationScript.cpp" -o "$OUT/playerbots_rotation_files_test"
+"$OUT/playerbots_rotation_files_test" "$HERE"/../data/rotations/*.rot
+
 g++ $FLAGS "$HERE/loot_roll_rules_test.cpp" -o "$OUT/playerbots_loot_roll_rules_test"
 "$OUT/playerbots_loot_roll_rules_test"

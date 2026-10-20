@@ -3,6 +3,7 @@
 spec 62 Arcane Mage
 buffs:
   Arcane Intellect | target=self ooc if !buff.Arcane_Intellect
+  Arcane Intellect | target=ally_without_buff.arcane_intellect
 interrupt:
   Counterspell | target=casting_enemy
 defensive:
@@ -18,11 +19,15 @@ combat:
   Arcane Explosion | if enemies >= 4
   Arcane Blast | if !moving
   Arcane Barrage
+utility:
+  Remove Curse | target=dispellable_ally.curse
+  Spellsteal | target=dispellable_enemy.magic
 
 spec 63 Fire Mage
 buffs:
   Arcane Intellect | target=self ooc if !buff.Arcane_Intellect
   Blazing Barrier | target=self ooc if !buff.Blazing_Barrier
+  Arcane Intellect | target=ally_without_buff.arcane_intellect
 interrupt:
   Counterspell | target=casting_enemy
 defensive:
@@ -38,11 +43,15 @@ combat:
   Phoenix Flames
   Scorch | if moving || target.hp < 30
   Fireball
+utility:
+  Remove Curse | target=dispellable_ally.curse
+  Spellsteal | target=dispellable_enemy.magic
 
 spec 64 Frost Mage
 buffs:
   Arcane Intellect | target=self ooc if !buff.Arcane_Intellect
   Summon Water Elemental | target=self ooc if !pet
+  Arcane Intellect | target=ally_without_buff.arcane_intellect
 interrupt:
   Counterspell | target=casting_enemy
 defensive:
@@ -60,3 +69,6 @@ combat:
   Ebonbolt
   Frostbolt
   Ice Lance | if moving
+utility:
+  Remove Curse | target=dispellable_ally.curse
+  Spellsteal | target=dispellable_enemy.magic

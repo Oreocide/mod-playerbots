@@ -15,6 +15,8 @@ combat:
   Felblade | if self.fury <= 60
   Throw Glaive | if target.distance > 8
   Demon's Bite
+utility:
+  Consume Magic | target=dispellable_enemy.magic
 
 spec 581 Vengeance Demon Hunter
 interrupt:
@@ -32,3 +34,5 @@ combat:
   Spirit Bomb | if enemies >= 2
   Throw Glaive | if target.distance > 8
   Shear
+utility:
+  Consume Magic | target=dispellable_enemy.magic
