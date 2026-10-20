@@ -46,6 +46,7 @@ void RegisterHallsOfStone(AiRegistry& registry);
 void RegisterAuchenaiCrypts(AiRegistry& registry);
 void RegisterGundrak(AiRegistry& registry);
 void RegisterDrakTharonKeep(AiRegistry& registry);
+void RegisterForgeOfSouls(AiRegistry& registry);
 
 namespace
 {
@@ -252,5 +253,6 @@ void RegisterAll(AiRegistry& registry)
     RegisterAuchenaiCrypts(registry);
     RegisterGundrak(registry);
     RegisterDrakTharonKeep(registry);
+    RegisterForgeOfSouls(registry);
 }
 }
