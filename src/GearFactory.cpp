@@ -16,6 +16,7 @@
  */
 
 #include "GearFactory.h"
+#include "Economy/PotionRules.h"
 #include "BotSpellBook.h"
 #include "DB2Stores.h"
 #include "Item.h"
@@ -49,6 +50,8 @@ namespace
 constexpr uint32 MaxScan = 200;       // candidates inspected per slot before giving up
 constexpr int32 GearLevelSlack = 8;   // gear more than this many levels below the bot is replaced
 constexpr uint32 FoodStack = 20;
+constexpr uint32 PotionStack = 3;         // potions share a cooldown, a few are all a bot uses in a fight
+constexpr uint32 PotionMinLevel = 8;
 
 // Armor slots the class's armor type governs (cloaks, jewelry, trinkets and held items are the same for everyone)
 bool IsGovernedSlotType(uint8 inventoryType)
@@ -212,6 +215,8 @@ void GearFactory::Build()
     _groups.clear();
     _food.clear();
     _drink.clear();
+    _healthPotions.clear();
+    _manaPotions.clear();
     _bags.clear();
 
     _groups = {
@@ -273,6 +278,22 @@ void GearFactory::Build()
 
             if (food != drink)
                 (food ? _food : _drink).push_back({ id, proto.GetBaseRequiredLevel() });
+            continue;
+        }
+
+        // potions: the same rule the combat action uses to find one, nothing conjured, bound, restricted or tied to a holiday or quest
+        if (proto.GetClass() == ITEM_CLASS_CONSUMABLE && proto.GetSubClass() == ITEM_SUBCLASS_POTION)
+        {
+            if (proto.IsConjuredConsumable() || proto.GetRequiredSkill() || proto.GetStartQuest() || proto.GetHolidayID() != HOLIDAY_NONE
+                || proto.GetQuality() > ITEM_QUALITY_RARE || proto.GetBonding() != BIND_NONE || proto.GetBaseRequiredLevel() <= 0
+                || proto.GetRequiredExpansion() > expansion || proto.GetAllowableClass() != -1 || IsTestItem(proto.GetName(DEFAULT_LOCALE)))
+                continue;
+
+            PotionKind kind = ClassifyPotion(&proto);
+            if (kind == PotionKind::Health)
+                _healthPotions.push_back({ id, proto.GetBaseRequiredLevel() });
+            else if (kind == PotionKind::Mana)
+                _manaPotions.push_back({ id, proto.GetBaseRequiredLevel() });
             continue;
         }
 
@@ -340,6 +361,13 @@ void GearFactory::Build()
     };
     std::ranges::sort(_food, byLevel);
     std::ranges::sort(_drink, byLevel);
+    std::ranges::sort(_healthPotions, byLevel);
+    std::ranges::sort(_manaPotions, byLevel);
+
+    _stocked.clear();
+    for (std::vector<Consumable> const* list : { &_food, &_drink, &_healthPotions, &_manaPotions })
+        for (Consumable const& consumable : *list)
+            _stocked.insert(consumable.ItemId);
     std::ranges::sort(_bags, [](BagItem const& a, BagItem const& b) { return a.Slots != b.Slots ? a.Slots > b.Slots : a.ItemId < b.ItemId; });
 
     size_t total = 0;
@@ -348,7 +376,7 @@ void GearFactory::Build()
 
     _built = true;
     RaceMounts::Validate();
-    TC_LOG_INFO("server.playerbots", "Playerbots: gear factory knows {} equippable items, {} food and {} drink items", total, _food.size(), _drink.size());
+    TC_LOG_INFO("server.playerbots", "Playerbots: gear factory knows {} equippable items, {} food and {} drink items, {} health and {} mana potions", total, _food.size(), _drink.size(), _healthPotions.size(), _manaPotions.size());
 }
 
 bool GearFactory::NeedsGear(Player const* bot) const
@@ -686,6 +714,23 @@ void GearFactory::Supply(Player* bot) const
     topUp(PickConsumable(_food, bot->GetLevel()));
     if (bot->GetMaxPower(POWER_MANA) > 0)
         topUp(PickConsumable(_drink, bot->GetLevel()));
+
+    // Playerbots.Gear.StockPotions: a few potions of the bot's level for Combat.UsePotions (a bot with fewer than 2 gets back to 3)
+    if (sPlayerbotsConfig.GearStockPotions && bot->GetLevel() >= PotionMinLevel)
+    {
+        auto stock = [bot](uint32 itemId)
+        {
+            if (!itemId || bot->GetItemCount(itemId) >= 2)
+                return;
+
+            ItemPosCountVec dest;
+            if (bot->CanStoreNewItem(NULL_BAG, NULL_SLOT, dest, itemId, PotionStack) == EQUIP_ERR_OK)
+                bot->StoreNewItem(dest, itemId, true);
+        };
+        stock(PickConsumable(_healthPotions, bot->GetLevel()));
+        if (bot->GetMaxPower(POWER_MANA) > 0)
+            stock(PickConsumable(_manaPotions, bot->GetLevel()));
+    }
 }
 
 void GearFactory::Provision(Player* bot) const

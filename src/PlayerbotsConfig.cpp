@@ -47,10 +47,12 @@ void Config::Load()
     FollowMirrorMaster = sConfigMgr->GetBoolDefault("Playerbots.Follow.MirrorMaster", false);
     FollowWalkSeconds = uint32(std::clamp(sConfigMgr->GetIntDefault("Playerbots.Follow.WalkSeconds", 45), 5, 600));
     FollowWalkMaxYards = uint32(std::clamp(sConfigMgr->GetIntDefault("Playerbots.Follow.WalkMaxYards", 300), 50, 1000));
+    CombatUsePotions = sConfigMgr->GetBoolDefault("Playerbots.Combat.UsePotions", false);
     MoveHopLowObstacles = sConfigMgr->GetBoolDefault("Playerbots.Move.HopLowObstacles", false);
     MoveAvoidBlockedPaths = sConfigMgr->GetBoolDefault("Playerbots.Move.AvoidBlockedPaths", false);
     MoveLogBlockedPaths = sConfigMgr->GetBoolDefault("Playerbots.Move.LogBlockedPaths", false);
     MountsVariety = sConfigMgr->GetBoolDefault("Playerbots.Mounts.Variety", false);
+    GearStockPotions = sConfigMgr->GetBoolDefault("Playerbots.Gear.StockPotions", false);
     GearEquipUpgrades = sConfigMgr->GetBoolDefault("Playerbots.Gear.EquipUpgrades", false);
     LootRoll = sConfigMgr->GetBoolDefault("Playerbots.Loot.Roll", false);
     CastSupervisorEnable = sConfigMgr->GetBoolDefault("Playerbots.CastSupervisor.Enable", false);

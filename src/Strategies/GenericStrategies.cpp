@@ -17,12 +17,14 @@
 
 #include "GenericStrategies.h"
 #include "Combat/GroupCombat.h"
+#include "Economy/PotionRules.h"
 #include "Combat/Positioning.h"
 #include "Travel/BotMover.h"
 #include "Cmd/ChatCommands.h"
 #include "Engine/AiContext.h"
 #include "Engine/AiRegistry.h"
 #include "CellImpl.h"
+#include "SpellHistory.h"
 #include "Creature.h"
 #include "DB2Stores.h"
 #include "PlayerTaxi.h"
@@ -184,6 +186,43 @@ Item* FindConsumable(Player* bot, SpellInfo const** foundSpell = nullptr)
         *foundSpell = bestSpell;
     return best;
 }
+
+// A health or mana potion (or a healthstone) the bot can use in a fight, found by what the item does: an instant heal, or
+// an instant energize of mana, on use, not a food or drink that regenerates over time
+Item* FindPotion(Player* bot, bool health, SpellInfo const** foundSpell)
+{
+    Item* best = nullptr;
+    SpellInfo const* bestSpell = nullptr;
+    int32 bestLevel = -1;
+
+    bot->ForEachItem(ItemSearchLocation::Inventory, [&](Item* item)
+    {
+        ItemTemplate const* itemTemplate = item->GetTemplate();
+        if (itemTemplate->GetClass() != ITEM_CLASS_CONSUMABLE || itemTemplate->GetBaseRequiredLevel() > int32(bot->GetLevel())
+            || itemTemplate->GetBaseRequiredLevel() < bestLevel || bot->CanUseItem(item) != EQUIP_ERR_OK)
+            return ItemSearchCallbackResult::Continue;
+
+        uint32 spellId = 0;
+        if (ClassifyPotion(itemTemplate, &spellId) != (health ? PotionKind::Health : PotionKind::Mana))
+            return ItemSearchCallbackResult::Continue;
+
+        SpellInfo const* spellInfo = sSpellMgr->GetSpellInfo(spellId, DIFFICULTY_NONE);
+        if (!spellInfo || !bot->GetSpellHistory()->IsReady(spellInfo))
+            return ItemSearchCallbackResult::Continue;
+
+        best = item;
+        bestSpell = spellInfo;
+        bestLevel = itemTemplate->GetBaseRequiredLevel();
+        return ItemSearchCallbackResult::Continue;
+    });
+
+    if (foundSpell)
+        *foundSpell = bestSpell;
+    return best;
+}
+
+constexpr float PotionHealthPct = 35.0f;
+constexpr float PotionManaPct = 20.0f;
 
 // ---- values ----
 
@@ -395,6 +434,47 @@ Player* FindPvpEnemy(Player* bot)
 }
 
 // ---- actions ----
+
+/// Playerbots.Combat.UsePotions: low on health or mana in a fight, and a potion to drink
+bool NeedsPotionTrigger(PlayerbotAI& ai)
+{
+    if (!sPlayerbotsConfig.CombatUsePotions)
+        return false;
+
+    Player* bot = ai.GetBot();
+    if (!bot->IsAlive() || !bot->IsInCombat() || bot->HasUnitState(UNIT_STATE_CASTING))
+        return false;
+
+    if (bot->GetHealthPct() < PotionHealthPct && FindPotion(bot, true, nullptr))
+        return true;
+    return bot->GetPowerType() == POWER_MANA && bot->GetMaxPower(POWER_MANA) > 0 && bot->GetPowerPct(POWER_MANA) < PotionManaPct && FindPotion(bot, false, nullptr);
+}
+
+class UsePotionAction : public Action
+{
+public:
+    char const* GetName() const override { return "use potion"; }
+
+    bool Execute(PlayerbotAI& ai) override
+    {
+        Player* bot = ai.GetBot();
+        bool health = bot->GetHealthPct() < PotionHealthPct;
+        SpellInfo const* spellInfo = nullptr;
+        Item* item = FindPotion(bot, health, &spellInfo);
+        if (!item && health)
+        {
+            health = false;
+            item = FindPotion(bot, false, &spellInfo);
+        }
+        if (!item)
+            return false;
+
+        bool cast = bot->CastSpell(bot, spellInfo->Id, CastSpellExtraArgs().SetCastItem(item)) == SPELL_CAST_OK;
+        if (cast)
+            ai.RequestDelay(1000);
+        return cast;
+    }
+};
 
 class ReviveAction : public Action
 {
@@ -1227,6 +1307,7 @@ void RegisterGenericAi()
     r.AddValue("heal target", [](std::string const&) -> std::unique_ptr<ValueBase> { return std::make_unique<HealTargetValue>(); });
     r.AddValue("nearest corpse", [](std::string const&) -> std::unique_ptr<ValueBase> { return std::make_unique<NearestCorpseValue>(); });
 
+    r.AddTrigger("needs potion", 1000, NeedsPotionTrigger);
     r.AddTrigger("dead", 0, IsDeadTrigger);
     r.AddTrigger("master away", 0, MasterAwayTrigger);
     r.AddTrigger("needs heal", 0, NeedsHealTrigger);
@@ -1242,6 +1323,7 @@ void RegisterGenericAi()
     r.AddTrigger("needs buff", 2000, NeedsBuffTrigger);
 
     r.AddAction<ReviveAction>("revive");
+    r.AddAction<UsePotionAction>("use potion");
     r.AddAction<TeleportToMasterAction>("teleport to master");
     r.AddAction<HealAction>("heal");
     r.AddAction<AttackAction>("attack");
@@ -1257,7 +1339,8 @@ void RegisterGenericAi()
 
     AddTriggerStrategy(r, "death", { { "dead", { { "revive", Priority::Revive } } } });
     AddTriggerStrategy(r, "teleport", { { "master away", { { "teleport to master", Priority::Teleport } } } });
-    AddTriggerStrategy(r, "combat", { { "needs heal", { { "heal", Priority::Heal } } }, { "has combat target", { { "attack", Priority::Attack } } } });
+    AddTriggerStrategy(r, "combat", { { "needs heal", { { "heal", Priority::Heal } } }, { "has combat target", { { "attack", Priority::Attack } } },
+        { "needs potion", { { "use potion", Priority::Consume } }, StrategyStates::Combat } });
     AddTriggerStrategy(r, "loot", { { "corpse to loot", { { "loot", Priority::Loot } }, StrategyStates::NonCombat } });
     AddTriggerStrategy(r, "consume", { { "should consume", { { "eat/drink", Priority::Consume } }, StrategyStates::NonCombat } });
     AddTriggerStrategy(r, "follow", { { "follow master", { { "follow", Priority::Idle } } } });

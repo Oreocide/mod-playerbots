@@ -23,6 +23,7 @@
 #include <mutex>
 #include <string>
 #include <unordered_map>
+#include <unordered_set>
 #include <vector>
 
 class Player;
@@ -53,6 +54,8 @@ public:
 
     /// Tops up food and drink appropriate for the level so the consume strategy has something to use
     void Supply(Player* bot) const;
+    /// A food, drink or potion that Supply hands out for free: a bot must not sell what it is given (auction house, vendor)
+    bool IsStocked(uint32 itemId) const { return _stocked.contains(itemId); }
 
     /// Bags in the empty bag slots and pocket money of a level appropriate size (never takes anything away)
     void Provision(Player* bot) const;
@@ -125,6 +128,9 @@ private:
     std::vector<BagItem> _bags;
     std::vector<Consumable> _food;
     std::vector<Consumable> _drink;
+    std::vector<Consumable> _healthPotions;   // instant heal potions a bot may carry, best first (Economy/PotionRules.h decides)
+    std::vector<Consumable> _manaPotions;
+    std::unordered_set<uint32> _stocked;      // the ids of the four lists above
 
     // Bots that wore armor of a type their class cannot wear are re-geared once; a bot for whom no item of the right type
     // existed (the fallback pass) is left alone until this time (ms), so the re-gear does not repeat every minute
