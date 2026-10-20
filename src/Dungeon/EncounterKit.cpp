@@ -38,6 +38,7 @@ namespace Playerbots::Dungeon
 {
 void RegisterUtgardeKeep(AiRegistry& registry);
 void RegisterAzjolNerub(AiRegistry& registry);
+void RegisterAhnKahet(AiRegistry& registry);
 
 namespace
 {
@@ -236,5 +237,6 @@ void RegisterAll(AiRegistry& registry)
 {
     RegisterUtgardeKeep(registry);
     RegisterAzjolNerub(registry);
+    RegisterAhnKahet(registry);
 }
 }
