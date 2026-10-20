@@ -49,6 +49,7 @@ void RegisterDrakTharonKeep(AiRegistry& registry);
 void RegisterForgeOfSouls(AiRegistry& registry);
 void RegisterPitOfSaron(AiRegistry& registry);
 void RegisterHallsOfLightning(AiRegistry& registry);
+void RegisterUnderbog(AiRegistry& registry);
 
 namespace
 {
@@ -258,5 +259,6 @@ void RegisterAll(AiRegistry& registry)
     RegisterForgeOfSouls(registry);
     RegisterPitOfSaron(registry);
     RegisterHallsOfLightning(registry);
+    RegisterUnderbog(registry);
 }
 }
