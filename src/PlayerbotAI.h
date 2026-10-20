@@ -20,15 +20,19 @@
 
 #include "BotSpellBook.h"
 #include "Engine.h"
+#include "Engine/ContextStrategies.h"
 #include "AiContext.h"
 #include "ObjectGuid.h"
 #include "Position.h"
 #include "Rotation/RotationRunner.h"
 #include "Strategies/Rpg/RpgInfo.h"
 #include "Travel/RouteFollower.h"
+#include <algorithm>
+#include <atomic>
 #include <string>
 #include <string_view>
 #include <unordered_set>
+#include <vector>
 
 class Player;
 class Unit;
@@ -66,6 +70,11 @@ public:
     Player* GetMaster() const;
 
     void Update(uint32 diff);
+    /// An action says how long its own effect takes (a global cooldown, a move): with Playerbots.DynamicTick the next AI tick
+    /// waits that long instead of the default. The longest request of the tick counts
+    void RequestDelay(uint32 ms) { _requestedDelay = std::max(_requestedDelay, ms); }
+    /// Something deserves an AI tick now (a chat command): the next Update runs it whatever the delay
+    void WakeUp() { _wake = true; }
     /// Nobody is near the bot: frozen, or simulated only by the activity rotation. Written and read by the bot's own AI tick
     bool IsFarBot() const { return _far; }
     /// Frozen bots only need a few ticks per second (Playerbots.FrozenTickMs, 0 = every map tick). Adds diff and says
@@ -139,6 +148,12 @@ private:
     void MaintainGear(uint32 diff);
     void MaintainTalents();
     void DetectInterruption();
+    /// Applies the strategies the context table wants for where the bot is now (dungeon, raid, battleground...), only the difference
+    void UpdateContextStrategies();
+    /// A cast is preparing or channeling: true = wait for it (no new action this tick). Cancels it when it is pointless
+    bool SuperviseCast();
+    /// DynamicTick: the delay until the next AI tick, from the situation and what the actions asked for
+    void ScheduleNextTick(uint8 state);
     void OnInterrupted();
     void OnLeaderLost();
 
@@ -175,6 +190,13 @@ private:
     uint32 _interruptEpoch = 0;
     bool _hadLeader = false;   // random bot: followed a player party leader on the last tick
     bool _hasLastStand = false;
+    uint32 _nextDelayMs = 0;              // DynamicTick: the wait before the next AI tick
+    uint32 _requestedDelay = 0;           // asked for by actions during this tick
+    std::atomic<bool> _wake{ false };     // set from the world thread (chat), read by the bot's map thread
+    uint8 _lastState = 0;                 // StrategyStates of the previous AI tick, 0 before the first
+    BotContext _lastPlace;                // what the context strategies were last applied for
+    bool _hasPlace = false;
+    std::vector<std::string> _contextStrategies;   // names the context table added
 
     mutable uint32 _nextEnemyScan = 0;   // GameTimeMS, no grid search before it
     // BotActiveAlone verdict, recomputed twice a second instead of on every world tick

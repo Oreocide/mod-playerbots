@@ -31,7 +31,13 @@ void Config::Load()
     MaxBotsPerPlayer = sConfigMgr->GetIntDefault("Playerbots.MaxBotsPerPlayer", 4);
     UpdateInterval = std::max(50, sConfigMgr->GetIntDefault("Playerbots.UpdateInterval", 250));
     ScanInterval = uint32(std::clamp(sConfigMgr->GetIntDefault("Playerbots.ScanInterval", 1500), 0, 30000));
+    DynamicTickEnable = sConfigMgr->GetBoolDefault("Playerbots.DynamicTick.Enable", false);
+    DynamicTickCombatMs = uint32(std::clamp(sConfigMgr->GetIntDefault("Playerbots.DynamicTick.CombatMs", 300), 100, 5000));
+    DynamicTickIdleMinMs = uint32(std::clamp(sConfigMgr->GetIntDefault("Playerbots.DynamicTick.IdleMinMs", 1000), 100, 30000));
+    DynamicTickIdleMaxMs = uint32(std::clamp(sConfigMgr->GetIntDefault("Playerbots.DynamicTick.IdleMaxMs", 2500), 100, 30000));
+    DynamicTickDeadMs = uint32(std::clamp(sConfigMgr->GetIntDefault("Playerbots.DynamicTick.DeadMs", 2000), 100, 30000));
     LootRoll = sConfigMgr->GetBoolDefault("Playerbots.Loot.Roll", false);
+    CastSupervisorEnable = sConfigMgr->GetBoolDefault("Playerbots.CastSupervisor.Enable", false);
     PerfMonEnabled = sConfigMgr->GetBoolDefault("Playerbots.PerfMon.Enable", false);
     PerfMonMemorySeconds = uint32(std::clamp(sConfigMgr->GetIntDefault("Playerbots.PerfMon.MemorySeconds", 30), 0, 3600));
     RandomJoinChannels = sConfigMgr->GetBoolDefault("Playerbots.Random.JoinChannels", false);

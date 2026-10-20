@@ -44,7 +44,13 @@
 #include "Talents/BotTalents.h"
 #include "Social/BotSocialMgr.h"
 #include "StringFormat.h"
+#include "Engine/CastPolicy.h"
+#include "Engine/TickPolicy.h"
 #include "Travel/MoveToward.h"
+#include "Random.h"
+#include "Spell.h"
+#include "SpellInfo.h"
+#include "Formulas.h"
 #include "Util.h"
 #include "WorldSession.h"
 #include <algorithm>
@@ -487,9 +493,20 @@ void PlayerbotAI::Update(uint32 diff)
     }
 
     _updateTimer += diff;
-    if (_updateTimer < sPlayerbotsConfig.UpdateInterval)
+    if (sPlayerbotsConfig.DynamicTickEnable)
+    {
+        // a fight that starts, or a bot that dies or gets up, is not left waiting for the end of an idle delay
+        uint8 now = !_bot->IsAlive() ? StrategyStates::Dead : _bot->IsInCombat() ? StrategyStates::Combat : StrategyStates::NonCombat;
+        if (_lastState && now != _lastState)
+            _wake = true;
+    }
+    uint32 interval = sPlayerbotsConfig.DynamicTickEnable ? _nextDelayMs : sPlayerbotsConfig.UpdateInterval;
+    if (!_wake && _updateTimer < interval)
         return;
+    _wake = false;
+    uint32 elapsed = _updateTimer;      // the time since the last tick, whatever the tick length
     _updateTimer = 0;
+    _requestedDelay = 0;
     _context.BeginTick(GameTime::GetGameTimeMS());
 
     // a teleport is still noticed before the engine picks an action; the height query is the costly part
@@ -499,14 +516,114 @@ void PlayerbotAI::Update(uint32 diff)
     BotSpellBook::StripStartingAuras(_bot);
 
     {
-        MaintainGear(sPlayerbotsConfig.UpdateInterval);
+        MaintainGear(elapsed);
     }
     MaintainTalents();
 
     _spellBook.Refresh(_bot);
 
     uint8 state = !_bot->IsAlive() ? StrategyStates::Dead : _bot->IsInCombat() ? StrategyStates::Combat : StrategyStates::NonCombat;
+    if (_lastState && state != _lastState)
+        _engine.NotifyStateChanged(*this, _lastState, state);
+    _lastState = state;
+
+    // a cast in progress is waited for, not interrupted by the next decision
+    if (sPlayerbotsConfig.CastSupervisorEnable && SuperviseCast())
+    {
+        ScheduleNextTick(state);
+        return;
+    }
+
     _engine.DoNextAction(*this, state);
+    ScheduleNextTick(state);
+}
+
+void PlayerbotAI::ScheduleNextTick(uint8 state)
+{
+    if (!sPlayerbotsConfig.DynamicTickEnable)
+        return;
+
+    TickPolicy policy;
+    policy.CombatMs = sPlayerbotsConfig.DynamicTickCombatMs;
+    policy.IdleMinMs = sPlayerbotsConfig.DynamicTickIdleMinMs;
+    policy.IdleMaxMs = sPlayerbotsConfig.DynamicTickIdleMaxMs;
+    policy.DeadMs = sPlayerbotsConfig.DynamicTickDeadMs;
+    TickKind kind = state == StrategyStates::Combat ? TickKind::Combat : state == StrategyStates::Dead ? TickKind::Dead : TickKind::Idle;
+    _nextDelayMs = NextTickDelay(policy, kind, _requestedDelay, rand_norm());
+}
+
+bool PlayerbotAI::SuperviseCast()
+{
+    bool channeled = false;
+    Spell* spell = _bot->GetCurrentSpell(CURRENT_GENERIC_SPELL);
+    if (!spell || spell->getState() != SPELL_STATE_PREPARING)
+    {
+        spell = _bot->GetCurrentSpell(CURRENT_CHANNELED_SPELL);
+        channeled = spell != nullptr;
+    }
+    if (!spell)
+        return false;
+
+    SpellInfo const* info = spell->GetSpellInfo();
+    Unit* target = spell->m_targets.GetUnitTarget();
+    CastView view;
+    view.Channeled = channeled;
+    if (info && target && target != _bot)
+    {
+        view.HasUnitTarget = true;
+        view.TargetAlive = target->IsAlive();
+        view.SpellAllowsDeadTarget = info->HasAttribute(SPELL_ATTR2_ALLOW_DEAD_TARGET);
+        view.TargetFriendly = _bot->IsFriendlyTo(target);
+        view.SpellIsDirectHeal = info->HasEffect(SPELL_EFFECT_HEAL) && !info->HasAura(SPELL_AURA_PERIODIC_HEAL);
+        view.TargetHealthPct = target->GetHealthPct();
+        view.RemainingMs = channeled ? 0 : uint32(std::max<int32>(spell->GetTimer(), 0));
+    }
+
+    if (JudgeCast(view) == CastVerdict::Cancel)
+    {
+        _bot->InterruptSpell(channeled ? CURRENT_CHANNELED_SPELL : CURRENT_GENERIC_SPELL, false);
+        return false;   // free to choose another action right away
+    }
+
+    // come back when the cast is about done
+    RequestDelay(channeled ? 250 : std::clamp<uint32>(view.RemainingMs + 50, 100, 1000));
+    return true;
+}
+
+void PlayerbotAI::UpdateContextStrategies()
+{
+    if (!sContextStrategies.Size())
+        return;
+
+    Map* map = _bot->GetMap();
+    if (!map)
+        return;
+
+    BotContext place;
+    place.MapId = map->GetId();
+    place.Place = map->IsRaid() ? PlaceKind::Raid : map->IsBattleArena() ? PlaceKind::Arena : map->IsBattleground() ? PlaceKind::Battleground
+        : map->IsDungeon() ? PlaceKind::Dungeon : PlaceKind::OpenWorld;
+    place.DifficultyId = uint32(map->GetDifficultyID());
+    place.InGroup = _bot->GetGroup() != nullptr;
+    place.HasMaster = !_master.IsEmpty() || GetMaster() != nullptr;
+
+    if (_hasPlace && place == _lastPlace)
+        return;
+    _lastPlace = place;
+    _hasPlace = true;
+
+    ContextStrategyTable::Change change = ContextStrategyTable::Diff(_contextStrategies, sContextStrategies.Resolve(place));
+    for (std::string const& name : change.Remove)
+    {
+        _engine.RemoveStrategy(name);
+        std::erase(_contextStrategies, name);
+    }
+    for (std::string const& name : change.Add)
+    {
+        if (std::unique_ptr<Strategy> strategy = CreateStrategy(name))
+            _engine.AddStrategy(std::move(strategy));
+        _contextStrategies.push_back(name);     // also when unknown: it is not retried on every tick
+    }
 }
 
 namespace
@@ -674,6 +791,9 @@ void PlayerbotAI::ResetStrategies()
 {
     for (std::string const& name : _engine.GetStrategyNames())
         _engine.RemoveStrategy(name);
+    // the context strategies went with them: apply them again on the next tick
+    _contextStrategies.clear();
+    _hasPlace = false;
 
     for (std::string_view name : DefaultStrategies)
         if (std::unique_ptr<Strategy> strategy = CreateStrategy(name))

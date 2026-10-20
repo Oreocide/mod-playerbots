@@ -26,5 +26,11 @@ g++ $FLAGS "$HERE/travel_graph_test.cpp" "$SRC/Travel/Graph/TravelGraph.cpp" -o 
 g++ $FLAGS "$HERE/rotation_script_test.cpp" "$SRC/Rotation/RotationScript.cpp" -o "$OUT/playerbots_rotation_script_test"
 "$OUT/playerbots_rotation_script_test"
 
+g++ $FLAGS "$HERE/tick_policy_test.cpp" -o "$OUT/playerbots_tick_policy_test"
+"$OUT/playerbots_tick_policy_test"
+
+g++ $FLAGS "$HERE/context_strategies_test.cpp" -o "$OUT/playerbots_context_strategies_test"
+"$OUT/playerbots_context_strategies_test"
+
 g++ $FLAGS "$HERE/loot_roll_rules_test.cpp" -o "$OUT/playerbots_loot_roll_rules_test"
 "$OUT/playerbots_loot_roll_rules_test"
