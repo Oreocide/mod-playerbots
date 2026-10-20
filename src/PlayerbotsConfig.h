@@ -35,6 +35,12 @@ struct Config
     uint32 DynamicTickIdleMaxMs = 2500;
     uint32 DynamicTickDeadMs = 2000;
     bool MoveFallbacks = false;        // a destination with no mesh path is tried at other heights, then through cone-sampled stepping stones
+    bool CombatRoleTargeting = false;  // in a group: tanks take what nobody tanks, damage dealers follow the main tank's target
+    uint32 CombatThreatLimitPct = 0;   // a bot that is not tanking stops attacking at this share of the tank's threat (0 = off)
+    uint32 CombatWaitForAttackMs = 0;  // bots in a group a player leads do not attack for this long after a fight starts (0 = off)
+    bool CombatPositioning = false;    // melee behind the target, ranged spread, tanks turn the enemy away from the group
+    bool CombatKite = false;           // ranged bots step away from a melee enemy that is hitting them
+    bool CombatGrindQuality = false;   // random bots pick fights in line of sight, on their floor, not gray and not already taken
     bool MoveHopLowObstacles = false;   // jump low obstacles on level ground instead of walking through them
     bool MoveAvoidBlockedPaths = false; // detour around geometry the mesh does not know, refuse cliff segments
     bool MoveLogBlockedPaths = false;  // log mesh paths that cross VMAP or game object geometry (measurement only, changes nothing)

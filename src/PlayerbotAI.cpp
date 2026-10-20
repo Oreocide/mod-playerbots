@@ -48,6 +48,7 @@
 #include "Talents/BotTalents.h"
 #include "Social/BotSocialMgr.h"
 #include "StringFormat.h"
+#include "Combat/GroupCombat.h"
 #include "Engine/CastPolicy.h"
 #include "Engine/TickPolicy.h"
 #include "Travel/BotMover.h"
@@ -975,9 +976,24 @@ Unit* PlayerbotAI::SelectCombatTarget()
 
 Unit* PlayerbotAI::FindCombatTarget() const
 {
-    if (!_forcedTarget.IsEmpty())
-        if (Unit* forced = ObjectAccessor::GetUnit(*_bot, _forcedTarget); IsValidEnemy(forced))
-            return forced;
+    // Playerbots.Combat.RoleTargeting: in a group the fight is chosen by role (an explicit "attack" command still comes first)
+    if (sPlayerbotsConfig.CombatRoleTargeting)
+    {
+        if (!_forcedTarget.IsEmpty())
+            if (Unit* forced = ObjectAccessor::GetUnit(*_bot, _forcedTarget); IsValidEnemy(forced))
+                return forced;
+
+        if (Unit* byRole = GroupCombat::PickTarget(const_cast<PlayerbotAI&>(*this)))
+            return byRole;
+    }
+
+    // Who is hitting us always beats a goal, quest, or grind target.
+    for (Unit* attacker : _bot->getAttackers())
+        if (IsValidEnemy(attacker))
+            return attacker;
+
+    if (IsValidEnemy(_bot->GetVictim()))
+        return _bot->GetVictim();
 
     Player* master = GetMaster();
     if (master && master->IsInMap(_bot))
@@ -994,12 +1010,9 @@ Unit* PlayerbotAI::FindCombatTarget() const
                 return attacker;
     }
 
-    if (IsValidEnemy(_bot->GetVictim()))
-        return _bot->GetVictim();
-
-    for (Unit* attacker : _bot->getAttackers())
-        if (IsValidEnemy(attacker))
-            return attacker;
+    if (!_forcedTarget.IsEmpty())
+        if (Unit* forced = ObjectAccessor::GetUnit(*_bot, _forcedTarget); IsValidEnemy(forced))
+            return forced;
 
     if (Group* group = _bot->GetGroup())
     {

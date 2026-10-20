@@ -20,6 +20,7 @@
 
 #include "BotSpellBook.h"
 #include "Engine.h"
+#include "Combat/Positioning.h"
 #include "Engine/ContextStrategies.h"
 #include "AiContext.h"
 #include "ObjectGuid.h"
@@ -96,6 +97,11 @@ public:
     bool ComputeSimulated();
 
     BotRole GetRole() const;
+    /// Game time ms the group's current fight started as this bot saw it (the leader or the main tank in combat), 0 = no fight
+    uint32& GroupFightStartMs() { return _groupFightStartMs; }
+    /// Group combat positioning (Combat/GroupCombat.cpp): no repositioning before this game time ms, and the last flee steps
+    uint32& PositionCooldownUntil() { return _positionCooldownUntil; }
+    FleeHistory& GetFleeHistory() { return _fleeHistory; }
     BotSpellBook& GetSpellBook() { return _spellBook; }
     Engine& GetEngine() { return _engine; }
     uint8 GetFormationIndex() const { return _formationIndex; }
@@ -202,6 +208,9 @@ private:
     uint32 _interruptEpoch = 0;
     bool _hadLeader = false;   // random bot: followed a player party leader on the last tick
     bool _hasLastStand = false;
+    uint32 _groupFightStartMs = 0;
+    uint32 _positionCooldownUntil = 0;
+    FleeHistory _fleeHistory;
     uint32 _nextDelayMs = 0;              // DynamicTick: the wait before the next AI tick
     uint32 _requestedDelay = 0;           // asked for by actions during this tick
     std::atomic<bool> _wake{ false };     // set from the world thread (chat), read by the bot's map thread

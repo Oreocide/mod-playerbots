@@ -44,5 +44,11 @@ g++ $FLAGS "$HERE/air_profile_test.cpp" -o "$OUT/playerbots_air_profile_test"
 g++ $FLAGS "$HERE/air_follow_test.cpp" -o "$OUT/playerbots_air_follow_test"
 "$OUT/playerbots_air_follow_test"
 
+g++ $FLAGS "$HERE/group_tactics_test.cpp" -o "$OUT/playerbots_group_tactics_test"
+"$OUT/playerbots_group_tactics_test"
+
+g++ $FLAGS "$HERE/positioning_test.cpp" -o "$OUT/playerbots_positioning_test"
+"$OUT/playerbots_positioning_test"
+
 g++ $FLAGS "$HERE/loot_roll_rules_test.cpp" -o "$OUT/playerbots_loot_roll_rules_test"
 "$OUT/playerbots_loot_roll_rules_test"

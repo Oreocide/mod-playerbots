@@ -26,7 +26,7 @@
 namespace Playerbots
 {
 /// Strategies every new bot starts with
-inline constexpr std::array<std::string_view, 8> DefaultStrategies = { "death", "teleport", "combat", "loot", "consume", "follow", "travel", "buff" };
+inline constexpr std::array<std::string_view, 10> DefaultStrategies = { "death", "teleport", "combat", "loot", "consume", "follow", "travel", "buff", "threat", "wait for attack" };
 
 /// Registers the generic actions, triggers, values and strategies with the AiRegistry (once, thread safe)
 void EnsureAiRegistered();

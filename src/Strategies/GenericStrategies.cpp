@@ -16,6 +16,8 @@
  */
 
 #include "GenericStrategies.h"
+#include "Combat/GroupCombat.h"
+#include "Combat/Positioning.h"
 #include "Travel/BotMover.h"
 #include "Cmd/ChatCommands.h"
 #include "Engine/AiContext.h"
@@ -460,7 +462,10 @@ public:
         BotRole role = ai.GetRole();
         bool ranged = role == BotRole::RangedDps || role == BotRole::Healer;
 
-        ai.Chase(target, ranged);
+        // Playerbots.Combat.Positioning / Kite: a step behind the target, around it, or away from it comes first; the chase
+        // generator is not re-issued over a held step
+        if (!GroupCombat::PositionStep(ai, target))
+            ai.Chase(target, ranged);
 
         RotationRunner& rotation = ai.GetRotation();
         bool useRotation = sPlayerbotsConfig.RotationEnable && rotation.HasList(ai, "combat");
@@ -1151,6 +1156,7 @@ void RegisterGenericAi()
 
     AiRegistry& r = sPlayerbotsAi;
 
+    GroupCombat::Register(r);
     r.AddValue("combat target", [](std::string const&) -> std::unique_ptr<ValueBase> { return std::make_unique<CombatTargetValue>(); });
     r.AddValue("heal target", [](std::string const&) -> std::unique_ptr<ValueBase> { return std::make_unique<HealTargetValue>(); });
     r.AddValue("nearest corpse", [](std::string const&) -> std::unique_ptr<ValueBase> { return std::make_unique<NearestCorpseValue>(); });
