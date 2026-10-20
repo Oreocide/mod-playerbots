@@ -36,6 +36,7 @@
 
 namespace Playerbots::Dungeon
 {
+void RegisterUtgardeKeep(AiRegistry& registry);
 
 namespace
 {
@@ -232,5 +233,6 @@ void RegisterDungeon(AiRegistry& registry, DungeonDef def)
 
 void RegisterAll(AiRegistry& registry)
 {
+    RegisterUtgardeKeep(registry);
 }
 }
