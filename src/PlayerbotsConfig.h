@@ -41,6 +41,10 @@ struct Config
     bool CombatPositioning = false;    // melee behind the target, ranged spread, tanks turn the enemy away from the group
     bool CombatKite = false;           // ranged bots step away from a melee enemy that is hitting them
     bool CombatGrindQuality = false;   // random bots pick fights in line of sight, on their floor, not gray and not already taken
+    bool FollowWalkFirst = false;      // a bot far from its master walks to it for a while before it teleports
+    bool FollowMirrorMaster = false;   // a following bot mounts when its master mounts and takes the master's flight path
+    uint32 FollowWalkSeconds = 45;
+    uint32 FollowWalkMaxYards = 300;
     bool MoveHopLowObstacles = false;   // jump low obstacles on level ground instead of walking through them
     bool MoveAvoidBlockedPaths = false; // detour around geometry the mesh does not know, refuse cliff segments
     bool MoveLogBlockedPaths = false;  // log mesh paths that cross VMAP or game object geometry (measurement only, changes nothing)

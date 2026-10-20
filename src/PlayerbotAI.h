@@ -102,6 +102,8 @@ public:
     /// Group combat positioning (Combat/GroupCombat.cpp): no repositioning before this game time ms, and the last flee steps
     uint32& PositionCooldownUntil() { return _positionCooldownUntil; }
     FleeHistory& GetFleeHistory() { return _fleeHistory; }
+    /// Since when the bot has been too far from its master to follow, 0 = not far (Playerbots.Follow.WalkFirst)
+    uint32& AwayFromMasterSince() { return _awayFromMasterSince; }
     BotSpellBook& GetSpellBook() { return _spellBook; }
     Engine& GetEngine() { return _engine; }
     uint8 GetFormationIndex() const { return _formationIndex; }
@@ -210,6 +212,7 @@ private:
     bool _hasLastStand = false;
     uint32 _groupFightStartMs = 0;
     uint32 _positionCooldownUntil = 0;
+    uint32 _awayFromMasterSince = 0;
     FleeHistory _fleeHistory;
     uint32 _nextDelayMs = 0;              // DynamicTick: the wait before the next AI tick
     uint32 _requestedDelay = 0;           // asked for by actions during this tick

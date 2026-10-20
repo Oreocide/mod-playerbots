@@ -43,6 +43,10 @@ void Config::Load()
     CombatPositioning = sConfigMgr->GetBoolDefault("Playerbots.Combat.Positioning", false);
     CombatKite = sConfigMgr->GetBoolDefault("Playerbots.Combat.Kite", false);
     CombatGrindQuality = sConfigMgr->GetBoolDefault("Playerbots.Combat.GrindQuality", false);
+    FollowWalkFirst = sConfigMgr->GetBoolDefault("Playerbots.Follow.WalkFirst", false);
+    FollowMirrorMaster = sConfigMgr->GetBoolDefault("Playerbots.Follow.MirrorMaster", false);
+    FollowWalkSeconds = uint32(std::clamp(sConfigMgr->GetIntDefault("Playerbots.Follow.WalkSeconds", 45), 5, 600));
+    FollowWalkMaxYards = uint32(std::clamp(sConfigMgr->GetIntDefault("Playerbots.Follow.WalkMaxYards", 300), 50, 1000));
     MoveHopLowObstacles = sConfigMgr->GetBoolDefault("Playerbots.Move.HopLowObstacles", false);
     MoveAvoidBlockedPaths = sConfigMgr->GetBoolDefault("Playerbots.Move.AvoidBlockedPaths", false);
     MoveLogBlockedPaths = sConfigMgr->GetBoolDefault("Playerbots.Move.LogBlockedPaths", false);

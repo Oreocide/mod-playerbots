@@ -25,6 +25,8 @@
 #include "CellImpl.h"
 #include "Creature.h"
 #include "DB2Stores.h"
+#include "PlayerTaxi.h"
+#include "Travel/Taxi.h"
 #include "GridDefines.h"
 #include "GameTime.h"
 #include "GridNotifiersImpl.h"
@@ -37,6 +39,7 @@
 #include "MotionMaster.h"
 #include "Battleground.h"
 #include "GameObject.h"
+#include "Travel/AirFollow.h"
 #include "World/WorldActionQueue.h"
 #include "ObjectAccessor.h"
 #include "Player.h"
@@ -51,6 +54,7 @@
 #include "SpellMgr.h"
 #include "WorldSession.h"
 #include <algorithm>
+#include <deque>
 #include <cmath>
 #include <mutex>
 #include <unordered_map>
@@ -273,7 +277,35 @@ bool MasterAwayTrigger(PlayerbotAI& ai)
     if (!master || !bot->IsAlive() || bot->IsInCombat() || master->IsBeingTeleported() || master->IsInFlight())
         return false;
 
-    return !IsSameInstance(bot, master) || !bot->IsWithinDistInMap(master, sPlayerbotsConfig.TeleportDistance);
+    bool sameInstance = IsSameInstance(bot, master);
+    if (sameInstance && bot->IsWithinDistInMap(master, sPlayerbotsConfig.TeleportDistance))
+    {
+        ai.AwayFromMasterSince() = 0;
+        return false;
+    }
+
+    // a master in the air, falling or on a transport has no ground to land a teleported bot on: wait for it to land
+    if (sameInstance && (master->IsFalling() || master->IsFlying() || master->GetTransport()))
+        return false;
+
+    // Playerbots.Follow.WalkFirst: the follow movement walks the bot to the master for a while, a teleport only when that
+    // did not work out. Another map or a very far master cannot be walked
+    if (!sPlayerbotsConfig.FollowWalkFirst || !sameInstance
+        || !bot->IsWithinDistInMap(master, float(sPlayerbotsConfig.FollowWalkMaxYards)))
+    {
+        ai.AwayFromMasterSince() = 0;
+        return true;
+    }
+
+    uint32 now = GameTime::GetGameTimeMS();
+    uint32& since = ai.AwayFromMasterSince();
+    if (!since)
+        since = now ? now : 1;
+    if (now - since < sPlayerbotsConfig.FollowWalkSeconds * 1000)
+        return false;
+
+    since = 0;
+    return true;
 }
 
 bool NeedsHealTrigger(PlayerbotAI& ai)
@@ -570,6 +602,33 @@ public:
     }
 };
 
+// Playerbots.Follow.MirrorMaster: ride when the master rides, fly when the master flies. true = the bot took a flight path
+bool MirrorMaster(PlayerbotAI& ai, Player* master)
+{
+    Player* bot = ai.GetBot();
+    if (bot->IsInCombat() || bot->IsBeingTeleported() || !bot->IsAlive())
+        return false;
+
+    if (master->IsInFlight())
+    {
+        // the bot still stands at the flight master the master left from: the same route to the same end
+        std::deque<uint32> const& path = master->m_taxi.GetPath();
+        if (bot->IsInFlight() || path.size() < 2)
+            return false;
+
+        TaxiNodesEntry const* from = sTaxiNodesStore.LookupEntry(path.front());
+        if (!from || from->ContinentID != bot->GetMapId() || bot->GetExactDist2d(from->Pos.X, from->Pos.Y) > 60.0f)
+            return false;
+        return TakeTaxi(bot, path.front(), path.back());
+    }
+
+    if (master->IsMounted() && !bot->IsMounted())
+        UpdateMountForTravel(bot, 1000.0f);     // a trip long enough to ride; outdoors, once in a while, the mount it has
+    else if (!master->IsMounted() && bot->IsMounted() && bot->GetExactDist2d(master) < 12.0f)
+        bot->CancelMountAura();
+    return false;
+}
+
 class FollowAction : public Action
 {
 public:
@@ -583,6 +642,13 @@ public:
 
         if (ai.GetBot()->GetVictim())
             ai.GetBot()->AttackStop();
+
+        // a master in the air: the bot flies along (a steady-flight mount), and lands with the master
+        if (AirFollow::Update(ai, master))
+            return true;
+
+        if (sPlayerbotsConfig.FollowMirrorMaster && MirrorMaster(ai, master))
+            return true;
 
         UpdateMountForTravel(ai.GetBot(), ai.GetBot()->GetExactDist2d(master));
         ai.Follow(master);
