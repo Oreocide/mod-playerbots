@@ -27,6 +27,7 @@
 #include <unordered_map>
 #include <unordered_set>
 #include <deque>
+#include <algorithm>
 #include <vector>
 
 class Player;
@@ -81,6 +82,11 @@ public:
     /// Playerbots.Random.Maps: an empty list allows every map (valid once BuildSpots ran)
     /// Characters ready for random bots (created so far)
     size_t GetCharacterCount() const { return _characters.size(); }
+    /// A character made for random bots (a guild led by one is a bot guild). World thread
+    bool IsBotCharacter(ObjectGuid guid) const
+    {
+        return std::ranges::any_of(_characters, [guid](BotCharacter const& c) { return c.Guid == guid; });
+    }
     bool IsMapAllowed(uint32 mapId) const { return _allowedMaps.empty() || _allowedMaps.contains(mapId); }
 
 private:

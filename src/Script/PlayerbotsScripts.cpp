@@ -38,6 +38,7 @@
 #include "RandomBotMgr.h"
 #include "RemoteControl.h"
 #include "Rotation/RotationMgr.h"
+#include "Social/BotGuildMgr.h"
 #include "Social/BotSocialMgr.h"
 #include "Travel/HotspotMgr.h"
 #include "World/WorldActionQueue.h"
@@ -95,6 +96,7 @@ public:
         sPlayerbotMgr->Update(diff);
         sActivityMgr->Update(diff);
         sBotSocialMgr->Update(diff);
+        sBotGuildMgr->Update(diff);
         sBotPerfReporter->Update(diff);
         // last: everything above may have moved a bot, and the next map update would load the grids around it
         sPlayerbotMgr->SweepFarBotNotifies();

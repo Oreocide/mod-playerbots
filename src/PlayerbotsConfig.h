@@ -54,6 +54,11 @@ struct Config
     bool MoveHopLowObstacles = false;   // jump low obstacles on level ground instead of walking through them
     bool MoveAvoidBlockedPaths = false; // detour around geometry the mesh does not know, refuse cliff segments
     bool MoveLogBlockedPaths = false;  // log mesh paths that cross VMAP or game object geometry (measurement only, changes nothing)
+    bool GuildEnable = false;          // random bots found and join guilds of their own
+    uint32 GuildPercent = 25;          // share of the eligible random bots that should be in a bot guild
+    uint32 GuildMinLevel = 10;
+    uint32 GuildMaxMembers = 30;
+    uint32 GuildInterval = 600000;     // ms between two runs
     bool MountsVariety = false;        // random bots own several ground mounts by level instead of one vendor mount
     bool CommandMaintenance = false;   // the owner command "maintenance" (free repair and food)
     uint32 GearRerollVersion = 0;      // raise it to give every random bot a new gear roll once (0 = off)

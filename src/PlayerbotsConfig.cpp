@@ -56,6 +56,11 @@ void Config::Load()
     MoveHopLowObstacles = sConfigMgr->GetBoolDefault("Playerbots.Move.HopLowObstacles", false);
     MoveAvoidBlockedPaths = sConfigMgr->GetBoolDefault("Playerbots.Move.AvoidBlockedPaths", false);
     MoveLogBlockedPaths = sConfigMgr->GetBoolDefault("Playerbots.Move.LogBlockedPaths", false);
+    GuildEnable = sConfigMgr->GetBoolDefault("Playerbots.Guild.Enable", false);
+    GuildPercent = uint32(std::clamp(sConfigMgr->GetIntDefault("Playerbots.Guild.Percent", 25), 0, 100));
+    GuildMinLevel = uint32(std::clamp(sConfigMgr->GetIntDefault("Playerbots.Guild.MinLevel", 10), 1, 90));
+    GuildMaxMembers = uint32(std::clamp(sConfigMgr->GetIntDefault("Playerbots.Guild.MaxMembers", 30), 5, 200));
+    GuildInterval = uint32(std::max(60000, sConfigMgr->GetIntDefault("Playerbots.Guild.Interval", 600000)));
     MountsVariety = sConfigMgr->GetBoolDefault("Playerbots.Mounts.Variety", false);
     CommandMaintenance = sConfigMgr->GetBoolDefault("Playerbots.Command.Maintenance", false);
     GearRerollVersion = uint32(std::max(0, sConfigMgr->GetIntDefault("Playerbots.Gear.RerollVersion", 0)));

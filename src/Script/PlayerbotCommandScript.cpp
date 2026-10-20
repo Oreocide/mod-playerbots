@@ -41,6 +41,7 @@
 #include "PlayerbotsConfig.h"
 #include "RBAC.h"
 #include "Rotation/RotationMgr.h"
+#include "Social/BotGuildMgr.h"
 #include "Strategies/Rpg/NpcDispatch.h"
 #include "Strategies/Rpg/RpgInfo.h"
 #include "Travel/HubIndex.h"
@@ -110,6 +111,12 @@ public:
             { "fly",   HandleAirFlyCommand,   rbac::RBAC_PERM_COMMAND_DEBUG, Console::Yes },
         };
 
+        static ChatCommandTable guildCommandTable =
+        {
+            { "list",  HandleBotGuildListCommand,  rbac::RBAC_PERM_COMMAND_DEBUG, Console::Yes },
+            { "purge", HandleBotGuildPurgeCommand, rbac::RBAC_PERM_COMMAND_DEBUG, Console::Yes },
+        };
+
         static ChatCommandTable botCommandTable =
         {
             { "add",     HandleBotAddCommand,    RBAC_PERM_COMMAND_BOT, Console::No },
@@ -121,6 +128,7 @@ public:
             { "goal",    HandleBotGoalCommand,   rbac::RBAC_PERM_COMMAND_DEBUG, Console::Yes },
             { "inspect", HandleBotInspectCommand, rbac::RBAC_PERM_COMMAND_DEBUG, Console::Yes },
             { "air",     airCommandTable },
+            { "guild",   guildCommandTable },
             { "hotspot", hotspotCommandTable },
             { "travel",  travelCommandTable },
             { "rotation", rotationCommandTable },
@@ -132,6 +140,23 @@ public:
         };
 
         return commandTable;
+    }
+
+    // .bot guild list: the guilds random bots founded
+    static bool HandleBotGuildListCommand(ChatHandler* handler)
+    {
+        std::vector<std::string> guilds = sBotGuildMgr->List();
+        handler->PSendSysMessage("Bot guilds: %u", uint32(guilds.size()));
+        for (std::string const& line : guilds)
+            handler->PSendSysMessage("  %s", line.c_str());
+        return true;
+    }
+
+    // .bot guild purge: disband every guild led by a random bot (the way back from Playerbots.Guild.Enable)
+    static bool HandleBotGuildPurgeCommand(ChatHandler* handler)
+    {
+        handler->PSendSysMessage("Disbanded %u bot guilds.", sBotGuildMgr->Purge());
+        return true;
     }
 
     // .bot goal reload
