@@ -58,6 +58,17 @@ public:
         sPlayerbotsConfig.Load();
     }
 
+    // Data the module reads once, after the databases are loaded. This hook went missing in 60ee8ad (the repository, the hotspot
+    // marker templates and the rotation scripts were never loaded afterwards: the repository answers nothing before its Load)
+    void OnStartup() override
+    {
+        sPlayerbotRepository->Load();
+        sHotspotMgr->LoadMarkerTemplates();
+        if (sPlayerbotsConfig.RotationEnable)
+            sRotationMgr->Load();
+        sRemoteControl->Start();
+    }
+
     void OnConfigLoad(bool reload) override
     {
         sPlayerbotsConfig.Load();
