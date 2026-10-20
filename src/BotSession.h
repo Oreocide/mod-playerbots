@@ -22,24 +22,17 @@
 #include "ObjectGuid.h"
 #include "Player.h"
 #include "WorldSession.h"
+#include <functional>
 #include <string>
 
-/// Bot sessions on a stock WorldSession: no core patch, only public API.
-///
-/// A bot session is a WorldSession built without a socket. Everything a client would normally drive is driven here:
-///  - Packets sent to the bot are dropped by WorldSession::SendPacket ("Prevented sending ... to non existent socket"
-///    is logged at ERROR level for each; mute it with `Logger.network.opcode` in worldserver.conf). The module
-///    never needs them: invites, dungeon finder proposals and character creation results are polled from game state.
-///  - The idle check at the top of WorldSession::Update dereferences the realm socket once the idle timeout passed, so
-///    the queue flag (which makes IsConnectionIdle() false) is set around every Update.
-///  - WorldSession::Update returns false for a session without socket. The result is meaningless here.
+/// Bot sessions are headless sessions of the core (WorldSession::SetHeadless): sessions without client connection that this
+/// module drives. Packets the core sends to a bot go to the packet sink given at creation (null = dropped); the module reads
+/// the few it needs (dungeon finder proposals, loot rolls, character creation results) there.
 namespace Playerbots
 {
-/// A session of a real client always has a remote address, a bot session never does (WorldSession::m_Address is only
-/// set from the realm socket). Immutable after construction, so it is safe from every thread
 inline bool IsBotSession(WorldSession const* session)
 {
-    return session && session->GetRemoteAddress().empty();
+    return session && session->IsHeadless();
 }
 
 inline bool IsBot(Player const* player)
@@ -47,23 +40,14 @@ inline bool IsBot(Player const* player)
     return player && IsBotSession(player->GetSession());
 }
 
-/// Builds a socketless session and starts loading its account data (WorldSession::InitializeSession).
-/// Account data is ready once UpdateBotSession returned true
+using BotPacketSink = std::function<void(WorldPacket const&)>;
+
+/// Builds a headless session and starts loading its account data. `onInitialized` runs on the world thread, from the session's
+/// Update, once that is done: the place to start a login (WorldSession::LoginHeadlessPlayer) or character creation.
+/// `packetSink` can run on any thread
 WorldSession* CreateBotSession(uint32 accountId, std::string accountName, uint32 bnetAccountId, std::string email, uint8 expansion,
-    std::string os, Minutes timezoneOffset, uint32 build, ClientBuild::VariantId variant, LocaleConstant locale);
-
-/// Runs WorldSession::Update. Returns true once the account data of the session is loaded.
-/// World thread only
-bool UpdateBotSession(WorldSession* session, uint32 diff);
-
-/// Starts the login of a character of the session's account with the stock handlers (character select -> enter world).
-/// Only after UpdateBotSession returned true. False if the stock login handler did not accept the request
-bool StartBotLogin(WorldSession* session, ObjectGuid character);
-
-/// Deleting a session logs its player out and saves it, which sets every character of the account offline. Bots of a
-/// player share the player's account, so those flags are set again a moment later. `master` is the player that
-/// stays online; the caller only calls this while that player is online
-void RepairOnlineFlags(uint32 accountId, ObjectGuid master);
+    std::string os, Minutes timezoneOffset, uint32 build, ClientBuild::VariantId variant, LocaleConstant locale,
+    BotPacketSink packetSink, std::function<void(WorldSession*)> onInitialized);
 }
 
 #endif // PlayerbotsBotSession_h__

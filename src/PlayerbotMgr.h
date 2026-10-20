@@ -107,8 +107,6 @@ private:
     struct BotHolder
     {
         WorldSession* Session = nullptr;
-        ObjectGuid Character;       // the character this bot logs in
-        bool LoginStarted = false;  // account data is loaded and the stock login was started
         ObjectGuid Master;          // empty for random bots
         uint8 FormationIndex = 0;
         uint32 LoginTimer = 0;
@@ -118,17 +116,6 @@ private:
         bool Removing = false;
         std::unique_ptr<PlayerbotAI> AI;
     };
-
-    /// Bots of a player share the player's account: its online flags are set again after the bot's logout cleared them
-    struct OnlineRepair
-    {
-        uint32 AccountId;
-        ObjectGuid Master;
-        uint32 DueMs;
-    };
-    static constexpr uint32 OnlineRepairDelayMs = 3000;
-    void RunOnlineRepairs();
-    std::vector<OnlineRepair> _onlineRepairs;
 
     void OnBotLoggedIn(ObjectGuid guid, BotHolder& holder);
     static void CompleteFarTeleport(WorldSession* session);

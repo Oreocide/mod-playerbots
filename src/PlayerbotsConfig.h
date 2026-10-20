@@ -41,6 +41,7 @@ struct Config
     bool WarmPin = true;               // keep the warmed grids loaded (no unloading after Grid cleanup delay)
     float WarmRadius = 120.0f;         // yards around each warm point whose grids are loaded (3x3 samples at this spacing)
     uint32 RandomCreateUpTo = 0;       // keep creating characters in the background (one per Random.CreateDelay, whatever is online) until this many exist; 0 = only to reach Random.Count
+    bool NoVisibilityGridLoad = false; // bot sessions do not make the core load the grids around them for visibility (WorldSession::SetHeadlessLoadsVisibilityGrids)
     bool FarBotHeightNoGridLoad = false; // a ground-height query of a frozen / rotation-only bot does not load the grid it asks about
     uint32 FrozenTickMs = 0;           // frozen bots run their AI hook at most this often (0 = every map tick)
     bool RandomJoinChannels = false;   // join the zone channels (General, Trade, LFG...) of bots that are in none

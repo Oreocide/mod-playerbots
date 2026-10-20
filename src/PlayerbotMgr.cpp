@@ -80,13 +80,13 @@ AddBotResult PlayerbotMgr::AddBot(Player* master, std::string const& characterNa
     WorldSession* session = CreateBotSession(masterSession->GetAccountId(), std::string(masterSession->GetAccountName()),
         masterSession->GetBattlenetAccountId(), std::string(), masterSession->GetAccountExpansion(), std::string(masterSession->GetOS()),
         masterSession->GetTimezoneOffset(), masterSession->GetClientBuild(), masterSession->GetClientBuildVariant(),
-        masterSession->GetSessionDbLocaleIndex());
+        masterSession->GetSessionDbLocaleIndex(),
+        nullptr, [guid = character->Guid](WorldSession* botSession) { botSession->LoginHeadlessPlayer(guid); });
 
     ObjectGuid guid = character->Guid;
 
     BotHolder& holder = _bots[guid];
     holder.Session = session;
-    holder.Character = guid;
     holder.Master = master->GetGUID();
     holder.FormationIndex = GetFreeFormationIndex(master->GetGUID());
 
@@ -100,13 +100,15 @@ bool PlayerbotMgr::AddRandomBot(uint32 accountId, std::string const& accountName
         return false;
 
     WorldSession* session = CreateBotSession(accountId, std::string(accountName), bnetAccountId, std::string(), uint8(sWorld->getIntConfig(CONFIG_EXPANSION)),
-        "Win", Minutes(0), 0, ClientBuild::VariantId{}, LOCALE_enUS);
+        "Win", Minutes(0), 0, ClientBuild::VariantId{}, LOCALE_enUS,
+        // what a random bot reacts to: dungeon finder proposals (party and guild invitations are found by BotSocialMgr's scan)
+        [character](WorldPacket const& packet) { sActivityMgr->OnBotPacket(character, packet); },
+        [character](WorldSession* botSession) { botSession->LoginHeadlessPlayer(character); });
 
     BotProfessions::SeedOffline(character);
 
     BotHolder& holder = _bots[character];
     holder.Session = session;
-    holder.Character = character;
     return true;
 }
 
@@ -244,7 +246,6 @@ bool PlayerbotMgr::HasRealPlayerOnline() const
 void PlayerbotMgr::Update(uint32 diff)
 {
     uint32 const sliceMs = sPlayerbotsConfig.ManagerSliceMs;
-    RunOnlineRepairs();
     for (auto itr = _bots.begin(); itr != _bots.end();)
     {
         BotHolder& holder = itr->second;
@@ -254,8 +255,6 @@ void PlayerbotMgr::Update(uint32 diff)
         {
             // deleting the session logs the player out and saves it
             holder.AI.reset();
-            if (!holder.Master.IsEmpty())
-                _onlineRepairs.push_back({ session->GetAccountId(), holder.Master, GameTime::GetGameTimeMS() + OnlineRepairDelayMs });
             delete session;
             itr = _bots.erase(itr);
             continue;
@@ -319,14 +318,14 @@ void PlayerbotMgr::Update(uint32 diff)
             continue;
         }
 
-        bool ready = UpdateBotSession(session, botDiff);
-
-        // the account data is loaded: log the character in with the stock handlers
-        if (ready && !holder.LoginStarted && !holder.Removing)
+        WorldSessionFilter filter(session);
+        if (!session->Update(botDiff, filter))
         {
-            holder.LoginStarted = true;
-            if (!StartBotLogin(session, holder.Character))
-                RemoveBot(itr->first);
+            // the session ended: kicked (a game master's .kick), or removed
+            holder.AI.reset();
+            delete session; // logs out and saves the character
+            itr = _bots.erase(itr);
+            continue;
         }
 
         if (!holder.AI && !holder.Removing)
@@ -452,24 +451,6 @@ void PlayerbotMgr::TickOtherMapBots(uint32 diff)
 
         RunBotAI(bot, holder.AI.get(), diff);
     }
-}
-
-void PlayerbotMgr::RunOnlineRepairs()
-{
-    if (_onlineRepairs.empty())
-        return;
-
-    uint32 now = GameTime::GetGameTimeMS();
-    std::erase_if(_onlineRepairs, [now](OnlineRepair const& repair)
-    {
-        if (int32(now - repair.DueMs) < 0)
-            return false;
-
-        // the master logged out meanwhile (the usual reason a bot is removed): the account is offline, leave it so
-        if (ObjectAccessor::FindConnectedPlayer(repair.Master))
-            RepairOnlineFlags(repair.AccountId, repair.Master);
-        return true;
-    });
 }
 
 void PlayerbotMgr::LogoutRandomBots()

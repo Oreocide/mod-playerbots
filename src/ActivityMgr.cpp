@@ -50,10 +50,6 @@ namespace Playerbots
 namespace
 {
 constexpr uint32 ScanInterval = 5000;
-constexpr uint32 ProposalScanInterval = 250; // how often bots are checked for a proposal
-constexpr uint32 ProposalRetry = 4000;       // the next slice of proposal ids is tried this long later
-constexpr uint32 ProposalIdSlice = 16384;    // proposal ids tried per attempt
-constexpr uint32 ProposalIdLimit = 1u << 20; // the dungeon finder never gets near this many proposals
 constexpr uint32 ProposalAnswerMin = 2000;   // bots take a moment to accept, like a person would
 constexpr uint32 ProposalAnswerMax = 6000;
 constexpr uint32 MaxLfgFillAge = 15 * 60 * 1000;
@@ -183,32 +179,42 @@ void ActivityMgr::Shutdown()
     _backoff.clear();
 }
 
-// A bot session gets no packets. A proposal for a bot shows as the dungeon finder state of that bot
-void ActivityMgr::ScanProposals()
+// Any thread (the packet sink of a bot session runs on whichever thread sends the packet)
+void ActivityMgr::OnBotPacket(ObjectGuid bot, WorldPacket const& packet)
 {
-    sPlayerbotMgr->ForEachRandomBot([this](Player* bot, PlayerbotAI*)
+    if (packet.GetOpcode() != SMSG_LFG_PROPOSAL_UPDATE)
+        return;
+
+    try
     {
-        ObjectGuid guid = bot->GetGUID();
-        if (sLFGMgr->GetState(guid) != lfg::LFG_STATE_PROPOSAL)
+        WorldPacket data(packet);
+        data.rpos(0);
+
+        WorldPackets::LFG::RideTicket ticket;
+        uint64 instanceId = 0;
+        uint32 proposalId = 0;
+        uint32 slot = 0;
+        int8 state = 0;
+        data >> ticket >> instanceId >> proposalId >> slot >> state;
+
+        if (state != lfg::LFG_PROPOSAL_INITIATING)
             return;
 
         std::lock_guard lock(_proposalMutex);
-        if (std::ranges::any_of(_proposals, [&](Proposal const& p) { return p.Bot == guid; }))
+        if (std::ranges::any_of(_proposals, [&](Proposal const& p) { return p.Bot == bot && p.Id == proposalId; }))
             return;
 
-        _proposals.push_back({ guid, _clock.load() + urand(ProposalAnswerMin, ProposalAnswerMax), 1 });
-    });
+        _proposals.push_back({ bot, proposalId, _clock.load() + urand(ProposalAnswerMin, ProposalAnswerMax) });
+    }
+    catch (ByteBufferException const&)
+    {
+        TC_LOG_ERROR("server.playerbots", "Playerbots: could not read the dungeon finder proposal sent to {}", bot.ToString());
+    }
 }
 
 void ActivityMgr::Update(uint32 diff)
 {
     _clock += diff;
-    _proposalScanTimer += diff;
-    if (_proposalScanTimer >= ProposalScanInterval)
-    {
-        _proposalScanTimer = 0;
-        ScanProposals();
-    }
     AnswerProposals();
 
     _scanTimer += diff;
@@ -239,35 +245,9 @@ void ActivityMgr::AnswerProposals()
         }
     }
 
-    for (Proposal proposal : due)
-    {
-        if (!sPlayerbotMgr->IsBotOnline(proposal.Bot) || sLFGMgr->GetState(proposal.Bot) != lfg::LFG_STATE_PROPOSAL)
-            continue;
-
-        proposal.Cursor = AcceptProposal(proposal.Bot, proposal.Cursor);
-
-        // The bot is probably still in the proposal because other members have not answered yet. Each id is tried only once
-        // per proposal: the next slice of ids is covered a few seconds later, in case the proposal id is higher than the slices
-        // so far. A bot that left the proposal state is dropped above, so the next proposal starts again at 1
-        if (proposal.Cursor <= ProposalIdLimit)
-        {
-            proposal.AnswerAt = _clock.load() + ProposalRetry;
-            std::lock_guard lock(_proposalMutex);
-            _proposals.push_back(proposal);
-        }
-    }
-}
-
-// The dungeon finder keeps the id of a proposal private and never hands it to a bot that gets no packet. Ids count up
-// from the start and the proposal store only holds the few proposals alive right now, so a lookup of an id that does not exist
-// is a cheap no-op, and UpdateProposal only acts when the bot is a member of the proposal with that id. Try a slice of them.
-// Returns the first id of the next slice
-uint32 ActivityMgr::AcceptProposal(ObjectGuid bot, uint32 first)
-{
-    uint32 const last = first + ProposalIdSlice - 1;
-    for (uint32 id = first; id <= last; ++id)
-        sLFGMgr->UpdateProposal(id, bot, true);
-    return last + 1;
+    for (Proposal const& proposal : due)
+        if (sPlayerbotMgr->IsBotOnline(proposal.Bot) && sLFGMgr->GetState(proposal.Bot) == lfg::LFG_STATE_PROPOSAL)
+            sLFGMgr->UpdateProposal(proposal.Id, proposal.Bot, true);
 }
 
 void ActivityMgr::Scan()
