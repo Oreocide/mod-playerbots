@@ -38,7 +38,10 @@ struct Config
     bool LootRoll = false;             // bots answer group loot rolls: need an upgrade, greed what sells, pass what they cannot use
     bool CastSupervisorEnable = false; // wait for a cast that is preparing; cancel it when the target died or a heal is wasted
     bool PerfMonEnabled = false;       // time engine ticks and actions, shown by ".bot perf"
-    uint32 PerfMonMemorySeconds = 30;       // RSS and jemalloc stats line (0 = off)
+    uint32 PerfMonMemorySeconds = 30;       // RSS and loaded grids line (0 = off)
+    uint32 PerfMonReportSeconds = 60;       // world tick window report (p50/p95/max of the world diff, slow ticks, gate counters), 0 = off
+    uint32 PerfMonSlowTickMs = 150;         // a world tick above this logs its host memory / swap / fault state
+    uint32 PerfMonGridCensusSeconds = 60;   // window report of what created new grids (who stood in or next to them), 0 = off
     std::string PerfMonChatDriver;     // "<messages per second> <say|yell|emote|channel|guild|mix>": start the synthetic chat driver once bots are online
     std::string WarmMaps;              // continents to create at startup, "0:-8913:554,1:1629:-4373" (mapId or mapId:x:y; x,y also loads that grid); empty = off
     uint32 ManagerSliceMs = 0;         // frozen idle bots are visited by the manager loop once per this many ms (0 = every world tick)
@@ -49,6 +52,7 @@ struct Config
     bool WarmPin = true;               // keep the warmed grids loaded (no unloading after Grid cleanup delay)
     float WarmRadius = 120.0f;         // yards around each warm point whose grids are loaded (3x3 samples at this spacing)
     uint32 RandomCreateUpTo = 0;       // keep creating characters in the background (one per Random.CreateDelay, whatever is online) until this many exist; 0 = only to reach Random.Count
+    bool FarBotNoVisibilityLoad = false; // a far bot's pending visibility notify is dropped, so the core does not load the grids around it (LoadGridsInRange)
     bool NoVisibilityGridLoad = false; // bot sessions do not make the core load the grids around them for visibility (WorldSession::SetHeadlessLoadsVisibilityGrids)
     bool FarBotHeightNoGridLoad = false; // a ground-height query of a frozen / rotation-only bot does not load the grid it asks about
     uint32 FrozenTickMs = 0;           // frozen bots run their AI hook at most this often (0 = every map tick)

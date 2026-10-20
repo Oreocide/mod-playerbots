@@ -41,6 +41,9 @@ void Config::Load()
     CastSupervisorEnable = sConfigMgr->GetBoolDefault("Playerbots.CastSupervisor.Enable", false);
     PerfMonEnabled = sConfigMgr->GetBoolDefault("Playerbots.PerfMon.Enable", false);
     PerfMonMemorySeconds = uint32(std::clamp(sConfigMgr->GetIntDefault("Playerbots.PerfMon.MemorySeconds", 30), 0, 3600));
+    PerfMonReportSeconds = uint32(std::clamp(sConfigMgr->GetIntDefault("Playerbots.PerfMon.ReportSeconds", 60), 0, 3600));
+    PerfMonSlowTickMs = uint32(std::clamp(sConfigMgr->GetIntDefault("Playerbots.PerfMon.SlowTickMs", 150), 10, 600000));
+    PerfMonGridCensusSeconds = uint32(std::clamp(sConfigMgr->GetIntDefault("Playerbots.PerfMon.GridCensusSeconds", 60), 0, 3600));
     RandomJoinChannels = sConfigMgr->GetBoolDefault("Playerbots.Random.JoinChannels", false);
     PerfMonChatDriver = sConfigMgr->GetStringDefault("Playerbots.PerfMon.ChatDriver", "");
     WarmMaps = sConfigMgr->GetStringDefault("Playerbots.Warm.Maps", "");
@@ -53,6 +56,7 @@ void Config::Load()
     WarmRadius = std::clamp(sConfigMgr->GetFloatDefault("Playerbots.Warm.Radius", 120.0f), 30.0f, 400.0f);
     RandomCreateUpTo = uint32(std::clamp(sConfigMgr->GetIntDefault("Playerbots.Random.CreateUpTo", 0), 0, 10000));
     FarBotHeightNoGridLoad = sConfigMgr->GetBoolDefault("Playerbots.FarBotHeightNoGridLoad", false);
+    FarBotNoVisibilityLoad = sConfigMgr->GetBoolDefault("Playerbots.FarBotNoVisibilityLoad", false);
     NoVisibilityGridLoad = sConfigMgr->GetBoolDefault("Playerbots.NoVisibilityGridLoad", false);
     FrozenTickMs = uint32(std::clamp(sConfigMgr->GetIntDefault("Playerbots.FrozenTickMs", 0), 0, 5000));
     RandomMaxRssMB = uint32(std::max(0, sConfigMgr->GetIntDefault("Playerbots.Random.MaxRssMB", 0)));

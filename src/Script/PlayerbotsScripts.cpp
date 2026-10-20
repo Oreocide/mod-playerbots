@@ -31,6 +31,7 @@
 #include "Map.h"
 #include "MapManager.h"
 #include "Perf/BotPerfReporter.h"
+#include "Perf/GateCounters.h"
 #include "PlayerbotAI.h"
 #include "PlayerbotMgr.h"
 #include "PlayerbotsConfig.h"
@@ -95,6 +96,8 @@ public:
         sActivityMgr->Update(diff);
         sBotSocialMgr->Update(diff);
         sBotPerfReporter->Update(diff);
+        // last: everything above may have moved a bot, and the next map update would load the grids around it
+        sPlayerbotMgr->SweepFarBotNotifies();
     }
 
     void OnShutdown() override
@@ -209,6 +212,8 @@ public:
     void OnUpdate(Map* map, uint32 diff) override
     {
         sPlayerbotMgr->TickMapBots(map, diff);
+        if (sPlayerbotsConfig.PerfMonEnabled)
+            sGateCounters.NoteMapFinish(map->GetId());
     }
 };
 

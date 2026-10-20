@@ -31,6 +31,7 @@
 #include "ActivityMgr.h"
 #include "Social/LootRolls.h"
 #include "Social/BotSocialMgr.h"
+#include "Perf/GateCounters.h"
 #include "Player.h"
 #include "PlayerbotAI.h"
 #include "PlayerbotsConfig.h"
@@ -125,23 +126,58 @@ size_t PlayerbotMgr::GetRandomBotCount() const
 
 bool PlayerbotMgr::HasHumanWithin(Player const* bot, float distance) const
 {
+    return HasHumanWithin(bot->GetMapId(), bot->GetPositionX(), bot->GetPositionY(), distance);
+}
+
+bool PlayerbotMgr::HasHumanWithin(uint32 mapId, float x, float y, float distance) const
+{
     std::shared_ptr<std::vector<NearbyHuman> const> humans = _nearbyHumans.load();
     if (!humans)
         return false;
 
-    uint32 mapId = bot->GetMapId();
     float distanceSq = distance * distance;
     for (NearbyHuman const& human : *humans)
     {
         if (human.MapId != mapId)
             continue;
 
-        float dx = bot->GetPositionX() - human.X;
-        float dy = bot->GetPositionY() - human.Y;
+        float dx = x - human.X;
+        float dy = y - human.Y;
         if (dx * dx + dy * dy <= distanceSq)
             return true;
     }
     return false;
+}
+
+void PlayerbotMgr::SweepFarBotNotifies()
+{
+    if (!sPlayerbotsConfig.FarBotNoVisibilityLoad)
+        return;
+
+    uint64 cleared = 0;
+    ForEachRandomBot([this, &cleared](Player* bot, PlayerbotAI* ai)
+    {
+        // the cheap test first: most bots have nothing pending
+        if (!bot->IsInWorld() || !bot->isNeedNotify(NOTIFY_VISIBILITY_CHANGED))
+            return;
+
+        // IsSimulated() refreshes IsFarBot(): false for a bot with a master, in a group of players, a queue, an instance or a battleground
+        ai->IsSimulated();
+        if (!ai->IsFarBot())
+            return;
+
+        // a player who can see the bot needs the notify; the snapshot is up to a second old, hence the margin
+        Map const* map = bot->GetMap();
+        float range = (map ? map->GetVisibilityRange() : 100.0f) + 60.0f;
+        if (HasHumanWithin(bot, range))
+            return;
+
+        bot->ResetAllNotifies();
+        ++cleared;
+    });
+
+    if (cleared)
+        sGateCounters.NotifyCleared.fetch_add(cleared, std::memory_order_relaxed);
 }
 
 void PlayerbotMgr::ForEachRandomBot(std::function<void(Player*, PlayerbotAI*)> const& fn) const

@@ -91,6 +91,11 @@ public:
     std::shared_ptr<std::vector<NearbyHuman> const> GetNearbyHumans() const { return _nearbyHumans.load(); }
     /// A real player on the bot's map within distance yards (from the snapshot taken once a second)
     bool HasHumanWithin(Player const* bot, float distance) const;
+    bool HasHumanWithin(uint32 mapId, float x, float y, float distance) const;
+    /// Playerbots.FarBotNoVisibilityLoad: drops the pending visibility notify of every far bot that no player is near, so the next
+    /// map update does not load the grids around it. World thread, after the maps were updated (a bot moved by a route hop, a far
+    /// teleport or a login got the notify after that map's own relocation pass).
+    void SweepFarBotNotifies();
     uint32 GetWorldDiff() const { return _worldDiff.load(std::memory_order_relaxed); }
     /// Slowest world tick of the last WorldDiffWindowSeconds: one slow tick (a save, a spawn wave) must not freeze
     /// bots, a lasting load must
