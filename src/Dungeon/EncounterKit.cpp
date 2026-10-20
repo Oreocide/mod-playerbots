@@ -43,6 +43,7 @@ void RegisterUtgardePinnacle(AiRegistry& registry);
 void RegisterNexus(AiRegistry& registry);
 void RegisterCullingOfStratholme(AiRegistry& registry);
 void RegisterHallsOfStone(AiRegistry& registry);
+void RegisterAuchenaiCrypts(AiRegistry& registry);
 
 namespace
 {
@@ -246,5 +247,6 @@ void RegisterAll(AiRegistry& registry)
     RegisterNexus(registry);
     RegisterCullingOfStratholme(registry);
     RegisterHallsOfStone(registry);
+    RegisterAuchenaiCrypts(registry);
 }
 }
