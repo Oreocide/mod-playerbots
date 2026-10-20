@@ -59,6 +59,7 @@ struct Config
     uint32 RandomCreateUpTo = 0;       // keep creating characters in the background (one per Random.CreateDelay, whatever is online) until this many exist; 0 = only to reach Random.Count
     bool FarBotNoVisibilityLoad = false; // a far bot's pending visibility notify is dropped, so the core does not load the grids around it (LoadGridsInRange)
     bool NoVisibilityGridLoad = false; // bot sessions do not make the core load the grids around them for visibility (WorldSession::SetHeadlessLoadsVisibilityGrids)
+    bool TravelDeferHops = false;     // a far bot's route hop is not placed (no TeleportTo, no new grid) unless the target grid is loaded or a player is near it
     bool FarBotHeightNoGridLoad = false; // a ground-height query of a frozen / rotation-only bot does not load the grid it asks about
     uint32 FrozenTickMs = 0;           // frozen bots run their AI hook at most this often (0 = every map tick)
     bool RandomJoinChannels = false;   // join the zone channels (General, Trade, LFG...) of bots that are in none

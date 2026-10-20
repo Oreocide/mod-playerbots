@@ -24,6 +24,7 @@
 #include <string>
 #include <vector>
 
+class Player;
 
 namespace Playerbots
 {
@@ -84,6 +85,8 @@ private:
     RouteStatus StepTransport(PlayerbotAI& ai, RouteLeg const& leg);
     RouteStatus StepAir(PlayerbotAI& ai, RouteLeg const& leg);
     void PlanHop();
+    bool HopNeedsPlacing(Player const* bot) const;
+    bool Materialize(PlayerbotAI& ai);
     void NextLeg();
     float RemainingSeconds() const;
 
@@ -120,6 +123,9 @@ private:
     bool _virtualStarted = false;
     size_t _hopLegs = 0;
     Position3 _hopTarget;
+    // Travel.DeferHops: hops that were not placed. The bot still stands where the last placed hop left it; the route has got to _deferredAt
+    bool _hasDeferred = false;
+    Position3 _deferredAt;
 };
 }
 

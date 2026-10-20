@@ -63,6 +63,7 @@ void Config::Load()
     FarBotHeightNoGridLoad = sConfigMgr->GetBoolDefault("Playerbots.FarBotHeightNoGridLoad", false);
     FarBotNoVisibilityLoad = sConfigMgr->GetBoolDefault("Playerbots.FarBotNoVisibilityLoad", false);
     NoVisibilityGridLoad = sConfigMgr->GetBoolDefault("Playerbots.NoVisibilityGridLoad", false);
+    TravelDeferHops = sConfigMgr->GetBoolDefault("Playerbots.Travel.DeferHops", false);
     FrozenTickMs = uint32(std::clamp(sConfigMgr->GetIntDefault("Playerbots.FrozenTickMs", 0), 0, 5000));
     RandomMaxRssMB = uint32(std::max(0, sConfigMgr->GetIntDefault("Playerbots.Random.MaxRssMB", 0)));
     LoginTimeout = std::max(5000, sConfigMgr->GetIntDefault("Playerbots.LoginTimeout", 60000));

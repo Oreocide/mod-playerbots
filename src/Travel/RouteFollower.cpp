@@ -22,6 +22,9 @@
 #include "MotionMaster.h"
 #include "Log.h"
 #include "Map.h"
+#include "MapManager.h"
+#include "Perf/GateCounters.h"
+#include "PlayerbotMgr.h"
 #include "Player.h"
 #include "PlayerbotAI.h"
 #include "PlayerbotsConfig.h"
@@ -78,6 +81,7 @@ bool RouteFollower::Begin(PlayerbotAI& ai, Position3 const& goal, float arriveYa
     _airTries = 0;
     _active = true;
     _virtualStarted = false;
+    _hasDeferred = false;
     NextLeg();
     return true;
 }
@@ -85,6 +89,7 @@ bool RouteFollower::Begin(PlayerbotAI& ai, Position3 const& goal, float arriveYa
 void RouteFollower::Cancel()
 {
     _active = false;
+    _hasDeferred = false;
     _route = Route();
     _leg = 0;
     _flying = false;
@@ -557,6 +562,10 @@ RouteStatus RouteFollower::Step(PlayerbotAI& ai)
     if (!bot->IsAlive() || bot->IsBeingTeleported())
         return RouteStatus::Running;
 
+    // ... and if the hops since the last placement were skipped, where it stands is where the route has got to
+    if (_hasDeferred)
+        return Materialize(ai) ? RouteStatus::Running : Finish(ai, false);
+
     // done when at the goal, wherever the route is
     if (bot->GetMapId() == _goal.Map && bot->GetExactDist2d(Position(_goal.X, _goal.Y, _goal.Z)) <= _arrive && !_flying)
         return Finish(ai, true);
@@ -645,6 +654,59 @@ void RouteFollower::PlanHop()
     _virtualStarted = true;
 }
 
+// Travel.DeferHops: whether this hop has to be a real placement. A far bot is not seen by anyone, so a stretch in the middle of
+// a route only needs the bot at its end when that costs nothing (the grid is loaded anyway) or somebody could see it there.
+bool RouteFollower::HopNeedsPlacing(Player const* bot) const
+{
+    GateCounters& gates = sGateCounters;
+    if (!sPlayerbotsConfig.TravelDeferHops)
+    {
+        gates.HopPlacedAlways.fetch_add(1, std::memory_order_relaxed);
+        return true;
+    }
+
+    if (_leg + _hopLegs >= _route.Legs.size())
+    {
+        gates.HopFinal.fetch_add(1, std::memory_order_relaxed);
+        return true;
+    }
+
+    // This runs on the bot's map thread. Another map is being updated on its own thread at the same time, and a grid of it can be
+    // unloaded while it is read: only the bot's own map is asked. A hop to another map (portal, boat) counts as not loaded.
+    Map const* map = bot->GetMap();
+    if (map && map->GetId() == _hopTarget.Map && map->IsGridLoaded(_hopTarget.X, _hopTarget.Y))
+    {
+        gates.HopPlacedLoaded.fetch_add(1, std::memory_order_relaxed);
+        return true;
+    }
+
+    float range = (map && map->GetId() == _hopTarget.Map ? map->GetVisibilityRange() : 100.0f) + 60.0f;
+    if (sPlayerbotMgr->HasHumanWithin(_hopTarget.Map, _hopTarget.X, _hopTarget.Y, range))
+    {
+        gates.HopPlacedHuman.fetch_add(1, std::memory_order_relaxed);
+        return true;
+    }
+
+    return false;
+}
+
+// A player came near a bot whose last hops were skipped: it is placed where the route had got to, then walks on from there
+bool RouteFollower::Materialize(PlayerbotAI& ai)
+{
+    Player* bot = ai.GetBot();
+    Position3 at = _deferredAt;
+    _hasDeferred = false;
+    sGateCounters.HopMaterialized.fetch_add(1, std::memory_order_relaxed);
+
+    if (bot->GetMapId() == at.Map && bot->GetExactDist2d(Position(at.X, at.Y, at.Z)) <= 5.0f)
+        return true;
+
+    ai.NoteExpectedMove();
+    bot->GetMotionMaster()->Clear();
+    bot->StopMoving();
+    return bot->TeleportTo(at.Map, at.X, at.Y, at.Z, bot->GetOrientation());
+}
+
 RouteStatus RouteFollower::StepVirtual(PlayerbotAI& ai, uint32 diffMs)
 {
     if (!_active)
@@ -670,11 +732,27 @@ RouteStatus RouteFollower::StepVirtual(PlayerbotAI& ai, uint32 diffMs)
     bool moved = true;
     if (bot->GetMapId() != _hopTarget.Map || bot->GetExactDist2d(Position(_hopTarget.X, _hopTarget.Y, _hopTarget.Z)) > 5.0f)
     {
-        ai.NoteExpectedMove();
-        bot->GetMotionMaster()->Clear();
-        bot->StopMoving();
-        moved = bot->TeleportTo(_hopTarget.Map, _hopTarget.X, _hopTarget.Y, _hopTarget.Z, bot->GetOrientation());
+        if (HopNeedsPlacing(bot))
+        {
+            ai.NoteExpectedMove();
+            bot->GetMotionMaster()->Clear();
+            bot->StopMoving();
+            moved = bot->TeleportTo(_hopTarget.Map, _hopTarget.X, _hopTarget.Y, _hopTarget.Z, bot->GetOrientation());
+            if (moved)
+            {
+                _hasDeferred = false;
+                sGateCounters.RecordHopLanding(_hopTarget.Map, Trinity::ComputeGridCoord(_hopTarget.X, _hopTarget.Y).GetId(), GameTime::GetGameTimeMS());
+            }
+        }
+        else
+        {
+            _hasDeferred = true;
+            _deferredAt = _hopTarget;
+            sGateCounters.HopDeferred.fetch_add(1, std::memory_order_relaxed);
+        }
     }
+    else
+        _hasDeferred = false;       // it stands at the end of this stretch anyway
 
     if (!moved)
         return Finish(ai, false);
