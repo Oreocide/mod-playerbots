@@ -51,6 +51,7 @@ void Config::Load()
     FollowWalkMaxYards = uint32(std::clamp(sConfigMgr->GetIntDefault("Playerbots.Follow.WalkMaxYards", 300), 50, 1000));
     CombatUsePotions = sConfigMgr->GetBoolDefault("Playerbots.Combat.UsePotions", false);
     DeathSpiritHealer = sConfigMgr->GetBoolDefault("Playerbots.Death.SpiritHealer", false);
+    GroupEvents = sConfigMgr->GetBoolDefault("Playerbots.Group.Events", false);
     DungeonEnable = sConfigMgr->GetBoolDefault("Playerbots.Dungeon.Enable", false);
     MoveHopLowObstacles = sConfigMgr->GetBoolDefault("Playerbots.Move.HopLowObstacles", false);
     MoveAvoidBlockedPaths = sConfigMgr->GetBoolDefault("Playerbots.Move.AvoidBlockedPaths", false);

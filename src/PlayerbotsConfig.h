@@ -49,6 +49,7 @@ struct Config
     uint32 FollowWalkMaxYards = 300;
     bool CombatUsePotions = false;     // in a fight: a health potion or healthstone below 35% health, a mana potion below 20% mana
     bool DeathSpiritHealer = false;    // an ownerless bot that dies outside a dungeon or battleground goes to the graveyard and the spirit healer
+    bool GroupEvents = false;          // bots answer ready checks, open and accept trades from their group, and take quests the group shares
     bool DungeonEnable = false;        // encounter logic for the dungeons the module knows (Utgarde Keep so far)
     bool MoveHopLowObstacles = false;   // jump low obstacles on level ground instead of walking through them
     bool MoveAvoidBlockedPaths = false; // detour around geometry the mesh does not know, refuse cliff segments

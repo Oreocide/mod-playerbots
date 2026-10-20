@@ -51,6 +51,7 @@
 #include "Combat/GroupCombat.h"
 #include "Dungeon/EncounterKit.h"
 #include "Engine/CastPolicy.h"
+#include "Social/GroupEvents.h"
 #include "Engine/TickPolicy.h"
 #include "Travel/BotMover.h"
 #include "Travel/MoveToward.h"
@@ -139,6 +140,14 @@ void PlayerbotAI::RestoreState()
 
     for (std::unique_ptr<Strategy>& strategy : strategies)
         _engine.AddStrategy(std::move(strategy));
+
+    // a list saved before the group strategies existed has none of them: add them, or ready checks, trades and shared quests
+    // would never be answered for this bot. A list that has any of them is the player's own choice and stays as it is
+    static constexpr std::string_view Infrastructure[] = { "threat", "wait for attack", "group events" };
+    if (std::ranges::none_of(Infrastructure, [this](std::string_view name) { return _engine.HasStrategy(name); }))
+        for (std::string_view name : Infrastructure)
+            if (std::unique_ptr<Strategy> strategy = CreateStrategy(name))
+                _engine.AddStrategy(std::move(strategy));
 }
 
 Player* PlayerbotAI::GetMaster() const
@@ -606,6 +615,7 @@ void PlayerbotAI::Update(uint32 diff)
         return;
     }
 
+    GroupEvents::Poll(*this);
     _engine.DoNextAction(*this, state);
     ScheduleNextTick(state);
 }
