@@ -35,6 +35,7 @@
 #include "Db/PlayerbotRepository.h"
 #include "Economy/FlyingMounts.h"
 #include "Goal/GoalStore.h"
+#include "Strategies/Rpg/AbstractLife.h"
 #include "Perf/BotPerfReporter.h"
 #include "PlayerbotAI.h"
 #include "PlayerbotMgr.h"
@@ -127,6 +128,7 @@ public:
             { "autogear", HandleBotAutogearCommand, rbac::RBAC_PERM_COMMAND_DEBUG, Console::No },
             { "goal",    HandleBotGoalCommand,   rbac::RBAC_PERM_COMMAND_DEBUG, Console::Yes },
             { "inspect", HandleBotInspectCommand, rbac::RBAC_PERM_COMMAND_DEBUG, Console::Yes },
+            { "state",   HandleBotStateCommand,   rbac::RBAC_PERM_COMMAND_DEBUG, Console::Yes },
             { "air",     airCommandTable },
             { "guild",   guildCommandTable },
             { "hotspot", hotspotCommandTable },
@@ -170,6 +172,87 @@ public:
 
         uint32 rows = GoalStore::Load();
         handler->PSendSysMessage("Playerbots: goal table reloaded, %u rows.", rows);
+        return true;
+    }
+
+    // .bot state <name>: what the bot is doing and deciding right now
+    static bool HandleBotStateCommand(ChatHandler* handler, std::string name)
+    {
+        Player* bot = ObjectAccessor::FindPlayerByName(name);
+        PlayerbotAI* ai = bot ? sPlayerbotMgr->GetAI(bot) : nullptr;
+        if (!bot || !ai)
+        {
+            handler->PSendSysMessage("No online bot named %s.", name.c_str());
+            return false;
+        }
+
+        static char const* const RpgNames[] = { "idle", "do quest", "wander npc", "travel flight", "go grind", "go camp", "rest", "wander random", "gather", "craft" };
+        uint32 now = GameTime::GetGameTimeMS();
+        RpgInfo& rpg = ai->GetRpg();
+        ChrSpecializationEntry const* spec = bot->GetPrimarySpecializationEntry();
+
+        handler->PSendSysMessage("%s: level %u, class %u, %s (%s), %.0f%% health, %.0f%% power, map %u zone %u at %.0f %.0f %.0f",
+            bot->GetName().c_str(), uint32(bot->GetLevel()), uint32(bot->GetClass()), spec ? spec->Name[sWorld->GetDefaultDbcLocale()] : "no specialization",
+            GetRoleName(ai->GetRole()), bot->GetHealthPct(), bot->GetPowerPct(bot->GetPowerType()), bot->GetMapId(), bot->GetZoneId(),
+            bot->GetPositionX(), bot->GetPositionY(), bot->GetPositionZ());
+        handler->PSendSysMessage("  %s%s%s%s%s%s, %s, owner %s",
+            bot->IsAlive() ? "alive" : "DEAD", bot->IsInCombat() ? ", in combat" : "", bot->IsMounted() ? ", mounted" : "",
+            bot->HasUnitState(UNIT_STATE_CASTING) ? ", casting" : "", bot->isMoving() ? ", moving" : "", bot->IsInFlight() ? ", in flight" : "",
+            ai->IsFarBot() ? "FROZEN/far" : "active", ai->GetMasterGuid().IsEmpty() ? "none (random bot)" : "a player");
+        handler->PSendSysMessage("  strategies: %s", ai->GetEngine().GetStrategyList().c_str());
+
+        // hovering bots: a gravity flag left on shows a hover pose; a plain gap above the ground with gravity on is the navmesh height
+        float groundGap = 0.0f;
+        bool haveGround = false;
+        if (Map* map = bot->GetMap(); map && map->IsGridLoaded(bot->GetPositionX(), bot->GetPositionY()))
+        {
+            float ground = map->GetHeight(bot->GetPhaseShift(), bot->GetPositionX(), bot->GetPositionY(), bot->GetPositionZ() + 2.0f, true, 20.0f);
+            if (ground > INVALID_HEIGHT)
+            {
+                groundGap = bot->GetPositionZ() - ground;
+                haveGround = true;
+            }
+        }
+        handler->PSendSysMessage("  movement: sighted %s, gravity %s, hovering %d, can fly %d, falling %d, spline %s, height above ground %s",
+            bot->HasPlayerLocalFlag(PLAYER_LOCAL_FLAG_OVERRIDE_TRANSPORT_SERVER_TIME) ? "yes" : "NO (blind)",
+            bot->IsGravityDisabled() ? "OFF" : "on", bot->IsHovering(), bot->CanFly(), bot->IsFalling(),
+            bot->movespline && !bot->movespline->Finalized() ? "running" : "none",
+            haveGround ? Trinity::StringFormat("{:.2f} yd", groundGap).c_str() : "unknown (grid not loaded)");
+        if (ai->IsFarBot() && ai->GetAbstract().Status != RpgStatus::Idle)
+            handler->PSendSysMessage("  far bot living (abstract): %s, %u s left", AbstractLife::StatusName(ai->GetAbstract().Status),
+                int32(ai->GetAbstract().UntilMs - now) > 0 ? (ai->GetAbstract().UntilMs - now) / 1000 : 0u);
+        handler->PSendSysMessage("  rpg: %s for %u s, destination %s, quest %u",
+            uint8(rpg.Status) < 10 ? RpgNames[uint8(rpg.Status)] : "?", (now - rpg.Started) / 1000, rpg.HasDest ? "yes" : "none", rpg.QuestId);
+        if (!rpg.Target.IsEmpty())
+        {
+            WorldObject* object = ObjectAccessor::GetWorldObject(*bot, rpg.Target);
+            Unit const* unit = object ? object->ToUnit() : nullptr;
+            handler->PSendSysMessage("  rpg target: %s (%u), %.1f yd, npc moving %s, stand-off %.1f, best distance %.1f, no headway for %u ms, spline %s",
+                object ? object->GetName().c_str() : "gone", object ? object->GetEntry() : 0u, object ? bot->GetExactDist(object) : -1.0f,
+                unit && unit->isMoving() ? "yes" : "no", rpg.StandOff, rpg.BestDist, rpg.LastProgress ? now - rpg.LastProgress : 0u,
+                IsMovingOnFoot(bot) ? "running" : "idle");
+        }
+        handler->PSendSysMessage("  last action: %s, %u ms ago; next decision in at most %u ms",
+            ai->GetLastActionName().c_str(), ai->GetLastActionMs() ? now - ai->GetLastActionMs() : 0u, ai->GetNextDelayMs());
+
+        Unit* target = ai->SelectCombatTarget();
+        Unit* victim = bot->GetVictim();
+        std::string attackers;
+        for (Unit* attacker : bot->getAttackers())
+            attackers += Trinity::StringFormat("{} (level {}) ", attacker->GetName(), attacker->GetLevel());
+        handler->PSendSysMessage("  combat target: %s, victim now: %s, attacked by: %s",
+            target ? target->GetName().c_str() : "none", victim ? victim->GetName().c_str() : "none", attackers.empty() ? "nobody" : attackers.c_str());
+
+        for (std::string const& line : ai->ExplainNearbyEnemies())
+            handler->PSendSysMessage("  nearby: %s", line.c_str());
+
+        // why an attacker is or is not a valid enemy for the bot (the checks of PlayerbotAI::IsValidEnemy, one by one)
+        for (Unit* attacker : bot->getAttackers())
+            handler->PSendSysMessage("    %s (entry %u, faction %u): valid enemy %d | alive %d, in world %d, same map %d, within 60 yd %d (%.1f), same phase %d, valid attack target %d, hostile %d, can see %d, non-attackable %d, immune to players %d, uninteractible %d",
+                attacker->GetName().c_str(), attacker->GetEntry(), attacker->GetFaction(), ai->IsValidEnemy(attacker), attacker->IsAlive(), attacker->IsInWorld(),
+                attacker->IsInMap(bot), bot->IsWithinDistInMap(attacker, 60.0f), bot->GetDistance(attacker), bot->InSamePhase(attacker),
+                bot->IsValidAttackTarget(attacker), bot->IsHostileTo(attacker), bot->CanSeeOrDetect(attacker), attacker->HasUnitFlag(UNIT_FLAG_NON_ATTACKABLE), attacker->HasUnitFlag(UNIT_FLAG_IMMUNE_TO_PC),
+                attacker->HasUnitFlag(UNIT_FLAG_UNINTERACTIBLE));
         return true;
     }
 
@@ -245,9 +328,14 @@ public:
         }
 
         GoalStore::Inspect info = GoalStore::Describe(bot->GetGUID());
+        AbstractLife::State const& abstract = ai->GetAbstract();
+        if (abstract.Status != RpgStatus::Idle)
+            handler->PSendSysMessage("%s lives as a far bot: %s (abstract, %u s left).", bot->GetName().c_str(),
+                AbstractLife::StatusName(abstract.Status), int32(abstract.UntilMs - GameTime::GetGameTimeMS()) > 0 ? (abstract.UntilMs - GameTime::GetGameTimeMS()) / 1000 : 0u);
         if (!info.Known)
         {
-            handler->PSendSysMessage("%s has no goal yet.", bot->GetName().c_str());
+            if (abstract.Status == RpgStatus::Idle)
+                handler->PSendSysMessage("%s has no goal yet.", bot->GetName().c_str());
             return true;
         }
 

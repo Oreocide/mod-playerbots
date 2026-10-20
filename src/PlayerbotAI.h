@@ -102,6 +102,10 @@ public:
     void IgnoreEnemy(ObjectGuid guid, uint32 forMs);
     /// This ready check was answered (Playerbots.Group.Events); cleared when the ready check is over
     bool& ReadyCheckAnswered() { return _readyCheckAnswered; }
+    /// What the engine did last and when (game time ms), and the wait before the next tick (.bot state)
+    std::string const& GetLastActionName() const { return _lastActionName; }
+    uint32 GetLastActionMs() const { return _lastActionMs; }
+    uint32 GetNextDelayMs() const { return _nextDelayMs; }
     /// Game time ms the group's current fight started as this bot saw it (the leader or the main tank in combat), 0 = no fight
     uint32& GroupFightStartMs() { return _groupFightStartMs; }
     /// Group combat positioning (Combat/GroupCombat.cpp): no repositioning before this game time ms, and the last flee steps
@@ -147,6 +151,8 @@ public:
     BotMoveState& GetMoveState() { return _moveState; }
     RotationRunner& GetRotation() { return _rotation; }
     AbstractLife::State const& GetAbstract() const { return _abstract; }
+    /// For `.bot state`: why an ownerless bot does or does not pull each hostile creature near it
+    std::vector<std::string> ExplainNearbyEnemies() const;
     /// The bot is about to be moved by its own doing (a flight, a portal, a hearthstone): not an interruption
     void NoteExpectedMove() { _expectedMove = true; }
     /// Changes every time the bot was moved by something other than itself (summon, GM teleport,
@@ -212,6 +218,8 @@ private:
     bool _expectedMove = false;
     Position _lastStand;
     uint32 _lastStandMap = 0;         // the map _lastStand is on: a rescue never crosses maps
+    uint32 _rescueWindowStart = 0;    // game time ms of the first rescue of the current window
+    uint32 _rescueCount = 0;          // rescues in that window
     Position _knownPos;
     uint32 _knownMap = 0;
     uint32 _knownInstance = 0;
@@ -222,6 +230,8 @@ private:
     std::vector<std::pair<ObjectGuid, uint32>> _ignoredEnemies;   // guid, until game time ms
     bool _readyCheckAnswered = false;
     uint32 _groupFightStartMs = 0;
+    std::string _lastActionName = "(none yet)";
+    uint32 _lastActionMs = 0;
     uint32 _positionCooldownUntil = 0;
     uint32 _awayFromMasterSince = 0;
     FleeHistory _fleeHistory;

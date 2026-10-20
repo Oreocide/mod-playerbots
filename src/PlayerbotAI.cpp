@@ -638,7 +638,12 @@ void PlayerbotAI::Update(uint32 diff)
     }
 
     GroupEvents::Poll(*this);
-    _engine.DoNextAction(*this, state);
+    UpdateContextStrategies();
+    if (char const* done = _engine.DoNextAction(*this, state))
+    {
+        _lastActionName = done;
+        _lastActionMs = GameTime::GetGameTimeMS();
+    }
     ScheduleNextTick(state);
 }
 
@@ -837,14 +842,29 @@ void PlayerbotAI::RememberStand()
     if (_bot->GetPositionZ() > _lastStand.GetPositionZ() - 8.0f && !_bot->IsFalling())
         return;
 
-    TC_LOG_INFO("server.playerbots.stuck", "Playerbots: fall rescue for {}: map {} at ({:.1f}, {:.1f}, {:.1f}) falling={}, back to ({:.1f}, {:.1f}, {:.1f})",
+    // The same ledge again and again (a path that keeps leading off it) is not a fall: after three rescues in two minutes the bot gives up its
+    // current job instead of being put back to walk into it again
+    uint32 now = GameTime::GetGameTimeMS();
+    if (!_rescueCount || now - _rescueWindowStart > 120000)
+    {
+        _rescueWindowStart = now;
+        _rescueCount = 0;
+    }
+    bool repeated = ++_rescueCount > 3;
+
+    TC_LOG_INFO("server.playerbots.stuck", "Playerbots: fall rescue for {}: map {} at ({:.1f}, {:.1f}, {:.1f}) falling={}, back to ({:.1f}, {:.1f}, {:.1f}); last action {}; {}",
         _bot->GetName(), _bot->GetMapId(), _bot->GetPositionX(), _bot->GetPositionY(), _bot->GetPositionZ(), _bot->IsFalling(),
-        _lastStand.GetPositionX(), _lastStand.GetPositionY(), _lastStand.GetPositionZ());
+        _lastStand.GetPositionX(), _lastStand.GetPositionY(), _lastStand.GetPositionZ(), GetLastActionName(), DescribeStuck(_bot, &_lastStand));
     _bot->GetMotionMaster()->Clear();
     _bot->StopMoving();
     _bot->NearTeleportTo(_lastStand.GetPositionX(), _lastStand.GetPositionY(), _lastStand.GetPositionZ(), _lastStand.GetOrientation());
     _bot->SetFallInformation(0, _lastStand.GetPositionZ());
     _bot->SetFall(false);
+    if (repeated)
+    {
+        _rescueCount = 0;
+        OnInterrupted();
+    }
 }
 
 // Random bots follow Blizzard's starter build as they level: it is applied again after a level or specialization
@@ -1080,22 +1100,61 @@ Unit* PlayerbotAI::FindCombatTarget() const
     return nullptr;
 }
 
+namespace
+{
+// Why an ownerless bot does not pull this creature by itself, nullptr if it would. The one rule behind FindNearbyEnemy and the
+// explanation `.bot state` prints, so the two cannot drift apart
+char const* NearbyEnemyRejection(Player* bot, Creature* creature)
+{
+    if (!creature->IsAlive())
+        return "dead";
+    if (creature->IsCritter())
+        return "critter";
+    if (creature->IsCivilian())
+        return "civilian";
+    if (creature->IsTrigger())
+        return "trigger";
+    if (creature->IsPet() || creature->IsTotem())
+        return "pet or totem";
+    if (creature->IsElite() || creature->isWorldBoss())
+        return "elite or boss";
+    if (creature->IsInEvadeMode())
+        return "evading";
+    if (!bot->IsValidAttackTarget(creature))
+        return "not a valid attack target";
+
+    uint8 level = creature->GetLevelForTarget(bot);
+    if (!(level + 3 >= bot->GetLevel() && level <= bot->GetLevel() + 3))
+        return "level too far from the bot's";
+
+    // Playerbots.Combat.GrindQuality: in sight, on the bot's own floor, not gray, and not somebody else's fight
+    if (sPlayerbotsConfig.CombatGrindQuality)
+    {
+        if (std::fabs(creature->GetPositionZ() - bot->GetPositionZ()) > 10.0f)
+            return "more than 10 yd above or below";
+        if (!bot->IsWithinLOSInMap(creature))
+            return "no line of sight";
+        if (Trinity::XP::GetColorCode(bot->GetLevel(), level) == XP_GRAY)
+            return "gray (too low a level to be worth it)";
+        // a rare is worth joining even when others got there first; an ordinary mob somebody else is fighting is theirs
+        if (creature->IsInCombat() && !creature->IsInCombatWith(bot))
+        {
+            CreatureClassifications rank = creature->GetCreatureTemplate()->Classification;
+            if (rank != CreatureClassifications::Rare && rank != CreatureClassifications::RareElite)
+                return "busy in somebody else's fight";
+        }
+    }
+    return nullptr;
+}
+}
+
 Unit* PlayerbotAI::FindNearbyEnemy() const
 {
     struct NearbyEnemyCheck
     {
         Player* Bot = nullptr;
 
-        bool operator()(Creature* creature) const
-        {
-            if (!creature->IsAlive() || creature->IsCritter() || creature->IsCivilian() || creature->IsTrigger()
-                || creature->IsPet() || creature->IsTotem() || creature->IsElite() || creature->isWorldBoss()
-                || creature->IsInEvadeMode() || !Bot->IsValidAttackTarget(creature))
-                return false;
-
-            uint8 level = creature->GetLevelForTarget(Bot);
-            return level + 3 >= Bot->GetLevel() && level <= Bot->GetLevel() + 3;
-        }
+        bool operator()(Creature* creature) const { return !NearbyEnemyRejection(Bot, creature); }
     };
 
     uint32 now = GameTime::GetGameTimeMS();
@@ -1115,6 +1174,69 @@ Unit* PlayerbotAI::FindNearbyEnemy() const
     // an empty search is not repeated every tick
     _nextEnemyScan = best ? 0 : now + sPlayerbotsConfig.ScanInterval;
     return best;
+}
+
+std::vector<std::string> PlayerbotAI::ExplainNearbyEnemies() const
+{
+    std::vector<std::string> lines;
+    if (!_master.IsEmpty() || GetMaster())
+        lines.push_back("has a master: it only fights what attacks it or what its master fights, it does not pull on its own");
+    else if (_bot->IsInCombat())
+        lines.push_back("in combat: it does not pick a new fight on its own");
+    else if (!_bot->getAttackers().empty())
+        lines.push_back("something is attacking it: that is its target");
+
+    struct HostileCheck
+    {
+        Player* Bot = nullptr;
+
+        bool operator()(Creature* creature) const
+        {
+            return creature->IsAlive() && !creature->IsTrigger() && !creature->IsCritter() && Bot->IsHostileTo(creature);
+        }
+    };
+
+    std::vector<Creature*> creatures;
+    HostileCheck check{ _bot };
+    Trinity::CreatureListSearcher searcher(_bot, creatures, check);
+    Cell::VisitGridObjects(_bot, searcher, 40.0f);
+    std::ranges::sort(creatures, [this](Creature* a, Creature* b) { return _bot->GetExactDistSq(a) < _bot->GetExactDistSq(b); });
+
+    for (size_t i = 0; i < creatures.size() && i < 6; ++i)
+    {
+        Creature* creature = creatures[i];
+        char const* why = NearbyEnemyRejection(_bot, creature);
+        lines.push_back(Trinity::StringFormat("{} (entry {}, level {}, {:.0f} yd, {}): {}", creature->GetName(), creature->GetEntry(),
+            creature->GetLevelForTarget(_bot), _bot->GetExactDist(creature), creature->IsInCombat() ? "in combat" : "not in combat",
+            why ? Trinity::StringFormat("not pulled, {}", why) : std::string("would be pulled")));
+        if (why && !_bot->IsValidAttackTarget(creature))
+        {
+            // the checks of WorldObject::IsValidAttackTarget one by one: the one that is not what it should be is the reason
+            lines.push_back(Trinity::StringFormat("    can see {}, same phase {}, hostile {}/{}, friendly {}/{}, bot immune to NPC {}, creature immune to PC {} NPC {}, "
+                "creature flags: non-attackable {} taxi {} not-attackable-1 {} non-attackable-2 {} uninteractible {}, unattackable state {}, faction {}, reaction {}",
+                _bot->CanSeeOrDetect(creature), _bot->InSamePhase(creature), _bot->IsHostileTo(creature), creature->IsHostileTo(_bot),
+                _bot->IsFriendlyTo(creature), creature->IsFriendlyTo(_bot), _bot->IsImmuneToNPC(), creature->IsImmuneToPC(), creature->IsImmuneToNPC(),
+                creature->HasUnitFlag(UNIT_FLAG_NON_ATTACKABLE), creature->HasUnitFlag(UNIT_FLAG_ON_TAXI), creature->HasUnitFlag(UNIT_FLAG_NOT_ATTACKABLE_1),
+                creature->HasUnitFlag(UNIT_FLAG_NON_ATTACKABLE_2), creature->IsUninteractible(), creature->HasUnitState(UNIT_STATE_UNATTACKABLE),
+                creature->GetFaction(), uint32(_bot->GetReactionTo(creature))));
+
+            // the steps of WorldObject::CanSeeOrDetect that read plain values: the one that does not match is why the bot cannot see it
+            SpawnTrackingStateData const* tracking = creature->GetSpawnTrackingStateDataForPlayer(_bot);
+            lines.push_back(Trinity::StringFormat("    visibility: creature in world {} map {} bot map {}, creature ghost {} gm {} invisibility {:#x} stealth {:#x}; "
+                "bot ghost-detect {} gm-detect {} invisibility-detect {:#x} own invisibility {:#x}; private-object ok {}/{}, spawn tracking {}, "
+                "creature same map {}",
+                creature->IsInWorld(), creature->GetMapId(), _bot->GetMapId(),
+                creature->m_serverSideVisibility.GetValue(SERVERSIDE_VISIBILITY_GHOST), creature->m_serverSideVisibility.GetValue(SERVERSIDE_VISIBILITY_GM),
+                creature->m_invisibility.GetFlags(), creature->m_stealth.GetFlags(),
+                _bot->m_serverSideVisibilityDetect.GetValue(SERVERSIDE_VISIBILITY_GHOST), _bot->m_serverSideVisibilityDetect.GetValue(SERVERSIDE_VISIBILITY_GM),
+                _bot->m_invisibilityDetect.GetFlags(), _bot->m_invisibility.GetFlags(),
+                creature->CheckPrivateObjectOwnerVisibility(_bot), _bot->CheckPrivateObjectOwnerVisibility(creature),
+                tracking ? (tracking->Visible ? "tracked, visible" : "tracked, HIDDEN") : "none", _bot->GetMap() == creature->GetMap()));
+        }
+    }
+    if (creatures.empty())
+        lines.push_back("no hostile creature within 40 yd");
+    return lines;
 }
 
 void PlayerbotAI::TellMaster(std::string_view text) const
