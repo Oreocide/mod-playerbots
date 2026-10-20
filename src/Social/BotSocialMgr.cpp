@@ -164,23 +164,33 @@ void BotSocialMgr::Update(uint32 diff)
     }
 }
 
-// Whether a random bot joins the party of `inviter`: only real players ask, and not while the bot is busy with
-// group content of its own
-bool BotSocialMgr::WantsParty(Player* bot, Player* inviter) const
+// Why a random bot does not join the party of `inviter` (nullptr = it does): only real players ask, and not while the bot is
+// busy with group content of its own. The text is what a person would answer.
+char const* BotSocialMgr::PartyDeclineReason(Player* bot, Player* inviter) const
 {
     if (!inviter || IsBot(inviter) || sPlayerbotsConfig.RandomGroupInvitations == 0)
-        return false;
+        return "";
 
-    if (!bot->IsAlive() || bot->InBattleground() || bot->InBattlegroundQueue() || bot->isUsingLfg() || bot->GetGroup())
-        return false;
+    if (!bot->IsAlive())
+        return "";
+
+    if (bot->GetGroup())
+        return "Sorry, I'm already in a group.";
+
+    if (bot->InBattleground() || bot->InBattlegroundQueue())
+        return "Sorry, I'm in a battleground or queued for one.";
+
+    if (bot->isUsingLfg())
+        return "Sorry, I'm in the dungeon finder.";
 
     if (sPlayerbotsConfig.RandomGroupInvitations == 1)
     {
         int32 difference = int32(bot->GetLevel()) - int32(inviter->GetLevel());
-        return std::abs(difference) <= int32(LevelRange);
+        if (std::abs(difference) > int32(LevelRange))
+            return difference > 0 ? "Sorry, I'm a bit too high level for your group." : "Sorry, I'm a bit too low level for your group.";
     }
 
-    return true;
+    return nullptr;
 }
 
 void BotSocialMgr::AnswerParty(Player* bot)
@@ -190,11 +200,16 @@ void BotSocialMgr::AnswerParty(Player* bot)
         return;
 
     Player* inviter = ObjectAccessor::FindConnectedPlayer(group->GetLeaderGUID());
-    bool accept = WantsParty(bot, inviter);
+    char const* declined = PartyDeclineReason(bot, inviter);
+    bool accept = !declined;
 
     WorldPackets::Party::PartyInviteResponse response{ WorldPacket(CMSG_PARTY_INVITE_RESPONSE) };
     response.Accept = accept;
     bot->GetSession()->HandlePartyInviteResponseOpcode(response);
+
+    // Playerbots.Random.SayWhyNot: a person says why they turn a group down (an empty reason is a bot that is not asked at all)
+    if (declined && *declined && sPlayerbotsConfig.RandomSayWhyNot && inviter)
+        QueueWhisper(bot->GetGUID(), inviter->GetGUID(), declined);
 
     if (accept && bot->GetGroup() && inviter)
         QueueWhisper(bot->GetGUID(), inviter->GetGUID(),

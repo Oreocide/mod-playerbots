@@ -123,6 +123,7 @@ struct Config
     uint32 RandomPlayerLoginDelay = 30;  // seconds after a real player logs in
     uint32 RandomPlayerLogoutDelay = 300; // seconds after the last real player logs out
     uint32 RandomGroupInvitations = 2;  // party invitations of players: 0 = decline, 1 = accept within 10 levels, 2 = always accept
+    bool RandomSayWhyNot = false;      // a random bot whispers why it turns down a party invitation
     bool RandomGuildInvitations = true; // join the guild of a player who invites the bot
     bool RandomWhisperReply = true;     // tell players who whisper a bot how to get it to listen
     uint32 RandomMaxGrids = 0;         // most distinct 533 yard grids the online random bots may stand in, 0 = no limit

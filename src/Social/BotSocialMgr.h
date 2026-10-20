@@ -66,7 +66,8 @@ private:
     void NoteInvite(ObjectGuid bot, InviteKind kind);
     void AnswerParty(Player* bot);
     void AnswerGuild(Player* bot);
-    bool WantsParty(Player* bot, Player* inviter) const;
+    /// nullptr = accepts, else why not, as a line the bot may say (Playerbots.Random.SayWhyNot)
+    char const* PartyDeclineReason(Player* bot, Player* inviter) const;
 
     struct Whisper
     {

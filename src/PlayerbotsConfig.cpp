@@ -128,6 +128,7 @@ void Config::Load()
     RandomPlayerLoginDelay = uint32(std::max(0, sConfigMgr->GetIntDefault("Playerbots.Random.PlayerLoginDelay", 30)));
     RandomPlayerLogoutDelay = uint32(std::max(0, sConfigMgr->GetIntDefault("Playerbots.Random.PlayerLogoutDelay", 300)));
     RandomGroupInvitations = uint32(std::clamp(sConfigMgr->GetIntDefault("Playerbots.Random.GroupInvitations", 2), 0, 2));
+    RandomSayWhyNot = sConfigMgr->GetBoolDefault("Playerbots.Random.SayWhyNot", false);
     RandomGuildInvitations = sConfigMgr->GetBoolDefault("Playerbots.Random.GuildInvitations", true);
     RandomWhisperReply = sConfigMgr->GetBoolDefault("Playerbots.Random.WhisperReply", true);
     RandomMaps = sConfigMgr->GetStringDefault("Playerbots.Random.Maps", "");
