@@ -49,8 +49,10 @@
 #include "ObjectAccessor.h"
 #include "Player.h"
 #include "PlayerbotAI.h"
+#include "Db/PlayerbotRepository.h"
 #include "PlayerbotMgr.h"
 #include "PlayerbotsConfig.h"
+#include "StringFormat.h"
 #include "QuestTravel.h"
 #include "Log.h"
 #include "Random.h"
@@ -974,12 +976,34 @@ public:
 };
 
 constexpr uint32 WarsongMap = 2106;
+constexpr uint32 TwinPeaksMap = 726;
 constexpr uint32 ArathiMap = 2107;
+constexpr uint32 GilneasMap = 761;
+constexpr uint32 EyeMap = 566;
 constexpr uint32 AllianceFlag = 227741;
 constexpr uint32 HordeFlag = 227740;
 constexpr uint32 HordeFlagAura = 23333;
 constexpr uint32 AllianceFlagAura = 23335;
+constexpr uint32 EyeFlag = 208977;
+constexpr uint32 EyeFlagAura = 34976;
 constexpr uint32 ArathiNodes[] = { 227420, 227522, 227536, 227538, 227544 };
+constexpr uint32 GilneasNodes[] = { 228050, 228052, 228053 };
+constexpr uint32 EyeTowers[] = { 184080, 184081, 184082, 184083 };
+
+bool IsFlagMap(uint32 map)
+{
+    return map == WarsongMap || map == TwinPeaksMap;
+}
+
+bool IsCaptureMap(uint32 map)
+{
+    return map == ArathiMap || map == GilneasMap;
+}
+
+bool IsObjectiveMap(uint32 map)
+{
+    return IsFlagMap(map) || IsCaptureMap(map) || map == EyeMap;
+}
 
 GameObject* FindGo(Player* bot, uint32 entry)
 {
@@ -990,9 +1014,19 @@ GameObject* FindGo(Player* bot, uint32 entry)
     return found.empty() ? nullptr : found.front();
 }
 
-bool CarriesFlag(Player const* bot)
+bool CarriesWarsongFlag(Player const* bot)
 {
     return bot->HasAura(HordeFlagAura) || bot->HasAura(AllianceFlagAura);
+}
+
+bool CarriesEyeFlag(Player const* bot)
+{
+    return bot->HasAura(EyeFlagAura);
+}
+
+bool CarriesFlag(Player const* bot)
+{
+    return CarriesWarsongFlag(bot) || CarriesEyeFlag(bot);
 }
 
 Player* FriendlyCarrier(Player* bot)
@@ -1006,6 +1040,19 @@ Player* FriendlyCarrier(Player* bot)
             return other;
     }
     return nullptr;
+}
+
+bool PathTo(Player* bot, Position const& where, float arrive)
+{
+    MoveResult result = MoveAlongMesh(bot, where, arrive);
+    if (result == MoveResult::NoPath)
+    {
+        TC_LOG_DEBUG("server.playerbots", "Playerbots: {} has no path in battleground map {} and does not run straight", bot->GetName(), bot->GetMapId());
+        sPlayerbotRepository->Remember(bot->GetGUID(), "badspot", std::to_string(bot->GetMapId()),
+            Trinity::StringFormat("{:.0f} {:.0f}", where.GetPositionX(), where.GetPositionY()));
+        return false;
+    }
+    return true;
 }
 
 void SayBg(Player* bot, std::string const& line)
@@ -1055,15 +1102,15 @@ bool PlayWarsong(Player* bot, PlayerbotAI& ai)
     GameObject* enemyFlag = FindGo(bot, alliance ? HordeFlag : AllianceFlag);
     if (!ours || !enemyFlag)
     {
-        TC_LOG_DEBUG("server.playerbots", "Playerbots: {} cannot see a Warsong flag yet", bot->GetName());
+        TC_LOG_DEBUG("server.playerbots", "Playerbots: {} cannot see a flag yet on map {}", bot->GetName(), bot->GetMapId());
         return false;
     }
 
-    if (CarriesFlag(bot))
+    if (CarriesWarsongFlag(bot))
     {
         SayBg(bot, "flag out");
         NearEnemy(bot, ai, ours->GetPosition());
-        MoveAlongMesh(bot, ours->GetPosition(), 5.0f);
+        PathTo(bot, ours->GetPosition(), 5.0f);
         return true;
     }
 
@@ -1081,7 +1128,7 @@ bool PlayWarsong(Player* bot, PlayerbotAI& ai)
         if (closer < 2)
         {
             NearEnemy(bot, ai, carrier->GetPosition());
-            MoveAlongMesh(bot, carrier->GetPosition(), 8.0f);
+            PathTo(bot, carrier->GetPosition(), 8.0f);
             return true;
         }
     }
@@ -1101,7 +1148,7 @@ bool PlayWarsong(Player* bot, PlayerbotAI& ai)
         if (carrier)
         {
             NearEnemy(bot, ai, carrier->GetPosition());
-            MoveAlongMesh(bot, carrier->GetPosition(), 5.0f);
+            PathTo(bot, carrier->GetPosition(), 5.0f);
             return true;
         }
     }
@@ -1109,19 +1156,19 @@ bool PlayWarsong(Player* bot, PlayerbotAI& ai)
     if (enemyFlag->GetFlagState() == FlagState::InBase)
         SayBg(bot, "inc their flag");
     NearEnemy(bot, ai, enemyFlag->GetPosition());
-    MoveAlongMesh(bot, enemyFlag->GetPosition(), 5.0f);
+    PathTo(bot, enemyFlag->GetPosition(), 5.0f);
     return true;
 }
 
-bool PlayArathi(Player* bot, PlayerbotAI& ai)
+bool PlayCapturePoints(Player* bot, PlayerbotAI& ai, uint32 const* nodes, size_t nodeCount, uint32 defendAt)
 {
     GameObject* nearest = nullptr;
     float nearestDist = 0.0f;
     uint32 held = 0;
     GameObject* ours = nullptr;
-    for (uint32 entry : ArathiNodes)
+    for (size_t i = 0; i < nodeCount; ++i)
     {
-        GameObject* node = FindGo(bot, entry);
+        GameObject* node = FindGo(bot, nodes[i]);
         if (!node)
             continue;
         // Capture points are not control zones, so ownership is "can we still assault this".
@@ -1140,11 +1187,11 @@ bool PlayArathi(Player* bot, PlayerbotAI& ai)
         }
     }
 
-    if (held >= 3 && ours && (bot->GetGUID().GetCounter() % 8) == 0)
+    if (held >= defendAt && ours && (bot->GetGUID().GetCounter() % 8) == 0)
     {
         SayBg(bot, "defending");
         NearEnemy(bot, ai, ours->GetPosition());
-        MoveAlongMesh(bot, ours->GetPosition(), 8.0f);
+        PathTo(bot, ours->GetPosition(), 8.0f);
         return true;
     }
 
@@ -1159,7 +1206,78 @@ bool PlayArathi(Player* bot, PlayerbotAI& ai)
         return true;
     }
 
-    MoveAlongMesh(bot, nearest->GetPosition(), 5.0f);
+    PathTo(bot, nearest->GetPosition(), 5.0f);
+    return true;
+}
+
+bool PlayEye(Player* bot, PlayerbotAI& ai)
+{
+    GameObject* flag = FindGo(bot, EyeFlag);
+    GameObject* ours = nullptr;
+    GameObject* target = nullptr;
+    float targetDist = 0.0f;
+    for (uint32 entry : EyeTowers)
+    {
+        GameObject* tower = FindGo(bot, entry);
+        if (!tower)
+            continue;
+        TeamId owner = tower->GetControllingTeam();
+        if (owner == bot->GetTeamId())
+            ours = tower;
+        else
+        {
+            float dist = bot->GetExactDist2d(tower);
+            if (!target || dist < targetDist)
+            {
+                target = tower;
+                targetDist = dist;
+            }
+        }
+    }
+
+    if (CarriesEyeFlag(bot))
+    {
+        SayBg(bot, "flag out");
+        if (ours)
+        {
+            NearEnemy(bot, ai, ours->GetPosition());
+            PathTo(bot, ours->GetPosition(), 5.0f);
+            return true;
+        }
+        return false;
+    }
+
+    if (Player* carrier = FriendlyCarrier(bot))
+    {
+        NearEnemy(bot, ai, carrier->GetPosition());
+        PathTo(bot, carrier->GetPosition(), 8.0f);
+        return true;
+    }
+
+    for (MapReference const& ref : bot->GetMap()->GetPlayers())
+    {
+        Player* other = ref.GetSource();
+        if (!other || !other->IsAlive() || !other->HasAura(EyeFlagAura) || other->GetTeamId() == bot->GetTeamId())
+            continue;
+        NearEnemy(bot, ai, other->GetPosition());
+        PathTo(bot, other->GetPosition(), 5.0f);
+        return true;
+    }
+
+    if (flag && flag->GetFlagState() == FlagState::InBase)
+    {
+        SayBg(bot, "inc mid");
+        NearEnemy(bot, ai, flag->GetPosition());
+        PathTo(bot, flag->GetPosition(), 5.0f);
+        return true;
+    }
+
+    if (!target)
+        return false;
+
+    SayBg(bot, "need help");
+    NearEnemy(bot, ai, target->GetPosition());
+    PathTo(bot, target->GetPosition(), 5.0f);
     return true;
 }
 
@@ -1169,7 +1287,7 @@ bool PlayObjective(Player* bot, PlayerbotAI& ai)
         return false;
 
     Battleground* bg = bot->GetBattleground();
-    if (!bg || (bot->GetMapId() != WarsongMap && bot->GetMapId() != ArathiMap))
+    if (!bg || !IsObjectiveMap(bot->GetMapId()))
         return false;
 
     if (bg->GetStatus() != STATUS_IN_PROGRESS)
@@ -1194,14 +1312,18 @@ bool PlayObjective(Player* bot, PlayerbotAI& ai)
             }
         if (follow)
         {
-            MoveAlongMesh(bot, follow->GetPosition(), 10.0f);
+            PathTo(bot, follow->GetPosition(), 10.0f);
             return true;
         }
     }
 
-    if (bot->GetMapId() == WarsongMap)
+    if (IsFlagMap(bot->GetMapId()))
         return PlayWarsong(bot, ai);
-    return PlayArathi(bot, ai);
+    if (bot->GetMapId() == EyeMap)
+        return PlayEye(bot, ai);
+    if (bot->GetMapId() == GilneasMap)
+        return PlayCapturePoints(bot, ai, GilneasNodes, 3, 2);
+    return PlayCapturePoints(bot, ai, ArathiNodes, 5, 3);
 }
 
 class PvpAction : public Action
