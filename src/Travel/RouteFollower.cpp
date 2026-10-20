@@ -16,6 +16,7 @@
  */
 
 #include "RouteFollower.h"
+#include "StuckDiagnosis.h"
 #include "GameTime.h"
 #include "Item.h"
 #include "MotionMaster.h"
@@ -188,7 +189,12 @@ RouteStatus RouteFollower::WalkTo(PlayerbotAI& ai, Position3 const& target, floa
     }
 
     if (now - _lastProgress >= sPlayerbotsConfig.RpgStuckTime)
+    {
+        TC_LOG_INFO("server.playerbots.stuck", "Playerbots: route of {} made no headway for {} ms: map {} at ({:.1f}, {:.1f}, {:.1f}), goal ({:.1f}, {:.1f}, {:.1f}), {:.0f} yd to go; {}",
+            bot->GetName(), now - _lastProgress, bot->GetMapId(), bot->GetPositionX(), bot->GetPositionY(), bot->GetPositionZ(),
+            dest.GetPositionX(), dest.GetPositionY(), dest.GetPositionZ(), distance, DescribeStuck(bot, nullptr));
         return RouteStatus::Failed;
+    }
 
     if (bot->IsInCombat() || bot->IsInFlight())
         return RouteStatus::Running;

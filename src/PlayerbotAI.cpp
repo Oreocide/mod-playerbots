@@ -16,6 +16,7 @@
  */
 
 #include "PlayerbotAI.h"
+#include "Travel/StuckDiagnosis.h"
 #include "BotSession.h"
 #include "Goal/GoalStore.h"
 #include "Strategies/QuestTravel.h"
@@ -386,8 +387,9 @@ bool PlayerbotAI::SnapToGround(bool notify, float lift)
     }
 
     if (std::fabs(_bot->GetPositionZ() - stand) > 1.0f)
-        TC_LOG_INFO("server.playerbots.stuck", "Playerbots: ground snap for {}: map {} at ({:.1f}, {:.1f}), z {:.1f} -> {:.1f} (dz {:.1f})",
-            _bot->GetName(), _bot->GetMapId(), x, y, _bot->GetPositionZ(), stand, stand - _bot->GetPositionZ());
+        TC_LOG_INFO("server.playerbots.stuck", "Playerbots: ground snap for {}: map {} at ({:.1f}, {:.1f}), z {:.1f} -> {:.1f} (dz {:.1f}); {}",
+            _bot->GetName(), _bot->GetMapId(), x, y, _bot->GetPositionZ(), stand, stand - _bot->GetPositionZ(),
+            DescribeStuck(_bot, _hasLastStand && _lastStandMap == _bot->GetMapId() ? &_lastStand : nullptr));
 
     if (notify)
         _bot->NearTeleportTo(x, y, stand, _bot->GetOrientation());
@@ -713,12 +715,21 @@ void PlayerbotAI::RememberStand()
         && std::fabs(_bot->GetPositionZ() - stand) < 3.0f)
     {
         _lastStand = _bot->GetPosition();
+        _lastStandMap = _bot->GetMapId();
         _hasLastStand = true;
         return;
     }
 
     if (!_hasLastStand)
         return;
+
+    // A fall happens next to where the bot stood. A bot that was moved since (another map, a hop, a hotspot, the other side of the continent) must
+    // not be pulled back to a stale stand: that put bots on the wrong continent, or in Stormwind, when they only stood lower than where they used to
+    if (_lastStandMap != _bot->GetMapId() || _lastStand.GetExactDist2d(_bot->GetPosition()) > 60.0f)
+    {
+        _hasLastStand = false;
+        return;
+    }
 
     if (_bot->GetPositionZ() > _lastStand.GetPositionZ() - 8.0f && !_bot->IsFalling())
         return;

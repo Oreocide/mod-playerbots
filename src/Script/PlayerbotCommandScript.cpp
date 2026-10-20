@@ -374,6 +374,10 @@ public:
     {
         MeshMoveStats mesh = GetMeshMoveStats();
         handler->PSendSysMessage("Mesh mover: %u paths launched, %u targets with no mesh path since start.", mesh.Launched, mesh.NoPath);
+        if (mesh.Checked)
+            handler->PSendSysMessage("Paths checked (Move.LogBlockedPaths): %u; %u blocked at eye height, %u with a cliff segment, %u blocked at knee height only.", mesh.Checked, mesh.Blocked, mesh.Steep, mesh.KneeOnly);
+        if (mesh.Repaired || mesh.Rejected)
+            handler->PSendSysMessage("Move.AvoidBlockedPaths: %u paths got a detour, %u refused for a cliff segment.", mesh.Repaired, mesh.Rejected);
 
         if (!sTravelMgr->IsBuilt())
         {

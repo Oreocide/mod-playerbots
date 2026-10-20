@@ -36,6 +36,9 @@ void Config::Load()
     DynamicTickIdleMinMs = uint32(std::clamp(sConfigMgr->GetIntDefault("Playerbots.DynamicTick.IdleMinMs", 1000), 100, 30000));
     DynamicTickIdleMaxMs = uint32(std::clamp(sConfigMgr->GetIntDefault("Playerbots.DynamicTick.IdleMaxMs", 2500), 100, 30000));
     DynamicTickDeadMs = uint32(std::clamp(sConfigMgr->GetIntDefault("Playerbots.DynamicTick.DeadMs", 2000), 100, 30000));
+    MoveFallbacks = sConfigMgr->GetBoolDefault("Playerbots.Move.Fallbacks", false);
+    MoveAvoidBlockedPaths = sConfigMgr->GetBoolDefault("Playerbots.Move.AvoidBlockedPaths", false);
+    MoveLogBlockedPaths = sConfigMgr->GetBoolDefault("Playerbots.Move.LogBlockedPaths", false);
     GearEquipUpgrades = sConfigMgr->GetBoolDefault("Playerbots.Gear.EquipUpgrades", false);
     LootRoll = sConfigMgr->GetBoolDefault("Playerbots.Loot.Roll", false);
     CastSupervisorEnable = sConfigMgr->GetBoolDefault("Playerbots.CastSupervisor.Enable", false);

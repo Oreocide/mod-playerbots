@@ -185,6 +185,7 @@ private:
     RotationRunner _rotation;
     bool _expectedMove = false;
     Position _lastStand;
+    uint32 _lastStandMap = 0;         // the map _lastStand is on: a rescue never crosses maps
     Position _knownPos;
     uint32 _knownMap = 0;
     uint32 _knownInstance = 0;

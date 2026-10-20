@@ -1,4 +1,5 @@
 #include "MoveToward.h"
+#include "MoveGeometry.h"
 #include "CollectionMgr.h"
 #include "DB2Stores.h"
 #include "GridDefines.h"
@@ -17,6 +18,8 @@
 #include "PlayerbotMgr.h"
 #include "PlayerbotsConfig.h"
 #include "Spawn/SpawnPolicy.h"
+#include "PathRepair.h"
+#include "StuckDiagnosis.h"
 #include "Random.h"
 #include "SpellAuras.h"
 #include "SpellInfo.h"
@@ -27,6 +30,7 @@
 #include <cmath>
 #include <mutex>
 #include <unordered_map>
+#include <vector>
 
 namespace Playerbots
 {
@@ -82,6 +86,13 @@ bool IsMovingOnFoot(Player const* bot)
     return bot && bot->movespline && !bot->movespline->Finalized();
 }
 
+bool PathIsWalkable(uint32 type)
+{
+    if (type & (PATHFIND_NOPATH | PATHFIND_SHORTCUT | PATHFIND_NOT_USING_PATH))
+        return false;
+    return (type & (PATHFIND_NORMAL | PATHFIND_INCOMPLETE)) != 0;
+}
+
 namespace
 {
 uint32 PickMountSpell(Player* bot)
@@ -115,13 +126,6 @@ float MountDistance(Player* bot)
     return std::max(10.5f, reach);
 }
 
-bool PathIsWalkable(uint32 type)
-{
-    if (type & (PATHFIND_NOPATH | PATHFIND_SHORTCUT | PATHFIND_NOT_USING_PATH))
-        return false;
-    return (type & (PATHFIND_NORMAL | PATHFIND_INCOMPLETE)) != 0;
-}
-
 // Bots move only along the navmesh (user rule 2026-10-15): no VMAP-only steps and no raw-point splines, which walked
 // bots through walls and left them on the wrong floor.
 constexpr float SegmentMinProgress = 5.0f;   // a path that ends short of the target must get the bot at least this much closer
@@ -138,6 +142,13 @@ std::unordered_map<ObjectGuid, uint32> sMountRetryAt;
 
 std::atomic<uint32> sMeshLaunched{ 0 };
 std::atomic<uint32> sMeshNoPath{ 0 };
+std::atomic<uint32> sPathsChecked{ 0 };
+std::atomic<uint32> sPathsBlocked{ 0 };
+std::atomic<uint32> sPathsKneeOnly{ 0 };
+std::atomic<uint32> sPathsSteep{ 0 };
+std::atomic<uint32> sPathsRepaired{ 0 };
+std::atomic<uint32> sPathsRejected{ 0 };
+std::atomic<uint32> sNextBlockedLog{ 0 };   // game time ms: at most one blocked-path line a second
 
 bool LaunchWalkPath(Player* bot, Movement::PointsArray const& points)
 {
@@ -149,6 +160,97 @@ bool LaunchWalkPath(Player* bot, Movement::PointsArray const& points)
     init.MovebyPath(points);
     init.Launch();
     return true;
+}
+
+constexpr float StoneMinProgress = 8.0f;        // a stepping stone must get the bot at least this much closer to the destination
+constexpr float StoneSnapXY = 3.0f;             // the stone's mesh point may be this far from the sampled point (2D)
+constexpr float StoneSnapZ = 3.0f;              // and this far from the bot's own height: a stone on another floor is no step
+constexpr float HeightMergeYards = 1.5f;
+
+// Playerbots.Move.Fallbacks, called when the direct path failed. First the same x,y at the other floors found there (a bridge above
+// a road, a city on two levels): the first height with a complete mesh path that ends where it should wins. Then a walk in steps:
+// points on cones toward the destination, snapped to the mesh at the bot's own height, the nearest one to the destination that
+// gets the bot closer by StoneMinProgress. Each step is a mesh path, and the distance to the destination only shrinks, so the
+// repeated calls cannot oscillate. Only for a bot on a loaded grid: a far bot is not walked around
+enum class FallbackResult : uint8
+{
+    None,
+    Moving,
+    Arrived     // the bot already stands at the destination's x,y on another floor than the given Z
+};
+
+FallbackResult TryFallbackStep(Player* bot, Position const& dest, float arriveYards)
+{
+    Map* map = bot->GetMap();
+    if (!map || !map->IsGridLoaded(dest.GetPositionX(), dest.GetPositionY()) || !map->IsGridLoaded(bot->GetPositionX(), bot->GetPositionY()))
+        return FallbackResult::None;
+
+    float x = dest.GetPositionX();
+    float y = dest.GetPositionY();
+    float z = dest.GetPositionZ();
+
+    std::vector<float> heights = { z };
+    for (float from : { z + 2.0f, z + 30.0f, z - 4.0f })
+    {
+        float h = map->GetHeight(bot->GetPhaseShift(), x, y, from, true, 50.0f);
+        if (h > INVALID_HEIGHT)
+            heights.push_back(h);
+    }
+
+    for (float height : DistinctHeights(heights, HeightMergeYards))
+    {
+        if (std::fabs(height - z) < 0.01f)
+            continue;       // the given height is what just failed
+
+        // already there, one floor off the Z the caller gave
+        if (bot->GetExactDist2d(x, y) <= arriveYards && std::fabs(bot->GetPositionZ() - height) <= 2.5f)
+            return FallbackResult::Arrived;
+
+        PathGenerator path(bot);
+        if (!path.CalculatePath(x, y, height, false) || !(path.GetPathType() & PATHFIND_NORMAL) || (path.GetPathType() & PATHFIND_INCOMPLETE))
+            continue;
+
+        G3D::Vector3 const& end = path.GetActualEndPosition();
+        if (std::hypot(end.x - x, end.y - y) > 3.0f || std::fabs(end.z - height) > 2.5f)
+            continue;
+
+        if (path.GetPath().size() >= 2 && path.GetPathLength() > 1.0f && LaunchWalkPath(bot, path.GetPath()))
+        {
+            ++sMeshLaunched;
+            return FallbackResult::Moving;
+        }
+    }
+
+    std::vector<Point2> stones = ConeStones(bot->GetPositionX(), bot->GetPositionY(), x, y, { 25.0f, 50.0f }, 0.6f, 2);
+    // nearest to the destination first among those that qualify; try the next one when the mesh has no point there
+    for (int tries = 0; tries < 4; ++tries)
+    {
+        int pick = BestStone(stones, bot->GetPositionX(), bot->GetPositionY(), x, y, StoneMinProgress);
+        if (pick < 0)
+            return FallbackResult::None;
+
+        Point2 stone = stones[pick];
+        stones.erase(stones.begin() + pick);
+
+        PathGenerator path(bot);
+        if (!path.CalculatePath(stone.X, stone.Y, bot->GetPositionZ(), false) || !PathIsWalkable(path.GetPathType()) || path.GetPath().size() < 2)
+            continue;
+
+        G3D::Vector3 const& end = path.GetActualEndPosition();
+        if (std::hypot(end.x - stone.X, end.y - stone.Y) > StoneSnapXY || std::fabs(end.z - bot->GetPositionZ()) > StoneSnapZ)
+            continue;
+
+        // the snapped point, not the sample, has to be the closer one
+        if (std::hypot(x - end.x, y - end.y) > std::hypot(x - bot->GetPositionX(), y - bot->GetPositionY()) - StoneMinProgress)
+            continue;
+
+        if (LaunchWalkPath(bot, path.GetPath()))
+        {
+            ++sMeshLaunched;
+            return FallbackResult::Moving;
+        }
+    }
+    return FallbackResult::None;
 }
 
 MoveResult NoMeshPath(Player* bot, Position const& dest, uint32 type)
@@ -210,7 +312,7 @@ void UpdateMountForTravel(Player* bot, float distanceToDest, float mountAtOverri
     bot->CastSpell(bot, spell);
 }
 
-MoveResult MoveAlongMesh(Player* bot, Position const& dest, float arriveYards)
+MoveResult MoveAlongMesh(Player* bot, Position const& dest, float arriveYards, float standoff)
 {
     if (!bot)
         return MoveResult::NoPath;
@@ -254,6 +356,18 @@ MoveResult MoveAlongMesh(Player* bot, Position const& dest, float arriveYards)
                 bot->CancelMountAura();
             return MoveResult::Arrived;
         }
+        if (sPlayerbotsConfig.MoveFallbacks)
+        {
+            FallbackResult fallback = TryFallbackStep(bot, dest, arriveYards);
+            if (fallback == FallbackResult::Moving)
+                return MoveResult::Moving;
+            if (fallback == FallbackResult::Arrived)
+            {
+                if (bot->IsMounted())
+                    bot->CancelMountAura();
+                return MoveResult::Arrived;
+            }
+        }
         return NoMeshPath(bot, dest, type);
     };
 
@@ -269,20 +383,83 @@ MoveResult MoveAlongMesh(Player* bot, Position const& dest, float arriveYards)
     if (!reaches && dist - endGap < SegmentMinProgress)
         return noPathOrNear();
 
-    if (!LaunchWalkPath(bot, points))
+    // a stand-off ends the walk short of the target. Only a path that reaches the target is cut (a segment of a long route is not):
+    // nothing left to walk means the bot already stands where it should
+    Movement::PointsArray const* launch = &points;
+    Movement::PointsArray standoffPath;
+    if (standoff > 0.0f && reaches)
+    {
+        standoffPath = TrimPathToStandoff(points, dest.GetPositionX(), dest.GetPositionY(), standoff);
+        if (standoffPath.size() < 2)
+        {
+            if (bot->IsMounted())
+                bot->CancelMountAura();
+            return MoveResult::Arrived;
+        }
+        launch = &standoffPath;
+    }
+
+    // Playerbots.Move.AvoidBlockedPaths: a path with a cliff segment (a mesh link no walker can take) is refused, one that runs through
+    // geometry the mesh does not know gets a detour through other mesh points where one is found
+    Movement::PointsArray repaired;
+    Movement::PointsArray hopLeg;
+    if (sPlayerbotsConfig.MoveAvoidBlockedPaths)
+    {
+        Movement::PointsArray const& walk = *launch;
+        bool cliff = false;
+        for (size_t i = 0; i + 1 < walk.size() && i < 60 && !cliff; ++i)
+        {
+            float run = std::hypot(walk[i + 1].x - walk[i].x, walk[i + 1].y - walk[i].y);
+            float rise = std::fabs(walk[i + 1].z - walk[i].z);
+            cliff = rise > SteepMinDz && rise > run * SteepSlope;
+        }
+        if (cliff)
+        {
+            ++sPathsRejected;
+            return noPathOrNear();
+        }
+
+        repaired = walk;
+        if (RepairBlockedPath(bot, repaired))
+        {
+            ++sPathsRepaired;
+            launch = &repaired;
+        }
+    }
+
+    // Playerbots.Move.LogBlockedPaths: measures how often the mesh leads through geometry it does not know (fences, doors, a Hero's Call board)
+    if (sPlayerbotsConfig.MoveLogBlockedPaths)
+    {
+        ++sPathsChecked;
+        PathVerdict verdict = JudgePath(bot, *launch);
+        if (verdict.Result == PathVerdict::Kind::KneeOnly)
+            ++sPathsKneeOnly;
+        else if (verdict.Result == PathVerdict::Kind::EyeBlock || verdict.Result == PathVerdict::Kind::Steep)
+        {
+            ++(verdict.Result == PathVerdict::Kind::Steep ? sPathsSteep : sPathsBlocked);
+            uint32 now = GameTime::GetGameTimeMS();
+            if (int32(now - sNextBlockedLog.load(std::memory_order_relaxed)) >= 0)
+            {
+                sNextBlockedLog.store(now + 1000, std::memory_order_relaxed);
+                TC_LOG_INFO("server.playerbots.stuck", "Playerbots: path of {} crosses geometry: map {}, {}; {}", bot->GetName(), bot->GetMapId(), verdict.Text, DescribeStuck(bot, nullptr));
+            }
+        }
+    }
+
+    if (!LaunchWalkPath(bot, *launch))
         return noPathOrNear();
 
     ++sMeshLaunched;
     return MoveResult::Moving;
 }
 
-bool MoveToward(Player* bot, Position const& dest, float arriveYards)
+bool MoveToward(Player* bot, Position const& dest, float arriveYards, float standoff)
 {
-    return MoveAlongMesh(bot, dest, arriveYards) == MoveResult::Moving;
+    return MoveAlongMesh(bot, dest, arriveYards, standoff) == MoveResult::Moving;
 }
 
 MeshMoveStats GetMeshMoveStats()
 {
-    return { sMeshLaunched.load(), sMeshNoPath.load() };
+    return { sMeshLaunched.load(), sMeshNoPath.load(), sPathsChecked.load(), sPathsBlocked.load(), sPathsKneeOnly.load(), sPathsSteep.load(), sPathsRepaired.load(), sPathsRejected.load() };
 }
 }

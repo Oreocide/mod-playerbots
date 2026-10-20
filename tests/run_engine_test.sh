@@ -32,5 +32,8 @@ g++ $FLAGS "$HERE/tick_policy_test.cpp" -o "$OUT/playerbots_tick_policy_test"
 g++ $FLAGS "$HERE/context_strategies_test.cpp" -o "$OUT/playerbots_context_strategies_test"
 "$OUT/playerbots_context_strategies_test"
 
+g++ $FLAGS "$HERE/move_geometry_test.cpp" -o "$OUT/playerbots_move_geometry_test"
+"$OUT/playerbots_move_geometry_test"
+
 g++ $FLAGS "$HERE/loot_roll_rules_test.cpp" -o "$OUT/playerbots_loot_roll_rules_test"
 "$OUT/playerbots_loot_roll_rules_test"

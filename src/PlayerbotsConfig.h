@@ -34,6 +34,9 @@ struct Config
     uint32 DynamicTickIdleMinMs = 1000;    // alive and not fighting: a random delay in this range
     uint32 DynamicTickIdleMaxMs = 2500;
     uint32 DynamicTickDeadMs = 2000;
+    bool MoveFallbacks = false;        // a destination with no mesh path is tried at other heights, then through cone-sampled stepping stones
+    bool MoveAvoidBlockedPaths = false; // detour around geometry the mesh does not know, refuse cliff segments
+    bool MoveLogBlockedPaths = false;  // log mesh paths that cross VMAP or game object geometry (measurement only, changes nothing)
     bool GearEquipUpgrades = false;    // an item in the bags that beats what the bot wears is put on (won rolls, traded gifts)
     bool LootRoll = false;             // bots answer group loot rolls: need an upgrade, greed what sells, pass what they cannot use
     bool CastSupervisorEnable = false; // wait for a cast that is preparing; cancel it when the target died or a heal is wasted
