@@ -147,6 +147,7 @@ private:
     Unit* FindNearbyEnemy() const;
     void MaintainGear(uint32 diff);
     void MaintainTalents();
+    void MaintainBagUpgrades(uint32 diff);
     void DetectInterruption();
     /// Applies the strategies the context table wants for where the bot is now (dungeon, raid, battleground...), only the difference
     void UpdateContextStrategies();
@@ -176,6 +177,7 @@ private:
     bool _idle = false;
     bool _grounded = false;
     uint32 _gearTimer = 5000;
+    uint32 _upgradeTimer = 8000;
     uint32 _talentLevel = 0;         // level and specialization the starter build was applied for
     uint32 _talentSpec = 0;
     RpgInfo _rpg;

@@ -519,6 +519,7 @@ void PlayerbotAI::Update(uint32 diff)
         MaintainGear(elapsed);
     }
     MaintainTalents();
+    MaintainBagUpgrades(elapsed);
 
     _spellBook.Refresh(_bot);
 
@@ -746,6 +747,25 @@ void PlayerbotAI::MaintainTalents()
     _talentLevel = _bot->GetLevel();
     _talentSpec = spec;
     BotTalents::ApplyStarterBuild(_bot);
+}
+
+// A won roll or a traded gift sits in the bags until someone puts it on
+void PlayerbotAI::MaintainBagUpgrades(uint32 diff)
+{
+    if (!sPlayerbotsConfig.GearEquipUpgrades || !sGearFactory->IsBuilt())
+        return;
+
+    if (_upgradeTimer > diff)
+    {
+        _upgradeTimer -= diff;
+        return;
+    }
+    _upgradeTimer = 20000;
+
+    if (!_bot->IsAlive() || _bot->IsInCombat() || _bot->HasUnitState(UNIT_STATE_CASTING) || _bot->IsMounted())
+        return;
+
+    sGearFactory->EquipBagUpgrade(_bot);
 }
 
 // Random (ownerless) bots dress themselves and re-gear while they level

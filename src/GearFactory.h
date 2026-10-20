@@ -67,6 +67,11 @@ public:
         float Margin = 0.0f;
     };
     UpgradeInfo GetUpgradeInfo(Player const* bot, ItemTemplate const* proto) const;
+
+    /// Puts one usable upgrade that sits in the bags (a won roll, a traded item) on, replacing the worst piece worn in its slots.
+    /// Returns how many items it equipped (0 or 1: the bag positions change after a swap)
+    uint32 EquipBagUpgrade(Player* bot) const;
+
     /// Caps for one Equip() call. QualityCap 0 uses Playerbots.RandomGear.MaxQuality. ItemLevelCap 0 means no cap.
     struct GearOptions
     {

@@ -556,6 +556,62 @@ GearFactory::UpgradeInfo GearFactory::GetUpgradeInfo(Player const* bot, ItemTemp
     return info;
 }
 
+uint32 GearFactory::EquipBagUpgrade(Player* bot) const
+{
+    if (!_built || !bot || !bot->IsInWorld() || !bot->IsAlive())
+        return 0;
+
+    Item* best = nullptr;
+    uint8 bestSlot = 0;
+    float bestMargin = 0.f;
+    bot->ForEachItem(ItemSearchLocation::Inventory, [&](Item* item)
+    {
+        ItemTemplate const* proto = item->GetTemplate();
+        if (proto->GetInventoryType() == INVTYPE_NON_EQUIP || proto->GetClass() == ITEM_CLASS_CONTAINER || proto->GetClass() == ITEM_CLASS_QUIVER)
+            return ItemSearchCallbackResult::Continue;
+
+        UpgradeInfo info = GetUpgradeInfo(bot, proto);
+        if (!info.Usable || info.Margin <= bestMargin)
+            return ItemSearchCallbackResult::Continue;
+
+        // the slot whose worn piece is worth the least, an empty one first
+        std::vector<uint8> slots;
+        for (Group const& group : _groups)
+            if (std::ranges::find(group.InventoryTypes, uint8(proto->GetInventoryType())) != group.InventoryTypes.end())
+                slots.insert(slots.end(), group.Slots.begin(), group.Slots.end());
+
+        std::ranges::sort(slots, {}, [&](uint8 slot)
+        {
+            Item const* worn = bot->GetItemByPos(INVENTORY_SLOT_BAG_0, slot);
+            return worn ? std::max(ScoreItem(bot, worn->GetTemplate(), true), 0.f) : -1.f;
+        });
+
+        for (uint8 slot : slots)
+        {
+            uint16 dest = 0;
+            if (bot->CanEquipItem(slot, dest, item, true) == EQUIP_ERR_OK)
+            {
+                best = item;
+                bestSlot = slot;
+                bestMargin = info.Margin;
+                break;
+            }
+        }
+        return ItemSearchCallbackResult::Continue;
+    });
+
+    if (!best)
+        return 0;
+
+    uint16 dest = 0;
+    if (bot->CanEquipItem(bestSlot, dest, best, true) != EQUIP_ERR_OK)
+        return 0;
+
+    TC_LOG_DEBUG("server.playerbots", "Playerbots: {} wears item {} from its bags (margin {:.1f})", bot->GetName(), best->GetEntry(), bestMargin);
+    bot->SwapItem(best->GetPos(), dest);
+    return 1;
+}
+
 uint32 GearFactory::Equip(Player* bot, GearOptions const& options) const
 {
     if (!_built || !bot || !bot->IsInWorld())
