@@ -17,6 +17,7 @@
 
 #include "GenericStrategies.h"
 #include "Combat/GroupCombat.h"
+#include "Dungeon/EncounterKit.h"
 #include "Economy/PotionRules.h"
 #include "Combat/Positioning.h"
 #include "Travel/BotMover.h"
@@ -1513,6 +1514,7 @@ void RegisterGenericAi()
     AiRegistry& r = sPlayerbotsAi;
 
     GroupCombat::Register(r);
+    Dungeon::RegisterAll(r);
     r.AddValue("combat target", [](std::string const&) -> std::unique_ptr<ValueBase> { return std::make_unique<CombatTargetValue>(); });
     r.AddValue("heal target", [](std::string const&) -> std::unique_ptr<ValueBase> { return std::make_unique<HealTargetValue>(); });
     r.AddValue("nearest corpse", [](std::string const&) -> std::unique_ptr<ValueBase> { return std::make_unique<NearestCorpseValue>(); });

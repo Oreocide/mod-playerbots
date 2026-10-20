@@ -49,6 +49,7 @@
 #include "Social/BotSocialMgr.h"
 #include "StringFormat.h"
 #include "Combat/GroupCombat.h"
+#include "Dungeon/EncounterKit.h"
 #include "Engine/CastPolicy.h"
 #include "Engine/TickPolicy.h"
 #include "Travel/BotMover.h"
@@ -967,6 +968,10 @@ Unit* PlayerbotAI::SelectCombatTarget()
 
 Unit* PlayerbotAI::FindCombatTarget() const
 {
+    // a boss fight that has its own idea of who to hit (Playerbots.Dungeon.Enable)
+    if (Unit* scripted = Dungeon::EncounterTarget(const_cast<PlayerbotAI&>(*this)))
+        return scripted;
+
     // Playerbots.Combat.RoleTargeting: in a group the fight is chosen by role (an explicit "attack" command still comes first)
     if (sPlayerbotsConfig.CombatRoleTargeting)
     {
