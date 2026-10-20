@@ -16,6 +16,7 @@
  */
 
 #include "PlayerbotAI.h"
+#include "Strategies/CustomStrategy.h"
 #include "Travel/PlayerJump.h"
 #include "Travel/StuckDiagnosis.h"
 #include "BotSession.h"
@@ -112,6 +113,14 @@ void PlayerbotAI::SaveState() const
     sPlayerbotRepository->SetValue(_botGuid, "strategies", _engine.GetStrategyList());
 }
 
+std::unique_ptr<Strategy> PlayerbotAI::MakeStrategy(std::string_view name) const
+{
+    if (name.starts_with(CustomStrategies::Prefix))
+        return CustomStrategies::Create(_botGuid, name);
+
+    return CreateStrategy(name);
+}
+
 void PlayerbotAI::RestoreState()
 {
     if (_master.IsEmpty())
@@ -127,7 +136,7 @@ void PlayerbotAI::RestoreState()
         while (!name.empty() && name.front() == ' ')
             name.remove_prefix(1);
 
-        if (std::unique_ptr<Strategy> strategy = CreateStrategy(name))
+        if (std::unique_ptr<Strategy> strategy = MakeStrategy(name))
             strategies.push_back(std::move(strategy));
     }
 

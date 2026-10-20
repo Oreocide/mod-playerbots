@@ -438,7 +438,7 @@ bool Reset(PlayerbotAI& ai, std::string const&)
 bool Strategies(PlayerbotAI& ai, std::string const& param, uint8 states, char const* label)
 {
     std::string reply = param.empty() ? "strategies: " + ai.GetEngine().GetStrategyList(states)
-        : ai.GetEngine().ApplyStrategyString(param, CreateStrategy, states);
+        : ai.GetEngine().ApplyStrategyString(ToLower(param), [&ai](std::string_view name) { return ai.MakeStrategy(name); }, states);
     ai.TellMaster(Trinity::StringFormat("{} {}", label, reply));
     return true;
 }
@@ -600,6 +600,7 @@ void RegisterChatCommands()
     AddCommand("spec", "spec [name]: my specializations, or switch to one.", SpecCommand, false, true);
     AddCommand("hire", "Join your account for good, for gold (Playerbots.Hire.Enable).", HireCommand, false, true);
     AddCommand("maintenance", "Free repair and food and drink (Playerbots.Command.Maintenance).", MaintenanceCommand, false, true);
+    AddCommand("cs", "cs [name [trigger > action > ...]]: custom strategies, then co +custom::name.", CustomStrategyCommand, true, true);
     AddCommand("equip", "equip <item links>: wear items from my bags.", EquipItems, false, true);
     AddCommand("unequip", "unequip <item links>: take items off.", UnequipItems, false, true);
     AddCommand("use", "use <item link>: use an item (on your target if it needs one).", UseItems, false, true);

@@ -23,6 +23,7 @@
 #include "Player.h"
 #include "PlayerbotsConfig.h"
 #include "PlayerbotAI.h"
+#include "Strategies/CustomStrategy.h"
 #include "StringFormat.h"
 #include "Social/BotHire.h"
 #include "Talents/BotTalents.h"
@@ -55,6 +56,18 @@ std::string Join(std::vector<std::string> const& items)
     for (std::string const& item : items)
         out += (out.empty() ? "" : ", ") + item;
     return out;
+}
+
+/// The strategy is active: swap in the edited version
+void Refresh(PlayerbotAI& ai, std::string const& name)
+{
+    std::string full = std::string(CustomStrategies::Prefix) + name;
+    if (!ai.GetEngine().HasStrategy(full))
+        return;
+
+    ai.GetEngine().RemoveStrategy(full);
+    if (std::unique_ptr<Strategy> strategy = ai.MakeStrategy(full))
+        ai.GetEngine().AddStrategy(std::move(strategy));
 }
 }
 
@@ -151,6 +164,102 @@ bool MaintenanceCommand(PlayerbotAI& ai, std::string const&)
     bot->DurabilityRepairAll(false, 0.0f, false);
     sGearFactory->StockFood(bot);
     ai.TellMaster("Repaired, food and drink stocked.");
+    return true;
+}
+
+bool CustomStrategyCommand(PlayerbotAI& ai, std::string const& param)
+{
+    ObjectGuid bot = ai.GetBot()->GetGUID();
+    std::string_view text = Trim(param);
+
+    if (text.empty())
+    {
+        std::vector<std::string> names = CustomStrategies::Names(bot);
+        ai.TellMaster(names.empty() ? "No custom strategies. cs <name> <trigger> > <action> writes one."
+            : Trinity::StringFormat("Custom strategies: {}. Switch one on with co +custom::<name>.", Join(names)));
+        return true;
+    }
+
+    size_t cut = text.find(' ');
+    std::string name = ToLower(text.substr(0, cut));
+    std::string_view rest = cut == std::string_view::npos ? std::string_view() : Trim(text.substr(cut + 1));
+    if (!IsValidCustomName(name))
+    {
+        ai.TellMaster("A name is letters, digits, - and _ (up to 24).");
+        return true;
+    }
+
+    std::vector<CustomLine> lines = CustomStrategies::Load(bot, name);
+
+    if (rest.empty())
+    {
+        if (lines.empty())
+            ai.TellMaster(Trinity::StringFormat("There is no custom strategy {}.", name));
+        else
+            for (size_t i = 0; i < lines.size(); ++i)
+                ai.TellMaster(Trinity::StringFormat("{}: {}", i + 1, FormatCustomLine(lines[i])));
+        return true;
+    }
+
+    std::string lowered = ToLower(rest);
+    if (lowered == "delete" || lowered == "clear")
+    {
+        std::string full = std::string(CustomStrategies::Prefix) + name;
+        ai.GetEngine().RemoveStrategy(full);
+        CustomStrategies::Delete(bot, name);
+        ai.TellMaster(Trinity::StringFormat("Deleted {}.", name));
+        return true;
+    }
+
+    if (lowered.starts_with("remove "))
+    {
+        size_t index = size_t(std::strtoul(lowered.c_str() + 7, nullptr, 10));
+        if (index < 1 || index > lines.size())
+        {
+            ai.TellMaster("No such line.");
+            return true;
+        }
+
+        lines.erase(lines.begin() + (index - 1));
+        if (lines.empty())
+            CustomStrategies::Delete(bot, name);
+        else
+            CustomStrategies::Save(bot, name, lines);
+        Refresh(ai, name);
+        ai.TellMaster(Trinity::StringFormat("Removed line {}.", index));
+        return true;
+    }
+
+    std::optional<CustomLine> line = ParseCustomLine(rest);
+    if (!line)
+    {
+        ai.TellMaster("cs <name> <trigger> > <action> [> <action>...]");
+        return true;
+    }
+
+    // a name the engine does not know would only be reported once and then never run
+    if (!sPlayerbotsAi.CreateTrigger(line->Trigger))
+    {
+        ai.TellMaster(Trinity::StringFormat("I don't know the trigger \"{}\".", line->Trigger));
+        return true;
+    }
+
+    for (std::string const& action : line->Actions)
+        if (!sPlayerbotsAi.CreateAction(action))
+        {
+            ai.TellMaster(Trinity::StringFormat("I don't know the action \"{}\".", action));
+            return true;
+        }
+
+    lines.push_back(std::move(*line));
+    if (!CustomStrategies::Save(bot, name, lines))
+    {
+        ai.TellMaster("That is too long to keep, remove a line first.");
+        return true;
+    }
+
+    Refresh(ai, name);
+    ai.TellMaster(Trinity::StringFormat("{} has {} {}. co +custom::{} switches it on.", name, lines.size(), lines.size() == 1 ? "line" : "lines", name));
     return true;
 }
 }

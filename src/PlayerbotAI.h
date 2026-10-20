@@ -110,6 +110,8 @@ public:
     uint32& AwayFromMasterSince() { return _awayFromMasterSince; }
     BotSpellBook& GetSpellBook() { return _spellBook; }
     Engine& GetEngine() { return _engine; }
+    /// A strategy by name for this bot: the registered ones, and the "custom::<name>" the master wrote for it (CustomStrategies)
+    std::unique_ptr<Strategy> MakeStrategy(std::string_view name) const;
     uint8 GetFormationIndex() const { return _formationIndex; }
 
     /// Current enemy the bot should fight, nullptr if none

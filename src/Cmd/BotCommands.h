@@ -31,6 +31,8 @@ bool SpecCommand(PlayerbotAI& ai, std::string const& param);
 bool MaintenanceCommand(PlayerbotAI& ai, std::string const& param);
 /// hire: a random bot in the party joins the master's account for gold (Playerbots.Hire.Enable)
 bool HireCommand(PlayerbotAI& ai, std::string const& param);
+/// cs [name [trigger > action ...]]: custom strategies, see CustomStrategies
+bool CustomStrategyCommand(PlayerbotAI& ai, std::string const& param);
 }
 
 #endif
