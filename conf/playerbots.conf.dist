@@ -37,6 +37,117 @@ Playerbots.UpdateInterval = 250
 Playerbots.Command.Prefix = ""
 
 #
+#    Playerbots.Command.Maintenance
+#        Description: The owner command "maintenance" repairs the bot's gear for free and stocks food and drink. Off, because
+#                     it is a free service for a player's own character.
+#        Default:     0
+
+Playerbots.Command.Maintenance = 0
+
+#
+#    Playerbots.Guild.Enable
+#        Description: Random bots found guilds of their own and fill them: every Guild.Interval one new guild (a leader and four
+#                     bots of the same team) or up to 3 new members of a bot guild with room, until Guild.Percent of the eligible
+#                     random bots (alone, alive, level Guild.MinLevel or more, not in an instance) are in one. A guild led by a random
+#                     bot is a bot guild, guilds of players are never touched.
+#        Default:     0
+
+Playerbots.Guild.Enable = 0
+
+#
+#    Playerbots.Guild.Percent
+#        Description: Share of the eligible random bots (0-100) that should be in a bot guild.
+#        Default:     25
+
+Playerbots.Guild.Percent = 25
+
+#
+#    Playerbots.Guild.MinLevel
+#        Description: Lowest level of a bot that founds or joins a guild.
+#        Default:     10
+
+Playerbots.Guild.MinLevel = 10
+
+#
+#    Playerbots.Guild.MaxMembers
+#        Description: A bot guild with this many members takes no more bots.
+#        Default:     30
+
+Playerbots.Guild.MaxMembers = 30
+
+#
+#    Playerbots.Guild.Interval
+#        Description: Milliseconds between two runs (at least 60000).
+#        Default:     600000
+
+Playerbots.Guild.Interval = 600000
+
+#
+#    Playerbots.Random.SayWhyNot
+#        Description: A random bot that turns down a party invitation whispers the reason (already in a group, in a battleground
+#                     or the dungeon finder, level too far from the inviter) instead of ignoring it silently.
+#        Default:     0
+
+Playerbots.Random.SayWhyNot = 0
+
+#
+#    Playerbots.Hire.Enable
+#        Description: The command "hire" (whispered to a random bot in your party): the bot's character moves to your account for
+#                     good, for gold from you. The bot must not be higher level than you, not lead a guild, and your account must have
+#                     room. Account-wide mounts and appearances stay with the bot's old Battle.net account.
+#        Default:     0
+
+Playerbots.Hire.Enable = 0
+
+#
+#    Playerbots.Hire.CostPercent
+#        Description: Price as a percentage of AzerothCore's (1 + level / 10) x 5000 x level copper (about 210 gold at level 60).
+#        Default:     100
+
+Playerbots.Hire.CostPercent = 100
+
+#
+#    Playerbots.Move.HopLowObstacles
+#        Description: A mesh path segment on level ground that line of sight finds blocked at knee height but clear at waist height (a
+#                     curb, a low fence, a crate, a doodad) is jumped: the bot walks to it, jumps to the mesh point on the far side
+#                     and plans on from there. Stairs and slopes (the segment rises) are not obstacles. Taller things are gone
+#                     round by Move.AvoidBlockedPaths. A mounted bot or one in water does not hop. The jump is a spline arc like the
+#                     ambient hops, the server has no jump physics.
+#        Default:     0
+
+Playerbots.Move.HopLowObstacles = 0
+
+#
+#    Playerbots.Move.AvoidBlockedPaths
+#        Description: The mesh does not know game objects (a Hero's Call board, doodads) or small models. A path segment that line of
+#                     sight says is blocked at eye height gets a detour: points 3, 6 or 10 yards beside it that the mesh reaches
+#                     and leaves again by clear paths. A path with a cliff segment (over 8 yards of rise at a slope above 1.5) is
+#                     refused like a path that does not exist. Every point is still a mesh point. See ".bot travel info".
+#        Default:     0
+
+Playerbots.Move.AvoidBlockedPaths = 0
+
+#
+#    Playerbots.Move.LogBlockedPaths
+#        Description: Every mesh path a bot starts is tested segment by segment for line of sight (VMAP models and game objects,
+#                     at knee and eye height). A blocked path is logged to Server.log (category server.playerbots.stuck, at most one
+#                     line a second) and counted in ".bot travel info". Measurement only: the bot walks the path as before. Costs
+#                     a few ray casts per path, so leave it off unless looking for bots that clip through fences and boards.
+#        Default:     0
+
+Playerbots.Move.LogBlockedPaths = 0
+
+#
+#    Playerbots.Mounts.Variety
+#        Description: Random bots own several ground mounts that grow with the level (1 at level 20, 2 at 40, 3 at 60, 4 at 80, 6 at
+#                     90) instead of one vendor mount of their race, and ride a random one of them each time. The race's own vendor
+#                     mount is always among them, the rest come from the client data (quest, vendor, profession and, from level 60,
+#                     drop mounts that the bot's race, class and faction may use). Only ground mounts: bots do not fly.
+#        Default:     0
+
+Playerbots.Mounts.Variety = 0
+
+#
 #    Playerbots.Command.Separator
 #        Description: Splits one message into several commands, "@tank follow ; @dps attack". Empty = off.
 #        Default:     ";"
@@ -246,14 +357,28 @@ Playerbots.PerfMon.Enable = 0
 Playerbots.PerfMon.MemorySeconds = 30
 
 #
-#    Logger.network.opcode
-#        Description: Bots have no client, so the core logs "Prevented sending ... to non existent socket" at ERROR level for every
-#                     packet it would send to a bot (thousands per second with many bots). This line turns that category off. It is a
-#                     logger setting of the core, not a Playerbots key, and it also hides the other messages of that category
-#                     (packets refused for real players). Remove it to see them again.
-#        Default:     0 - (Disabled) in this file, the core default is the root logger level
+#    Playerbots.PerfMon.ReportSeconds / Playerbots.PerfMon.SlowTickMs
+#        Description: Only used while Playerbots.PerfMon.Enable = 1. Every ReportSeconds a "tick" line gives the p50, p95, p99 and max of the world
+#                     tick (the diff of World::Update, so a stall shows as one long tick), how many ticks were at least SlowTickMs and 1 s / 5 s long,
+#                     and a "gates" line with how often each switch below fired. A tick of SlowTickMs or more also writes a "slowtick" line (at most one
+#                     per second) with what the host was doing: free memory, free swap, tmpfs (Shmem), swap-in/out and major page faults since the last
+#                     slow tick, io and memory pressure (PSI), and which world maps finished their part of the update last. A world thread that waits
+#                     for the disk because RAM ran out shows up there as high swap-in/major faults and pressure. ReportSeconds 0 = off.
+#        Default:     60 / 150
 
-Logger.network.opcode=0,Server
+Playerbots.PerfMon.ReportSeconds = 60
+Playerbots.PerfMon.SlowTickMs = 150
+
+#
+#    Playerbots.PerfMon.GridCensusSeconds
+#        Description: Only used while Playerbots.PerfMon.Enable = 1. Once a second the loaded grids are compared with the second before; every new
+#                     grid is attributed to a route hop landing there (hop_landing) or to the players in or next to it: in_/next_to_ human,
+#                     bot_teleporting, bot_active, bot_dormant, or none. Every GridCensusSeconds a "gridwin" line sums that up (a "gridnone" line names
+#                     the first grids nobody stood next to). This is what tells a bot's own placement, a hop and the core's visibility-range load
+#                     apart. 0 = off.
+#        Default:     60
+
+Playerbots.PerfMon.GridCensusSeconds = 60
 
 #
 #    Playerbots.LoginTimeout
@@ -561,6 +686,36 @@ Playerbots.SleepElevators = 0
 Playerbots.FarBotHeightNoGridLoad = 0
 
 #
+#    Playerbots.FarBotNoVisibilityLoad
+#        Description: When a player moves, arrives or logs in, the core loads every grid within its visibility range (Map::LoadGridsInRange, from the
+#                     relocation notify) and tells it about everything there. For a bot that is the only player around, that is a grid load nobody
+#                     asked for. With this on, the module drops the pending notify of a bot that is far from every player (no master, group,
+#                     queue, instance or battleground, no player within the visibility range plus 60 yards), after each world tick, so the next map
+#                     update does not load grids around it. The bot's own grid is still loaded (it stands in it). A player who comes near is
+#                     notified by their own relocation. See the "notify_cleared" gate counter. Default: 0
+#
+#    Playerbots.Travel.DeferHops
+#        Description: A bot nobody can see jumps along its route one stretch at a time and each jump is a real teleport that creates the grid it lands
+#                     in and keeps it loaded while the bot is there (plus the grid unload delay after). With this on, a stretch in the middle of a
+#                     route is not placed unless its target grid is already loaded or a player is near it; the bot stays where it is and the
+#                     route's clock runs on. The last stretch is always placed. A player who comes near a bot with skipped stretches finds it where
+#                     the route had got to (it is placed there first, then walks on). See the "hop_*" gate counters. Default: 0
+
+Playerbots.FarBotNoVisibilityLoad = 0
+
+#
+#    Playerbots.NoVisibilityGridLoad
+#        Description: Core option for headless sessions (WorldSession::SetHeadlessLoadsVisibilityGrids). A bot has no client to show the world to, yet the core loads
+#                     every grid within visibility range of any player that relocates, bots included (Map::LoadGridsInRange from the relocation notify, up to
+#                     the 3x3 grids around it, ~34 MB each). With this on a bot session does not trigger that load: the grid the bot stands in is still
+#                     loaded, and a real player's own relocation still loads everything that player can see. Unlike FarBotNoVisibilityLoad this covers every
+#                     bot at every moment (just logged in, active, thawing), not only bots already far from everyone. Needs the core option, set when the
+#                     bot session is created, so it applies to bots that log in after the server started with the setting. Default: 0
+
+Playerbots.NoVisibilityGridLoad = 0
+Playerbots.Travel.DeferHops = 0
+
+#
 #    Playerbots.Random.CreateUpTo
 #        Description: Keep creating random characters in the background, one every Random.CreateDelay and whatever is online, until this many exist.
 #                     The new characters stay offline until Random.Count asks for them. 0 = only create to reach Random.Count (and, with OnlyWithPlayers,
@@ -707,6 +862,15 @@ Playerbots.Rpg.PoiStayTime = 300000
 Playerbots.Rpg.StuckTime = 90000
 
 #
+#    Playerbots.Rpg.NpcStandOff
+#        Description: A bot walking up to an NPC (city errands, flight masters, quest givers and turn-ins, talk-to
+#                     steps) stops a random 1 to 6 yards short of it instead of on its spot (capped half a yard
+#                     inside the NPC's interaction range). 0 = walk to the NPC's coordinates as before.
+#        Default:     0
+
+Playerbots.Rpg.NpcStandOff = 0
+
+#
 #    Playerbots.Rpg.HopChance
 #        Description: Chance per second that a bot walking on foot hops once (a player's bunny hop; only on level
 #                     navmesh ground, outdoors, not mounted or swimming). 0 = never.
@@ -830,3 +994,305 @@ Playerbots.Population.ReviveMax = 300
 Playerbots.Remote.Port = 0
 Playerbots.Remote.BindIp = 127.0.0.1
 Playerbots.Remote.Token =
+
+#
+#    Playerbots.DynamicTick.Enable
+#    Playerbots.DynamicTick.CombatMs
+#    Playerbots.DynamicTick.IdleMinMs
+#    Playerbots.DynamicTick.IdleMaxMs
+#    Playerbots.DynamicTick.DeadMs
+#        Description: Instead of one fixed Playerbots.UpdateInterval, a bot decides more often while it fights
+#                     (CombatMs), at a random pace between IdleMinMs and IdleMaxMs while it is alive and not
+#                     fighting, and slowly while dead. An action can ask for its own delay (a global cooldown, a
+#                     move), and a chat command or the start of a fight wakes the bot at once. Only bots near a
+#                     player run these ticks, so this changes the cost per active bot, not the number of bots.
+#        Default:     0 (off), 300, 1000, 2500, 2000
+
+Playerbots.DynamicTick.Enable = 0
+Playerbots.DynamicTick.CombatMs = 300
+Playerbots.DynamicTick.IdleMinMs = 1000
+Playerbots.DynamicTick.IdleMaxMs = 2500
+Playerbots.DynamicTick.DeadMs = 2000
+
+#
+#    Playerbots.CastSupervisor.Enable
+#        Description: While a bot is casting it waits for the cast instead of choosing a new action. It cancels the
+#                     cast when the target died (except a resurrection) or when a direct heal would land on a target
+#                     that is at full health, and turns to face the target.
+#        Default:     0
+
+Playerbots.CastSupervisor.Enable = 0
+
+#
+#    Playerbots.Move.Fallbacks
+#        Description: When the navmesh has no path to a destination, try the same spot at the other floors found
+#                     there (bridges, multi-level cities), and then walk toward it in steps over points the mesh
+#                     reaches, before the bot gives the destination up. Every step is still a navmesh path.
+#        Default:     0
+
+Playerbots.Move.Fallbacks = 0
+
+#
+#    Playerbots.Combat.RoleTargeting
+#        Description: Bots in a group choose fights by role. A tank takes what nobody tanks (first what hits a
+#                     healer), damage dealers and healers follow the main tank's target, then what hits a healer,
+#                     the most wounded, the nearest. The main tank is the first living tank (the leader first); a
+#                     player's role is the dungeon finder role, else the specialization.
+#        Default:     0
+#
+#    Playerbots.Combat.ThreatLimit
+#        Description: Percent. A bot that is not tanking stops attacking while its threat on the enemy is at or above
+#                     this share of the main tank's. 0 = off.
+#        Default:     0
+#
+#    Playerbots.Combat.WaitForAttackMs
+#        Description: In a group that a player leads, bots hold their attacks for this long after a fight starts so
+#                     the leader can pull and the tank pick up threat. A bot that is being attacked still defends
+#                     itself. 0 = off.
+#        Default:     0
+#
+#    Playerbots.Combat.Positioning
+#        Description: Melee damage dealers step behind a standing enemy that is not hitting them, ranged bots that
+#                     stand on top of each other spread around the enemy, and a tank steps to the far side of the
+#                     enemy so it turns away from the group. Every step is a navmesh path.
+#        Default:     0
+#
+#    Playerbots.Combat.Kite
+#        Description: A ranged damage dealer or healer that a melee enemy is hitting steps away from it (at most
+#                     once every few seconds, never back toward where it just came from).
+#        Default:     0
+#
+#    Playerbots.Combat.GrindQuality
+#        Description: Random bots only start fights with creatures they can see, on their own floor (not across a
+#                     cliff or a bridge), that are not gray to them and that nobody else is already fighting.
+#        Default:     0
+#
+#    Playerbots.Follow.WalkFirst
+#    Playerbots.Follow.WalkSeconds
+#    Playerbots.Follow.WalkMaxYards
+#        Description: A bot that is too far from its master to follow walks to the master (if the master stands on
+#                     the ground, not on a transport, not flying or falling) for WalkSeconds, and is teleported
+#                     only if it has not caught up by then or is farther than WalkMaxYards.
+#        Default:     0, 45, 300
+
+Playerbots.Combat.RoleTargeting = 0
+Playerbots.Combat.ThreatLimit = 0
+Playerbots.Combat.WaitForAttackMs = 0
+Playerbots.Combat.Positioning = 0
+Playerbots.Combat.Kite = 0
+Playerbots.Combat.GrindQuality = 0
+Playerbots.Follow.WalkFirst = 0
+Playerbots.Follow.WalkSeconds = 45
+Playerbots.Follow.WalkMaxYards = 300
+
+#
+#    Playerbots.Follow.MirrorMaster
+#        Description: A bot that follows its master mounts when the master rides (outdoors, with the mount it has)
+#                     and gets off when the master does and it is near, and takes the same flight path when its master
+#                     flies and it still stands at the flight master.
+#        Default:     0
+
+Playerbots.Follow.MirrorMaster = 0
+
+#
+#    Playerbots.Combat.StuckSeconds
+#        Description: A bot that has been in a fight for this many seconds without the enemy losing hit points or
+#                     changing (an enemy it cannot reach, one that evades, one in the water) lets go of it and does
+#                     not pick it again for ten minutes. 0 = off.
+#        Default:     0
+
+Playerbots.Combat.StuckSeconds = 0
+
+#
+#    Playerbots.Combat.UsePotions
+#        Description: In a fight a bot drinks a health potion or uses a healthstone below 35% health and a mana
+#                     potion below 20% mana, with the best one it carries (found by what the item does, not by id).
+#        Default:     0
+#
+#    Playerbots.Death.SpiritHealer
+#        Description: A bot without an owner that dies outside a dungeon or battleground releases its spirit, appears
+#                     at the graveyard (the game moves it, it never runs as a ghost) and has the spirit healer there
+#                     resurrect it. Without a spirit healer in reach it is resurrected on the spot as before.
+#        Default:     0
+
+Playerbots.Combat.UsePotions = 0
+Playerbots.Death.SpiritHealer = 0
+
+#
+#    Playerbots.Loot.Roll
+#        Description: Bots answer group loot rolls a second or a few after they start, the way a player plays them:
+#                     Need on gear they can use that beats what they wear in that slot (same item score as the
+#                     random gear), Greed on other gear they can use and on anything that sells, Pass on gear they
+#                     cannot use. Works for bots a player owns and for random bots in a group.
+#        Default:     0
+
+Playerbots.Loot.Roll = 0
+
+#
+#    Playerbots.Group.Events
+#        Description: Bots answer a ready check a second or three later (ready unless hurt or out of mana), open and
+#                     accept a trade that their master or a player of their group starts (they offer nothing, so it
+#                     works for gifts), close a stranger's trade after 30 seconds, and accept a quest their master or
+#                     group shares (anyone else's is declined).
+#        Default:     0
+
+Playerbots.Group.Events = 0
+
+#
+#    Playerbots.Gear.EquipUpgrades
+#        Description: Every 20 seconds out of combat a bot puts on one item from its bags that it can use and that
+#                     scores higher than what it wears in that slot (same score as the random gear). This is how a
+#                     won roll or a gift from the master gets worn.
+#        Default:     0
+
+Playerbots.Gear.EquipUpgrades = 0
+
+#
+#    Playerbots.Gear.RerollVersion
+#        Description: A one-off new gear roll for random bots (the worn gear is stripped and rolled again with Gear.Variety). Each bot
+#                     does it once, the first time it is active (near a player) after the number was raised above the one stored for it
+#                     (playerbots_db_store key gearv). Raise the number to roll everybody again, 0 = off. Bots of a player are
+#                     never touched.
+#        Default:     0
+
+Playerbots.Gear.RerollVersion = 0
+
+#
+#    Playerbots.Gear.Variety
+#        Description: Gear for random bots and the "autogear" command: instead of the single best scoring item of a slot, a random
+#                     item among those scoring within this percentage (0-50) of the best. With 0 every bot of a class and level
+#                     wears the same shoulders. Around 10 to 15 gives different pieces of nearly the same strength; a high value
+#                     lets clearly weaker items in. Only the choice changes, not what the bot may wear.
+#        Default:     0
+
+Playerbots.Gear.Variety = 0
+
+#
+#    Playerbots.Gear.HunterPets
+#        Description: A random hunter of level 10 or more that has no hunter pet gets a tamed beast of its own level
+#                     (one of 13 families), summoned beside it. The rotation then calls, feeds and revives it.
+#        Default:     0
+
+Playerbots.Gear.HunterPets = 0
+
+#
+#    Playerbots.Gear.StockPotions
+#        Description: Random bots of level 8 and above carry a few health potions (and mana potions for mana users)
+#                     of the best tier their level can use. Only uncrafted, unbound, unrestricted potions count.
+#                     Needs Playerbots.Combat.UsePotions for the bots to drink them.
+#        Default:     0
+
+Playerbots.Gear.StockPotions = 0
+
+#
+#    Playerbots.Rotation.Utility
+#        Description: Lets the rotation scripts use the group utility targets and the "utility" list: dispels and
+#                     purges, resurrection and battle resurrection, group buffs (Fortitude, Arcane Intellect, Mark of
+#                     the Wild), Innervate, Misdirection, Tranquilizing Shot. Off, bots cast only their own buffs, heals
+#                     and damage as before.
+#        Default:     0
+
+Playerbots.Rotation.Utility = 0
+
+#
+#    Playerbots.Abstract.Enable
+#        Description: Far (frozen) bots roll the same status weights as near bots (Playerbots.Rpg.Weight.*, Duration.*) and
+#                     live the status as a timer: no pathing, no grids, no NPC. DoQuest and GoGrind pay a trickle of XP
+#                     when they end (needs Playerbots.Quest.AbstractXp); the rest is only time. Travel, gathering and
+#                     crafting are not rolled. A far bot still stores a goal row tied to a game event, hour or weekday
+#                     first (Playerbots.Goal.Enable). Off, far bots roll the whole goal table as before.
+#        Default:     0
+#
+#    Playerbots.Abstract.GrindXpPercent
+#        Description: A finished abstract GoGrind pays this percent of the XP of an abstract quest (0 to 100)
+#        Default:     50
+
+Playerbots.Abstract.Enable = 0
+Playerbots.Abstract.GrindXpPercent = 50
+
+#
+#    Playerbots.Air.Enable
+#        Description: Air legs: a bot on Playerbots.Air.TestBots with master riding (skill 375) and a flying mount of its account
+#                     flies between towns of Eastern Kingdoms and Kalimdor on a straight line at a height checked against the
+#                     terrain and buildings under it, taking off and landing on navmesh points. The one place a bot leaves the
+#                     navmesh. Needs a restart (the links are built at startup). Off = no air links exist.
+#        Default:     0
+#
+#    Playerbots.Air.TestBots
+#        Description: Names of the random bots that may take air legs, comma separated, any case. Empty = none.
+#        Default:     (empty)
+#
+#    Playerbots.Air.MinLegYards / MaxLegYards / Neighbours
+#        Description: An air link joins two towns this far apart (at least / at most), the nearest few in that range for each town.
+#        Default:     400 / 3000 / 3
+#
+#    Playerbots.Air.MaxGridLoads
+#        Description: A corridor that crosses more unloaded grids than this is not flown for now (a grid costs about 30 MB).
+#        Default:     2
+
+#
+#    Playerbots.Air.Follow
+#        Description: Party and raid bots follow a master who flies. The bot gets onto a steady-flight mount and flies along the
+#                     master's own flight path to a place around it, lands next to it when the master lands, and lands before
+#                     it fights. A bot that falls far behind is placed in the air behind the master. Every bot flies steady,
+#                     never skyriding. Frozen (far) bots are not touched.
+#        Default:     0
+#
+#    Playerbots.Air.FollowGrant
+#        Description: A bot that follows a flying master and has no riding skill or no flying mount gets master riding and a flying
+#                     mount added to its account collection (shared by every character of that Battle.net account).
+#        Default:     1
+#
+#    Playerbots.Air.FollowCatchUpYards / FollowCatchUpSeconds
+#        Description: A following bot further behind the master than this, for this long, is placed in the air behind it.
+#        Default:     150 / 20
+
+Playerbots.Air.Enable = 0
+Playerbots.Air.Follow = 0
+Playerbots.Air.FollowGrant = 1
+Playerbots.Air.FollowCatchUpYards = 150
+Playerbots.Air.FollowCatchUpSeconds = 20
+Playerbots.Air.TestBots =
+Playerbots.Air.MinLegYards = 400
+Playerbots.Air.MaxLegYards = 3000
+Playerbots.Air.Neighbours = 3
+Playerbots.Air.MaxGridLoads = 2
+
+#
+#    Playerbots.Goal.NearKinds
+#        Description: Which kinds of goal rows (town, quest_hub, grind, gather, fish, explore, bg, event, afk, logoff) the
+#                     goal table may give to a bot that is near a player. Every other pick for that bot comes from the
+#                     status loop (Idle -> weighted pick of DoQuest, WanderNpc, GoGrind, GoCamp, WanderRandom, Rest,
+#                     TravelFlight, Gather, Craft -> the chain that status runs -> Idle), the way AzerothCore's NewRpg
+#                     works, so a near bot is never parked for 5 to 20 minutes on an afk or fishing goal. Bots nobody
+#                     is near keep every kind (they only store the goal and grant abstract experience).
+#        Default:     town,event,bg
+
+Playerbots.Goal.NearKinds = town,event,bg
+
+#
+#    Playerbots.Combat.EscapeUnseen
+#        Description: When something attacks a bot and none of its attackers is a valid target for it (it cannot see
+#                     the creature, it cannot be attacked, it is phased away) the bot has no way to fight back, so it
+#                     runs from them (a navmesh step to a point 30 to 40 yards away, never back the way it came) and,
+#                     if it is still being hit after 15 seconds, goes to its home spot.
+#        Default:     0
+
+Playerbots.Combat.EscapeUnseen = 0
+
+#
+#    Playerbots.Dungeon.Enable
+#        Description: Boss fight logic for the dungeons the module knows, for bots in a group inside the dungeon:
+#                     Utgarde Keep (free a player from Keleseth's Frost Tomb, Dalronn before Skarvald, the tank steps
+#                     behind Ingvar for his Smash and back, ranged bots do not start casts during his roars),
+#                     Azjol-Nerub (Web Wraps and the watcher adds first, step behind Anub'arak for his Pound),
+#                     Ahn'kahet (Nadox's guardian, Jedoga's volunteers, dodge the Forgotten Ones' Shadow Crash),
+#                     Utgarde Pinnacle (adds while Skadi flies, out of the Freezing Cloud and his Whirlwind, nobody
+#                     attacks during Ymiron's Bane), The Nexus (out of the commander's Whirlwind, spread for Telestra's
+#                     Firebomb, the magi in order, Anomalus's rift, stack on Ormorok), Culling of Stratholme, Halls of
+#                     Stone, Auchenai Crypts, Gundrak, Drak'Tharon Keep, Forge of Souls, Pit of Saron, Halls of
+#                     Lightning and the Underbog (ground effects stepped out of, adds and boss phases targeted in order,
+#                     fixed stand spots for tanks and ranged bots where the fight needs them).
+#        Default:     0
+
+Playerbots.Dungeon.Enable = 0
