@@ -40,12 +40,15 @@ struct Config
     uint32 CombatWaitForAttackMs = 0;  // bots in a group a player leads do not attack for this long after a fight starts (0 = off)
     bool CombatPositioning = false;    // melee behind the target, ranged spread, tanks turn the enemy away from the group
     bool CombatKite = false;           // ranged bots step away from a melee enemy that is hitting them
+    uint32 CombatStuckSeconds = 0;     // a fight where nothing changes (hit points of the enemy, the enemy itself) this long is given up (0 = off)
+    bool CombatEscapeUnseen = false;   // a bot hit by attackers it cannot target (unseen, unattackable) runs from them, and goes home when that does not help
     bool CombatGrindQuality = false;   // random bots pick fights in line of sight, on their floor, not gray and not already taken
     bool FollowWalkFirst = false;      // a bot far from its master walks to it for a while before it teleports
     bool FollowMirrorMaster = false;   // a following bot mounts when its master mounts and takes the master's flight path
     uint32 FollowWalkSeconds = 45;
     uint32 FollowWalkMaxYards = 300;
     bool CombatUsePotions = false;     // in a fight: a health potion or healthstone below 35% health, a mana potion below 20% mana
+    bool DeathSpiritHealer = false;    // an ownerless bot that dies outside a dungeon or battleground goes to the graveyard and the spirit healer
     bool MoveHopLowObstacles = false;   // jump low obstacles on level ground instead of walking through them
     bool MoveAvoidBlockedPaths = false; // detour around geometry the mesh does not know, refuse cliff segments
     bool MoveLogBlockedPaths = false;  // log mesh paths that cross VMAP or game object geometry (measurement only, changes nothing)

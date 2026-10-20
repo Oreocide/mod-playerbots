@@ -97,6 +97,8 @@ public:
     bool ComputeSimulated();
 
     BotRole GetRole() const;
+    /// Enemies the bot gave up (unreachable, evading): never a valid target again until the time (game time ms) is over
+    void IgnoreEnemy(ObjectGuid guid, uint32 forMs);
     /// Game time ms the group's current fight started as this bot saw it (the leader or the main tank in combat), 0 = no fight
     uint32& GroupFightStartMs() { return _groupFightStartMs; }
     /// Group combat positioning (Combat/GroupCombat.cpp): no repositioning before this game time ms, and the last flee steps
@@ -210,6 +212,7 @@ private:
     uint32 _interruptEpoch = 0;
     bool _hadLeader = false;   // random bot: followed a player party leader on the last tick
     bool _hasLastStand = false;
+    std::vector<std::pair<ObjectGuid, uint32>> _ignoredEnemies;   // guid, until game time ms
     uint32 _groupFightStartMs = 0;
     uint32 _positionCooldownUntil = 0;
     uint32 _awayFromMasterSince = 0;

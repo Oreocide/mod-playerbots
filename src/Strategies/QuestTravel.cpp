@@ -614,7 +614,8 @@ public:
         if (uint32 forcedUntil = ai.GetRpg().ForcedUntil; forcedUntil && GameTime::GetGameTimeMS() < forcedUntil)
             return 0.0f;
 
-        if (!bot->IsAlive() || !bot->IsInWorld() || bot->IsInCombat() || bot->IsBeingTeleported() || bot->HasUnitState(UNIT_STATE_CASTING)
+        if (!bot->IsAlive() || !bot->IsInWorld() || bot->IsInCombat() || !bot->getAttackers().empty()
+            || bot->IsBeingTeleported() || bot->HasUnitState(UNIT_STATE_CASTING)
             || bot->InBattleground() || bot->InArena())
             return 0.0f;
 

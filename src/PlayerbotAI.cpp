@@ -931,41 +931,32 @@ void PlayerbotAI::AddRandomBotStrategies()
 
 BotRole PlayerbotAI::GetRole() const
 {
-    if (ChrSpecializationEntry const* spec = _bot->GetPrimarySpecializationEntry())
-    {
-        switch (spec->GetRole())
-        {
-            case ChrSpecializationRole::Tank:
-                return BotRole::Tank;
-            case ChrSpecializationRole::Healer:
-                return BotRole::Healer;
-            default:
-                break;
-        }
+    return GroupCombat::SpecRole(_bot);
+}
 
-        if (spec->GetFlags().HasFlag(ChrSpecializationFlag::Ranged) || spec->GetFlags().HasFlag(ChrSpecializationFlag::Caster))
-            return BotRole::RangedDps;
-
-        return BotRole::MeleeDps;
-    }
-
-    switch (_bot->GetClass())
-    {
-        case CLASS_MAGE:
-        case CLASS_WARLOCK:
-        case CLASS_PRIEST:
-        case CLASS_HUNTER:
-        case CLASS_EVOKER:
-            return BotRole::RangedDps;
-        default:
-            return BotRole::MeleeDps;
-    }
+void PlayerbotAI::IgnoreEnemy(ObjectGuid guid, uint32 forMs)
+{
+    uint32 now = GameTime::GetGameTimeMS();
+    std::erase_if(_ignoredEnemies, [now](auto const& entry) { return int32(entry.second - now) <= 0; });
+    if (_ignoredEnemies.size() >= 16)
+        _ignoredEnemies.erase(_ignoredEnemies.begin());
+    _ignoredEnemies.emplace_back(guid, now + forMs);
 }
 
 bool PlayerbotAI::IsValidEnemy(Unit* target) const
 {
-    return target && target->IsAlive() && target->IsInWorld() && target->IsInMap(_bot)
-        && _bot->IsWithinDistInMap(target, 60.0f) && _bot->IsValidAttackTarget(target);
+    if (!target || !target->IsAlive() || !target->IsInWorld() || !target->IsInMap(_bot)
+        || !_bot->IsWithinDistInMap(target, 60.0f) || !_bot->IsValidAttackTarget(target))
+        return false;
+
+    if (!_ignoredEnemies.empty())
+    {
+        uint32 now = GameTime::GetGameTimeMS();
+        for (auto const& [guid, until] : _ignoredEnemies)
+            if (guid == target->GetGUID() && int32(until - now) > 0)
+                return false;
+    }
+    return true;
 }
 
 Unit* PlayerbotAI::SelectCombatTarget()
@@ -1029,7 +1020,7 @@ Unit* PlayerbotAI::FindCombatTarget() const
     }
 
     // ownerless bots pull a nearby creature of a similar level
-    if (_master.IsEmpty() && !GetMaster() && !_bot->IsInCombat())
+    if (_master.IsEmpty() && !GetMaster() && !_bot->IsInCombat() && _bot->getAttackers().empty())
         if (Unit* nearby = FindNearbyEnemy())
             return nearby;
 

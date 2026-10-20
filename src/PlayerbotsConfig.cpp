@@ -42,12 +42,15 @@ void Config::Load()
     CombatWaitForAttackMs = uint32(std::clamp(sConfigMgr->GetIntDefault("Playerbots.Combat.WaitForAttackMs", 0), 0, 30000));
     CombatPositioning = sConfigMgr->GetBoolDefault("Playerbots.Combat.Positioning", false);
     CombatKite = sConfigMgr->GetBoolDefault("Playerbots.Combat.Kite", false);
+    CombatStuckSeconds = uint32(std::clamp(sConfigMgr->GetIntDefault("Playerbots.Combat.StuckSeconds", 0), 0, 3600));
+    CombatEscapeUnseen = sConfigMgr->GetBoolDefault("Playerbots.Combat.EscapeUnseen", false);
     CombatGrindQuality = sConfigMgr->GetBoolDefault("Playerbots.Combat.GrindQuality", false);
     FollowWalkFirst = sConfigMgr->GetBoolDefault("Playerbots.Follow.WalkFirst", false);
     FollowMirrorMaster = sConfigMgr->GetBoolDefault("Playerbots.Follow.MirrorMaster", false);
     FollowWalkSeconds = uint32(std::clamp(sConfigMgr->GetIntDefault("Playerbots.Follow.WalkSeconds", 45), 5, 600));
     FollowWalkMaxYards = uint32(std::clamp(sConfigMgr->GetIntDefault("Playerbots.Follow.WalkMaxYards", 300), 50, 1000));
     CombatUsePotions = sConfigMgr->GetBoolDefault("Playerbots.Combat.UsePotions", false);
+    DeathSpiritHealer = sConfigMgr->GetBoolDefault("Playerbots.Death.SpiritHealer", false);
     MoveHopLowObstacles = sConfigMgr->GetBoolDefault("Playerbots.Move.HopLowObstacles", false);
     MoveAvoidBlockedPaths = sConfigMgr->GetBoolDefault("Playerbots.Move.AvoidBlockedPaths", false);
     MoveLogBlockedPaths = sConfigMgr->GetBoolDefault("Playerbots.Move.LogBlockedPaths", false);

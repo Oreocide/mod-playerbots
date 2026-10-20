@@ -362,7 +362,8 @@ public:
         if (!sPlayerbotsConfig.RpgEnable)
             return 0.0f;
         Player* bot = ai.GetBot();
-        if (ai.GetMaster() || !bot->IsAlive() || bot->IsInCombat() || bot->IsBeingTeleported() || bot->HasUnitState(UNIT_STATE_CASTING))
+        if (ai.GetMaster() || !bot->IsAlive() || bot->IsInCombat() || !bot->getAttackers().empty()
+            || bot->IsBeingTeleported() || bot->HasUnitState(UNIT_STATE_CASTING))
             return 0.0f;
         return Relevance;
     }

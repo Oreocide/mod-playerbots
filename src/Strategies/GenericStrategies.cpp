@@ -24,6 +24,7 @@
 #include "Engine/AiContext.h"
 #include "Engine/AiRegistry.h"
 #include "CellImpl.h"
+#include "NPCPackets.h"
 #include "SpellHistory.h"
 #include "Creature.h"
 #include "DB2Stores.h"
@@ -46,6 +47,7 @@
 #include "ObjectAccessor.h"
 #include "Player.h"
 #include "PlayerbotAI.h"
+#include "PlayerbotMgr.h"
 #include "PlayerbotsConfig.h"
 #include "QuestTravel.h"
 #include "Log.h"
@@ -237,6 +239,20 @@ protected:
     }
 };
 
+/// "What is the fight doing": the enemy and its hit points in one number, so a change of either counts as progress
+class CombatProgressValue final : public CalculatedValue<uint64>
+{
+public:
+    CombatProgressValue() : CalculatedValue<uint64>(1000) { }
+
+protected:
+    uint64 Calculate(PlayerbotAI& ai) override
+    {
+        Unit* target = ai.SelectCombatTarget();
+        return target ? (target->GetGUID().GetCounter() << 32) ^ target->GetHealth() : 0;
+    }
+};
+
 class HealTargetValue final : public CalculatedValue<ObjectGuid>
 {
 protected:
@@ -407,7 +423,11 @@ bool PvpTrigger(PlayerbotAI& ai)
 
 bool IsAliveTrigger(PlayerbotAI& ai) { return ai.GetBot()->IsAlive(); }
 
-bool TravelingTrigger(PlayerbotAI& ai) { return ai.GetRoute().IsActive(); }
+bool TravelingTrigger(PlayerbotAI& ai)
+{
+    Player* bot = ai.GetBot();
+    return ai.GetRoute().IsActive() && !bot->IsInCombat() && bot->getAttackers().empty();
+}
 
 // Out of combat, standing still, and the rotation of the specialization has buffs to keep up
 bool NeedsBuffTrigger(PlayerbotAI& ai)
@@ -434,6 +454,20 @@ Player* FindPvpEnemy(Player* bot)
 }
 
 // ---- actions ----
+
+/// Playerbots.Combat.StuckSeconds: nothing about the fight changed for that long
+bool CombatStuckTrigger(PlayerbotAI& ai)
+{
+    if (!sPlayerbotsConfig.CombatStuckSeconds || !ai.GetBot()->IsInCombat() || !ai.SelectCombatTarget())
+        return false;
+
+    auto* progress = dynamic_cast<CalculatedValue<uint64>*>(ai.GetContext().GetValueBase("combat progress"));
+    if (!progress)
+        return false;
+    progress->Get(ai);
+    uint32 changed = progress->LastChangedMs();
+    return changed && GameTime::GetGameTimeMS() - changed >= sPlayerbotsConfig.CombatStuckSeconds * 1000;
+}
 
 /// Playerbots.Combat.UsePotions: low on health or mana in a fight, and a potion to drink
 bool NeedsPotionTrigger(PlayerbotAI& ai)
@@ -476,6 +510,163 @@ public:
     }
 };
 
+/// Playerbots.Combat.EscapeUnseen: attackers on the bot and not one of them a target it can fight
+bool UnseenAttackerTrigger(PlayerbotAI& ai)
+{
+    if (!sPlayerbotsConfig.CombatEscapeUnseen)
+        return false;
+
+    Player* bot = ai.GetBot();
+    if (!bot->IsAlive() || !bot->IsInCombat() || bot->getAttackers().empty() || ai.SelectCombatTarget())
+        return false;
+
+    for (Unit* attacker : bot->getAttackers())
+        if (attacker->IsAlive() && ai.IsValidEnemy(attacker))
+            return false;
+    return true;
+}
+
+class EscapeAction : public Action
+{
+public:
+    char const* GetName() const override { return "escape"; }
+
+    bool Execute(PlayerbotAI& ai) override
+    {
+        Player* bot = ai.GetBot();
+        uint32 now = GameTime::GetGameTimeMS();
+        if (!_since || now - _lastRun > 5000)
+        {
+            _since = now;       // a new episode: the clock and the failures start over
+            _failures = 0;
+        }
+        _lastRun = now;
+
+        bool home = ai.HasHome() && ai.GetMasterGuid().IsEmpty();
+        if (home && (now - _since > 15000 || _failures >= 3))
+        {
+            Position const& spot = ai.GetHome();
+            _since = 0;
+            ai.NoteExpectedMove();
+            bot->AttackStop();
+            return bot->TeleportTo(bot->GetMapId(), spot.GetPositionX(), spot.GetPositionY(), spot.GetPositionZ(), spot.GetOrientation());
+        }
+
+        // away from every attacker: a mesh point on a ring 30 to 40 yards out, outside a 15 yard circle around each of them
+        std::vector<Hazard> hazards;
+        for (Unit* attacker : bot->getAttackers())
+            if (attacker->IsAlive())
+                hazards.push_back({ { attacker->GetPositionX(), attacker->GetPositionY() }, 15.0f });
+
+        Pt me{ bot->GetPositionX(), bot->GetPositionY() };
+        std::vector<Pt> candidates = SafeSpotCandidates(me, hazards, { 30.0f, 40.0f }, 16, 1.0f);
+        int pick = PickSafeSpot(candidates, me, hazards, ai.GetFleeHistory(), now, {}, 3.0f);
+        if (pick >= 0)
+        {
+            Position snapped;
+            if (SnapToMesh(bot, Position(candidates[pick].X, candidates[pick].Y, bot->GetPositionZ()), snapped, 3.0f, 2.5f)
+                && MoveCombat(bot, snapped, 1.0f, MovePriority::Avoid) != MoveResult::NoPath)
+            {
+                NoteFlee(ai.GetFleeHistory(), std::atan2(candidates[pick].Y - me.Y, candidates[pick].X - me.X), now);
+                bot->AttackStop();
+                return true;
+            }
+        }
+
+        ++_failures;
+        return true;
+    }
+
+private:
+    uint32 _since = 0;
+    uint32 _lastRun = 0;
+    uint32 _failures = 0;
+};
+
+class DropTargetAction : public Action
+{
+public:
+    char const* GetName() const override { return "drop target"; }
+
+    bool Execute(PlayerbotAI& ai) override
+    {
+        Player* bot = ai.GetBot();
+        if (Unit* target = ai.SelectCombatTarget())
+        {
+            TC_LOG_DEBUG("server.playerbots.stuck", "Playerbots: {} gives up the fight with {} (nothing changed for {} s)",
+                bot->GetName(), target->GetName(), sPlayerbotsConfig.CombatStuckSeconds);
+            ai.IgnoreEnemy(target->GetGUID(), 10 * 60 * 1000);
+        }
+        ai.ClearForcedTarget();
+        ai.ClearChaseTarget();
+        bot->AttackStop();
+        bot->GetMotionMaster()->Clear();
+        if (auto* value = dynamic_cast<CalculatedValue<ObjectGuid>*>(ai.GetContext().GetValueBase("combat target")))
+            value->Invalidate();
+        return true;
+    }
+};
+
+// Playerbots.Death.SpiritHealer: release to the graveyard (the game moves the ghost, nobody walks), the spirit healer there resurrects
+// it. Both are THREADUNSAFE opcodes' work, so they run in the world queue. false = not applicable, use the instant revive
+bool SpiritHealerVisit(PlayerbotAI& ai)
+{
+    Player* bot = ai.GetBot();
+    static std::mutex stepLock;
+    static std::unordered_map<ObjectGuid, uint32> stepAt;
+    auto throttle = [&](uint32 ms)
+    {
+        uint32 now = GameTime::GetGameTimeMS();
+        std::lock_guard lock(stepLock);
+        if (stepAt.size() > 4096)
+            stepAt.clear();
+        uint32& at = stepAt[bot->GetGUID()];
+        if (int32(at - now) > 0)
+            return false;
+        at = now + ms;
+        return true;
+    };
+
+    if (!bot->HasPlayerFlag(PLAYER_FLAGS_GHOST))
+    {
+        if (throttle(10000))
+            sWorldActionQueue->Enqueue(bot->GetGUID(), bot->GetMapId(), ObjectGuid::Empty, [](Player* player)
+            {
+                if (player->IsAlive() || player->HasPlayerFlag(PLAYER_FLAGS_GHOST) || player->GetMap()->Instanceable())
+                    return;
+                // the graveyard is far: not an interruption that moves the bot's home there
+                if (PlayerbotAI* ai = sPlayerbotMgr->GetAI(player))
+                    ai->NoteExpectedMove();
+                player->RemovePet(nullptr, PET_SAVE_NOT_IN_SLOT, true);
+                player->BuildPlayerRepop();
+                player->RepopAtGraveyard();
+            });
+        return true;
+    }
+
+    std::vector<Creature*> healers;
+    struct SpiritHealerCheck
+    {
+        bool operator()(Creature* creature) const { return creature->IsAlive() && creature->IsSpiritHealer(); }
+    } check;
+    Trinity::CreatureListSearcher searcher(bot, healers, check);
+    Cell::VisitGridObjects(bot, searcher, 30.0f);
+    if (healers.empty())
+        return false;
+
+    ObjectGuid healer = healers.front()->GetGUID();
+    if (throttle(3000))
+        sWorldActionQueue->Enqueue(bot->GetGUID(), bot->GetMapId(), healer, [healer](Player* player)
+        {
+            if (player->IsAlive() || !player->HasPlayerFlag(PLAYER_FLAGS_GHOST))
+                return;
+            WorldPackets::NPC::SpiritHealerActivate packet{ WorldPacket(CMSG_SPIRIT_HEALER_ACTIVATE) };
+            packet.Healer = healer;
+            player->GetSession()->HandleSpiritHealerActivate(packet);
+        });
+    return true;
+}
+
 class ReviveAction : public Action
 {
 public:
@@ -514,6 +705,9 @@ public:
         }
 
         Player* master = ai.GetMaster();
+        if (sPlayerbotsConfig.DeathSpiritHealer && !master && !ai.IsFarBot() && !bot->GetMap()->Instanceable() && SpiritHealerVisit(ai))
+            return true;
+
         if (sPlayerbotsConfig.AutoResurrect && (!master || (master->IsAlive() && !master->IsInCombat())))
         {
             bot->ResurrectPlayer(0.5f);
@@ -570,6 +764,22 @@ public:
         Unit* target = ai.SelectCombatTarget();
         if (!target)
             return false;
+
+        // a mounted player cannot attack (Unit::Attack refuses), so a bot gets off its mount before the fight, as a player would; one in
+        // the air lands first (dismounting at cruise height is a fall)
+        if (bot->IsMounted())
+        {
+            if (AirFollow::EmergencyLand(ai))
+                return true;
+            bot->CancelMountAura();
+        }
+
+        // a goal walk or a long route must not keep going while the bot fights
+        if (ai.GetRoute().IsActive())
+            ai.GetRoute().Cancel();
+        RpgInfo& rpg = ai.GetRpg();
+        rpg.WaitUntil = 0;
+        rpg.HasDest = false;
 
         BotRole role = ai.GetRole();
         bool ranged = role == BotRole::RangedDps || role == BotRole::Healer;
@@ -1307,6 +1517,10 @@ void RegisterGenericAi()
     r.AddValue("heal target", [](std::string const&) -> std::unique_ptr<ValueBase> { return std::make_unique<HealTargetValue>(); });
     r.AddValue("nearest corpse", [](std::string const&) -> std::unique_ptr<ValueBase> { return std::make_unique<NearestCorpseValue>(); });
 
+    r.AddValue("combat progress", [](std::string const&) -> std::unique_ptr<ValueBase> { return std::make_unique<CombatProgressValue>(); });
+
+    r.AddTrigger("combat stuck", 2000, CombatStuckTrigger);
+    r.AddTrigger("unseen attacker", 0, UnseenAttackerTrigger);
     r.AddTrigger("needs potion", 1000, NeedsPotionTrigger);
     r.AddTrigger("dead", 0, IsDeadTrigger);
     r.AddTrigger("master away", 0, MasterAwayTrigger);
@@ -1323,6 +1537,8 @@ void RegisterGenericAi()
     r.AddTrigger("needs buff", 2000, NeedsBuffTrigger);
 
     r.AddAction<ReviveAction>("revive");
+    r.AddAction<DropTargetAction>("drop target");
+    r.AddAction<EscapeAction>("escape");
     r.AddAction<UsePotionAction>("use potion");
     r.AddAction<TeleportToMasterAction>("teleport to master");
     r.AddAction<HealAction>("heal");
@@ -1340,7 +1556,9 @@ void RegisterGenericAi()
     AddTriggerStrategy(r, "death", { { "dead", { { "revive", Priority::Revive } } } });
     AddTriggerStrategy(r, "teleport", { { "master away", { { "teleport to master", Priority::Teleport } } } });
     AddTriggerStrategy(r, "combat", { { "needs heal", { { "heal", Priority::Heal } } }, { "has combat target", { { "attack", Priority::Attack } } },
-        { "needs potion", { { "use potion", Priority::Consume } }, StrategyStates::Combat } });
+        { "combat stuck", { { "drop target", Priority::Attack + 1.0f } }, StrategyStates::Combat },
+        { "needs potion", { { "use potion", Priority::Consume } }, StrategyStates::Combat },
+        { "unseen attacker", { { "escape", Priority::Attack + 2.0f } }, StrategyStates::Combat } });
     AddTriggerStrategy(r, "loot", { { "corpse to loot", { { "loot", Priority::Loot } }, StrategyStates::NonCombat } });
     AddTriggerStrategy(r, "consume", { { "should consume", { { "eat/drink", Priority::Consume } }, StrategyStates::NonCombat } });
     AddTriggerStrategy(r, "follow", { { "follow master", { { "follow", Priority::Idle } } } });
