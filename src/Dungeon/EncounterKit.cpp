@@ -40,6 +40,7 @@ void RegisterUtgardeKeep(AiRegistry& registry);
 void RegisterAzjolNerub(AiRegistry& registry);
 void RegisterAhnKahet(AiRegistry& registry);
 void RegisterUtgardePinnacle(AiRegistry& registry);
+void RegisterNexus(AiRegistry& registry);
 
 namespace
 {
@@ -240,5 +241,6 @@ void RegisterAll(AiRegistry& registry)
     RegisterAzjolNerub(registry);
     RegisterAhnKahet(registry);
     RegisterUtgardePinnacle(registry);
+    RegisterNexus(registry);
 }
 }
