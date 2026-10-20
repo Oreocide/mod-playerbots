@@ -45,6 +45,7 @@ void RegisterCullingOfStratholme(AiRegistry& registry);
 void RegisterHallsOfStone(AiRegistry& registry);
 void RegisterAuchenaiCrypts(AiRegistry& registry);
 void RegisterGundrak(AiRegistry& registry);
+void RegisterDrakTharonKeep(AiRegistry& registry);
 
 namespace
 {
@@ -250,5 +251,6 @@ void RegisterAll(AiRegistry& registry)
     RegisterHallsOfStone(registry);
     RegisterAuchenaiCrypts(registry);
     RegisterGundrak(registry);
+    RegisterDrakTharonKeep(registry);
 }
 }
