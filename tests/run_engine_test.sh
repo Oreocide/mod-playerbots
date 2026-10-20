@@ -38,6 +38,9 @@ g++ $FLAGS "$HERE/context_strategies_test.cpp" -o "$OUT/playerbots_context_strat
 g++ $FLAGS "$HERE/move_geometry_test.cpp" -o "$OUT/playerbots_move_geometry_test"
 "$OUT/playerbots_move_geometry_test"
 
+g++ $FLAGS "$HERE/rpg_pick_test.cpp" -o "$OUT/playerbots_rpg_pick_test"
+"$OUT/playerbots_rpg_pick_test"
+
 g++ $FLAGS "$HERE/air_profile_test.cpp" -o "$OUT/playerbots_air_profile_test"
 "$OUT/playerbots_air_profile_test"
 

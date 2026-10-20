@@ -39,7 +39,11 @@ uint32 Reload();
 bool TryBegin(PlayerbotAI& ai, uint32 nowMs);
 
 /// Far bot. Stores the same kind of goal and does not path. Returns when to check again.
-uint32 OnFrozen(PlayerbotAI& ai, uint32 nowMs);
+/// timedOnly: only rows tied to a game event, an hour window or weekdays (Playerbots.Abstract.Enable: the AC status weights decide the rest)
+uint32 OnFrozen(PlayerbotAI& ai, uint32 nowMs, bool timedOnly = false);
+
+/// The bot holds a stored goal that has not ended yet
+bool HasGoal(ObjectGuid guid, uint32 nowMs);
 
 /// True once, when a stored quest goal has reached its end. The caller grants XP on the map thread.
 bool ReadyForAbstractXp(ObjectGuid guid, uint32 nowMs);

@@ -50,6 +50,7 @@ struct Config
     bool CombatUsePotions = false;     // in a fight: a health potion or healthstone below 35% health, a mana potion below 20% mana
     bool DeathSpiritHealer = false;    // an ownerless bot that dies outside a dungeon or battleground goes to the graveyard and the spirit healer
     bool GroupEvents = false;          // bots answer ready checks, open and accept trades from their group, and take quests the group shares
+    std::string GoalNearKinds = "town,event,bg";   // goal kinds the goal table may give a bot near a player; the rest is the status loop
     bool DungeonEnable = false;        // encounter logic for the dungeons the module knows (Utgarde Keep so far)
     bool MoveHopLowObstacles = false;   // jump low obstacles on level ground instead of walking through them
     bool MoveAvoidBlockedPaths = false; // detour around geometry the mesh does not know, refuse cliff segments
@@ -222,6 +223,8 @@ struct Config
     bool QuestCollect = false;                // kill quests may also include an item a creature drops
     bool QuestInteract = false;               // gameobject use, talk-to, and chest loot
     bool QuestExplore = false;                // walk into an area trigger
+    bool AbstractEnable = false;              // far bots roll the AC status weights as timers instead of the goal table
+    uint32 AbstractGrindXpPercent = 50;       // a finished abstract grind pays this share of an abstract quest's XP
     bool QuestAbstractXp = false;             // a far quest goal grants XP and does not complete the log quest
     bool BgObjectives = false;                // Warsong and Arathi bots play the flag and the nodes
     bool WorldReactions = false;              // a hostile player, a rare, or a duel in a city

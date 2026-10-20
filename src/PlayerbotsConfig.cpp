@@ -52,6 +52,7 @@ void Config::Load()
     CombatUsePotions = sConfigMgr->GetBoolDefault("Playerbots.Combat.UsePotions", false);
     DeathSpiritHealer = sConfigMgr->GetBoolDefault("Playerbots.Death.SpiritHealer", false);
     GroupEvents = sConfigMgr->GetBoolDefault("Playerbots.Group.Events", false);
+    GoalNearKinds = sConfigMgr->GetStringDefault("Playerbots.Goal.NearKinds", "town,event,bg");
     DungeonEnable = sConfigMgr->GetBoolDefault("Playerbots.Dungeon.Enable", false);
     MoveHopLowObstacles = sConfigMgr->GetBoolDefault("Playerbots.Move.HopLowObstacles", false);
     MoveAvoidBlockedPaths = sConfigMgr->GetBoolDefault("Playerbots.Move.AvoidBlockedPaths", false);
@@ -250,6 +251,8 @@ void Config::Load()
     QuestCollect = sConfigMgr->GetBoolDefault("Playerbots.Quest.Collect", false);
     QuestInteract = sConfigMgr->GetBoolDefault("Playerbots.Quest.Interact", false);
     QuestExplore = sConfigMgr->GetBoolDefault("Playerbots.Quest.Explore", false);
+    AbstractEnable = sConfigMgr->GetBoolDefault("Playerbots.Abstract.Enable", false);
+    AbstractGrindXpPercent = uint32(std::clamp(sConfigMgr->GetIntDefault("Playerbots.Abstract.GrindXpPercent", 50), 0, 100));
     QuestAbstractXp = sConfigMgr->GetBoolDefault("Playerbots.Quest.AbstractXp", false);
     BgObjectives = sConfigMgr->GetBoolDefault("Playerbots.Bg.Objectives", false);
     WorldReactions = sConfigMgr->GetBoolDefault("Playerbots.World.Reactions", false);

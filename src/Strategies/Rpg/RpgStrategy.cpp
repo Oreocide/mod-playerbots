@@ -25,6 +25,7 @@
 #include "QuestTravel.h"
 #include "Random.h"
 #include "RpgInfo.h"
+#include "StatusPick.h"
 #include "Travel/HubIndex.h"
 #include "Travel/MoveToward.h"
 #include "RandomBotMgr.h"
@@ -102,16 +103,14 @@ Optional<RandomBotMgr::Anchor> CurrentAnchor(Player const* bot)
     return anchor;
 }
 
-void RandomChangeStatus(PlayerbotAI& ai, uint32 now)
+// The AC weighted roll. excluded: statuses (bit per RpgStatus) not to roll, for a status that just found nothing to do so the roll
+// does not pick it again at once. abstractMode: a frozen bot living the status as a timer (no pathing, no NPC, no quest log): only
+// the statuses that mean something without a world around the bot are rolled (see AbstractLife)
+RpgStatus ChooseStatus(PlayerbotAI& ai, uint32 excluded, bool abstractMode)
 {
     Player* bot = ai.GetBot();
-    RpgInfo& rpg = ai.GetRpg();
 
-    if (GoalStore::TryBegin(ai, now))
-        return;
-
-    std::vector<std::pair<RpgStatus, uint32>> weighted;
-    uint32 sum = 0;
+    std::vector<StatusWeight> weighted;
 
     // A bot placed at a hotspot lives there: town activities only. One that ended up far from it (summoned,
     // pushed to another map) is released
@@ -120,11 +119,15 @@ void RandomChangeStatus(PlayerbotAI& ai, uint32 now)
     auto add = [&](RpgStatus status)
     {
         uint32 weight = sPlayerbotsConfig.RpgWeight[uint8(status)];
-        if (!weight)
+        if (!weight || (excluded & (1u << uint8(status))))
+            return;
+        if (abstractMode && (status == RpgStatus::TravelFlight || status == RpgStatus::Gather || status == RpgStatus::Craft))
             return;
         if (anchor && (status == RpgStatus::DoQuest || status == RpgStatus::GoGrind || status == RpgStatus::TravelFlight || status == RpgStatus::Gather))
             return;
         if (status == RpgStatus::DoQuest && !FirstLogQuest(bot, true) && !QuestTravel::IsBuilt())
+            return;
+        if (abstractMode && status == RpgStatus::DoQuest && !QuestTravel::IsBuilt())
             return;
         if (status == RpgStatus::Gather && (bot->GetLevel() < 10 || !GatherNodes::Count() || !BotProfessions::CanGather(bot)))
             return;
@@ -137,8 +140,7 @@ void RandomChangeStatus(PlayerbotAI& ai, uint32 now)
         }
         if ((status == RpgStatus::WanderNpc || status == RpgStatus::GoCamp) && InCapital(bot) && bot->GetLevel() >= 10)
             weight += sPlayerbotsConfig.RpgCapitalBoost;
-        weighted.emplace_back(status, weight);
-        sum += weight;
+        weighted.emplace_back(uint8(status), weight);
     };
 
     add(RpgStatus::DoQuest);
@@ -151,26 +153,20 @@ void RandomChangeStatus(PlayerbotAI& ai, uint32 now)
     add(RpgStatus::Craft);
     add(RpgStatus::WanderRandom);
 
-    if (weighted.empty() || !sum)
-    {
-        rpg.Begin(RpgStatus::Rest, now);
+    uint32 sum = SumWeights(weighted);
+    if (!sum)
+        return RpgStatus::Rest;
+
+    return RpgStatus(PickWeighted(weighted, urand(1, sum), uint8(RpgStatus::Rest)));
+}
+
+void RandomChangeStatus(PlayerbotAI& ai, uint32 now, uint32 excluded = 0)
+{
+    // the goal table first (near bots: only the kinds Playerbots.Goal.NearKinds allows), not after a status found nothing to do
+    if (!excluded && GoalStore::TryBegin(ai, now))
         return;
-    }
 
-    uint32 roll = urand(1, sum);
-    uint32 acc = 0;
-    RpgStatus chosen = RpgStatus::Rest;
-    for (auto const& [status, weight] : weighted)
-    {
-        acc += weight;
-        if (acc >= roll)
-        {
-            chosen = status;
-            break;
-        }
-    }
-
-    rpg.Begin(chosen, now);
+    ai.GetRpg().Begin(ChooseStatus(ai, excluded, false), now);
 }
 
 constexpr float WalkerHoldRange = 8.0f;            // a walking NPC stops for a bot this close
@@ -590,8 +586,8 @@ private:
             Position pos;
             if (!QuestTravel::NearestHunt(bot, pos))
             {
-                rpg.ChangeToIdle();
-                rpg.Started = now;
+                // no hunting ground in reach: another status, never the same grind roll again
+                RandomChangeStatus(ai, now, (1u << uint8(RpgStatus::GoGrind)) | (1u << uint8(RpgStatus::DoQuest)));
                 return true;
             }
             rpg.SetDest(pos);
@@ -803,8 +799,8 @@ private:
 
         if (!rpg.QuestId)
         {
-            rpg.ChangeToIdle();
-            rpg.Started = now;
+            // nothing in the quest log to work on: another status now, not Idle and the same roll again
+            RandomChangeStatus(ai, now, 1u << uint8(RpgStatus::DoQuest));
             return true;
         }
 
@@ -844,5 +840,15 @@ public:
 std::unique_ptr<Strategy> CreateRpgStrategy()
 {
     return std::make_unique<RpgStrategy>();
+}
+
+RpgStatus PickAbstractRpgStatus(PlayerbotAI& ai)
+{
+    return ChooseStatus(ai, 0, true);
+}
+
+uint32 RollAbstractRpgDuration(RpgStatus status)
+{
+    return RollRpgDuration(status);
 }
 }

@@ -340,7 +340,36 @@ struct Choice
     uint32 Weight = 0;
 };
 
-bool Choose(std::shared_ptr<Snapshot const> const& snap, Player* bot, uint8 persona, uint32 nowSec, Row& out)
+/// "town,event,bg" -> bit mask over Kind. Unknown names are ignored
+uint32 KindMask(std::string const& list)
+{
+    uint32 mask = 0;
+    size_t start = 0;
+    while (start <= list.size())
+    {
+        size_t comma = list.find(',', start);
+        std::string name = list.substr(start, comma == std::string::npos ? std::string::npos : comma - start);
+        while (!name.empty() && name.front() == ' ')
+            name.erase(name.begin());
+        while (!name.empty() && name.back() == ' ')
+            name.pop_back();
+        for (uint8 i = 0; i < uint8(Kind::Count); ++i)
+            if (name == KindName[i])
+                mask |= 1u << i;
+        if (comma == std::string::npos)
+            break;
+        start = comma + 1;
+    }
+    return mask;
+}
+
+// A row that only applies at certain times: during a game event, in an hour window, on certain weekdays
+bool IsTimed(Row const& row)
+{
+    return row.GameEvent > 0 || row.HourFrom != row.HourTo || row.WeekdayMask;
+}
+
+bool Choose(std::shared_ptr<Snapshot const> const& snap, Player* bot, uint8 persona, uint32 nowSec, Row& out, uint32 kindMask = ~0u, bool timedOnly = false)
 {
     if (!snap || snap->Rows.empty() || persona >= PersonaCount)
         return false;
@@ -350,7 +379,7 @@ bool Choose(std::shared_ptr<Snapshot const> const& snap, Player* bot, uint8 pers
     uint32 sum = 0;
     for (Row const& row : snap->Rows)
     {
-        if (!RowMatches(row, bot, persona, nowSec))
+        if (!(kindMask & (1u << uint8(row.Kind))) || (timedOnly && !IsTimed(row)) || !RowMatches(row, bot, persona, nowSec))
             continue;
         float mult = snap->Multiplier[persona][uint8(row.Kind)];
         if (mult <= 0.0f)
@@ -370,7 +399,7 @@ bool Choose(std::shared_ptr<Snapshot const> const& snap, Player* bot, uint8 pers
     {
         for (Row const& row : snap->Rows)
         {
-            if (row.Kind != Kind::QuestHub || !row.Zone)
+            if (row.Kind != Kind::QuestHub || !row.Zone || !(kindMask & (1u << uint8(Kind::QuestHub))) || (timedOnly && !IsTimed(row)))
                 continue;
             if (bot->GetLevel() <= row.MaxLevel || bot->GetLevel() > uint32(row.MaxLevel) + 10)
                 continue;
@@ -482,7 +511,8 @@ bool TryBegin(PlayerbotAI& ai, uint32 nowMs)
         EndActive(bot->GetGUID(), active, nowSec);
 
     Row chosen;
-    if (!Choose(snap, bot, persona, nowSec, chosen))
+    // a bot near a player gets only the kinds Playerbots.Goal.NearKinds names; the status loop does the rest
+    if (!Choose(snap, bot, persona, nowSec, chosen, KindMask(sPlayerbotsConfig.GoalNearKinds)))
     {
         active = {};
         return false;
@@ -528,7 +558,7 @@ bool ReadyForAbstractXp(ObjectGuid guid, uint32 nowMs)
     return true;
 }
 
-uint32 OnFrozen(PlayerbotAI& ai, uint32 nowMs)
+uint32 OnFrozen(PlayerbotAI& ai, uint32 nowMs, bool timedOnly)
 {
     if (!sPlayerbotsConfig.GoalEnable)
         return nowMs + 60000;
@@ -566,7 +596,7 @@ uint32 OnFrozen(PlayerbotAI& ai, uint32 nowMs)
         EndActive(bot->GetGUID(), active, nowSec);
 
     Row chosen;
-    if (!Choose(snap, bot, persona, nowSec, chosen))
+    if (!Choose(snap, bot, persona, nowSec, chosen, ~0u, timedOnly))
     {
         active = {};
         active.Persona = PersonaName[persona];
@@ -591,6 +621,13 @@ uint32 OnFrozen(PlayerbotAI& ai, uint32 nowMs)
         sPlayerbotRepository->Remember(bot->GetGUID(), "goal", active.Name, active.Kind);
     }
     return active.UntilMs;
+}
+
+bool HasGoal(ObjectGuid guid, uint32 nowMs)
+{
+    std::lock_guard lock(StateLock);
+    auto itr = ActiveByGuid.find(guid);
+    return itr != ActiveByGuid.end() && itr->second.Id && itr->second.UntilMs > nowMs;
 }
 
 void Forget(ObjectGuid guid)

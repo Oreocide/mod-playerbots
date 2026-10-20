@@ -542,7 +542,13 @@ void PlayerbotAI::Update(uint32 diff)
                 _grounded = false;
             }
         }
-        if (sPlayerbotsConfig.GoalEnable && GameTime::GetGameTimeMS() >= _nextGoalMs)
+        if (sPlayerbotsConfig.AbstractEnable)
+        {
+            // AC's status weights lived as a timer (a game-event goal row first): no pathing, no grids, no NPC
+            if (GameTime::GetGameTimeMS() >= _nextGoalMs)
+                _nextGoalMs = AbstractLife::Tick(*this, _abstract, GameTime::GetGameTimeMS());
+        }
+        else if (sPlayerbotsConfig.GoalEnable && GameTime::GetGameTimeMS() >= _nextGoalMs)
         {
             if (GoalStore::ReadyForAbstractXp(_bot->GetGUID(), GameTime::GetGameTimeMS()))
                 if (uint32 xp = QuestTravel::AbstractXp(_bot))
@@ -563,6 +569,13 @@ void PlayerbotAI::Update(uint32 diff)
     // Keyed on our own flag, not on _idle: a route arrival or a hover fix clears _idle while the bot is still frozen with gravity off,
     // and a bot that turns near before the next frozen tick would otherwise keep the hover animation while it runs.
     // Not keyed on IsGravityDisabled(): a vehicle, script or aura may have set that on a party bot.
+    if (sPlayerbotsConfig.AbstractEnable && _abstract.Status != RpgStatus::Idle)
+    {
+        // the abstract status is not carried on: the near loop rolls its own (its Started time is from before the freeze)
+        _abstract = {};
+        _rpg.ChangeToIdle();
+        _nextGoalMs = 0;
+    }
     if (_gravityOff)
     {
         if (!_grounded)

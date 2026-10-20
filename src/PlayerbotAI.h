@@ -26,6 +26,7 @@
 #include "ObjectGuid.h"
 #include "Position.h"
 #include "Rotation/RotationRunner.h"
+#include "Strategies/Rpg/AbstractLife.h"
 #include "Strategies/Rpg/RpgInfo.h"
 #include "Travel/MovePriority.h"
 #include "Travel/RouteFollower.h"
@@ -145,6 +146,7 @@ public:
     /// What BotMover is doing for this bot: the priority of the running move, so one mover does not undo another
     BotMoveState& GetMoveState() { return _moveState; }
     RotationRunner& GetRotation() { return _rotation; }
+    AbstractLife::State const& GetAbstract() const { return _abstract; }
     /// The bot is about to be moved by its own doing (a flight, a portal, a hearthstone): not an interruption
     void NoteExpectedMove() { _expectedMove = true; }
     /// Changes every time the bot was moved by something other than itself (summon, GM teleport,
@@ -206,6 +208,7 @@ private:
     RouteFollower _route;
     BotMoveState _moveState;
     RotationRunner _rotation;
+    AbstractLife::State _abstract;   // Playerbots.Abstract.Enable: the status a frozen bot is living as a timer
     bool _expectedMove = false;
     Position _lastStand;
     uint32 _lastStandMap = 0;         // the map _lastStand is on: a rescue never crosses maps
