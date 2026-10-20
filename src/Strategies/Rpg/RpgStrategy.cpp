@@ -18,6 +18,8 @@
 #include "ObjectMgr.h"
 #include "Player.h"
 #include "PlayerbotAI.h"
+#include "Log.h"
+#include "Travel/StuckDiagnosis.h"
 #include "PlayerbotsConfig.h"
 #include "QuestDef.h"
 #include "QuestTravel.h"
@@ -171,11 +173,45 @@ void RandomChangeStatus(PlayerbotAI& ai, uint32 now)
     rpg.Begin(chosen, now);
 }
 
+constexpr float WalkerHoldRange = 8.0f;            // a walking NPC stops for a bot this close
+constexpr uint32 WalkerHoldMs = 4000;
+constexpr uint32 WalkerReaimMs = 800;              // a bot after a walking NPC plans again at most this often
+constexpr float WalkerReaimYards = 4.0f;           // ... once the NPC has moved this far from where the path was aimed
 constexpr float NpcArriveYards = 3.5f;             // service NPCs only answer within their combat reach + 4 yards: stop well inside that
 constexpr uint32 NoPathBlockMs = 10 * 60 * 1000;   // an NPC the navmesh cannot reach is skipped this long
 constexpr uint32 NoPathPauseMs = 3000;             // and the bot stands still this long before choosing again
 
-bool WalkOrStuck(PlayerbotAI& ai, uint32 now)
+// A bot walking up to an NPC stops a random 1 .. 6 yards short of it, not on its spot. Service NPCs only answer within their combat
+// reach + 4 yards, so the roll is capped half a yard inside that: the bot stands at the rolled distance when it interacts
+float StandOffFor(RpgInfo& rpg, WorldObject const* object)
+{
+    if (!sPlayerbotsConfig.RpgNpcStandOff)
+        return 0.0f;
+    if (rpg.StandOffTarget != object->GetGUID())
+    {
+        float cap = 4.0f;    // mailboxes and other objects
+        if (Creature const* npc = object->ToCreature())
+            cap = std::min(6.0f, npc->GetCombatReach() + 3.5f);
+        rpg.StandOff = frand(1.0f, std::max(1.0f, cap));
+        rpg.StandOffTarget = object->GetGUID();
+    }
+    return rpg.StandOff;
+}
+
+// Why a bot gave up on its target, for the stuck log: a walking NPC (Thomas Miller) that outpaces a bot's relaunches looks like "no headway"
+void LogGaveUp(Player* bot, RpgInfo const& rpg, char const* why)
+{
+    if (rpg.Target.IsEmpty())
+        return;
+
+    WorldObject* object = ObjectAccessor::GetWorldObject(*bot, rpg.Target);
+    Unit const* unit = object ? object->ToUnit() : nullptr;
+    TC_LOG_INFO("server.playerbots.stuck", "Playerbots: {} gives up on {} ({}): {}, {:.1f} yd away, npc moving {}, goal ({:.1f}, {:.1f}, {:.1f}); {}",
+        bot->GetName(), object ? object->GetName() : "an unknown target", rpg.Target.ToString(), why, object ? bot->GetExactDist(object) : -1.0f,
+        unit && unit->isMoving() ? "yes" : "no", rpg.Dest.GetPositionX(), rpg.Dest.GetPositionY(), rpg.Dest.GetPositionZ(), DescribeStuck(bot, nullptr));
+}
+
+bool WalkOrStuck(PlayerbotAI& ai, uint32 now, float standoff = 0.0f)
 {
     Player* bot = ai.GetBot();
     RpgInfo& rpg = ai.GetRpg();
@@ -187,6 +223,7 @@ bool WalkOrStuck(PlayerbotAI& ai, uint32 now)
     {
         // Stuck: stop and pick something else. No height-snap teleport: a bot must never be moved to a floor the navmesh
         // did not put it on (it fell through the world that way).
+        LogGaveUp(bot, rpg, "no headway");
         bot->GetMotionMaster()->Clear();
         bot->StopMoving();
         if (!rpg.Target.IsEmpty())
@@ -196,10 +233,14 @@ bool WalkOrStuck(PlayerbotAI& ai, uint32 now)
         return true;
     }
 
-    MoveResult result = MoveAlongMesh(bot, rpg.Dest, NpcArriveYards);
+    MoveResult result = MoveAlongMesh(bot, rpg.Dest, std::max(NpcArriveYards, standoff + 0.5f), standoff);
+    // within reach of the NPC but still walking the last yards to the stand-off point: the visit starts when the bot has stopped
+    if (result == MoveResult::Arrived && standoff > 0.0f && IsMovingOnFoot(bot))
+        return true;
     if (result == MoveResult::NoPath)
     {
         // The navmesh has no way there: skip this target for a while instead of waiting out the stuck timer
+        LogGaveUp(bot, rpg, "no mesh path");
         bot->GetMotionMaster()->Clear();
         bot->StopMoving();
         if (!rpg.Target.IsEmpty())
@@ -662,11 +703,32 @@ private:
             return true;
         }
 
+        // An NPC that walks (a baker on his round): a person runs after him and stops him by talking to him. A path is only planned
+        // when the last one has ended, so the bot would trail him; it re-aims when he has moved on, and within a few yards he holds still
+        if (Creature* walker = object->ToCreature(); walker && walker->IsAlive() && !walker->IsInCombat()
+            && (walker->isMoving() || walker->GetMotionMaster()->GetCurrentMovementGeneratorType() == WAYPOINT_MOTION_TYPE))
+        {
+            if (bot->GetExactDist(walker) <= WalkerHoldRange)
+                walker->PauseMovement(WalkerHoldMs);
+            else if (!IsMovingOnFoot(bot))
+            {
+                rpg.LaunchDest = walker->GetPosition();
+                rpg.LaunchedAt = now;
+            }
+            else if (now - rpg.LaunchedAt > WalkerReaimMs && rpg.LaunchDest.GetExactDist2d(walker) > WalkerReaimYards)
+            {
+                bot->StopMoving();
+                rpg.LaunchDest = walker->GetPosition();
+                rpg.LaunchedAt = now;
+            }
+        }
+
         rpg.SetDest(object->GetPosition());
-        if (WalkOrStuck(ai, now))
+        if (WalkOrStuck(ai, now, StandOffFor(rpg, object)))
             return true;
 
         TryInteract(bot, object);
+        rpg.StandOffTarget.Clear();   // a later visit to this NPC rolls its own distance
         // do not walk straight back to the same NPC; an innkeeper visit is a short stop
         rpg.BlockTarget(object->GetGUID(), now, urand(90 * 1000, 180 * 1000));
         uint32 stay = sPlayerbotsConfig.RpgNpcStayTime;
@@ -703,8 +765,11 @@ private:
         }
 
         rpg.SetDest(fmSpot->Pos);
-        if (WalkOrStuck(ai, now))
+        // the stand-off needs the flight master itself (its reach); on a long leg it is not in sight yet and the walk ends on the spot
+        Creature* fmNear = bot->FindNearestCreature(fmSpot->Entry, 60.0f, true);
+        if (WalkOrStuck(ai, now, fmNear ? StandOffFor(rpg, fmNear) : 0.0f))
             return true;
+        rpg.StandOffTarget.Clear();
 
         Creature* fm = bot->FindNearestCreature(fmSpot->Entry, 12.0f, true);
         if (!fm || !fm->HasNpcFlag(UNIT_NPC_FLAG_FLIGHTMASTER))

@@ -192,6 +192,7 @@ struct Config
     uint32 RpgDurationMs[10] = { 0, 1800000, 120000, 180000, 300000, 120000, 30000, 300000, 600000, 45000 };
     uint32 RpgGatherDistance = 120;            // yards a gatherer walks to a herb or ore node to work at it
     uint32 RpgNpcStayTime = 8000;
+    bool RpgNpcStandOff = false;               // walks to an NPC end a random 1-6 yards short of it
     uint32 RpgPoiStayTime = 300000;
     uint32 RpgStuckTime = 90000;
     bool RpgSellJunk = true;                  // a bot at a vendor sells the grey items it carries (the client's "sell all junk")

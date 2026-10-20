@@ -217,6 +217,7 @@ void Config::Load()
     RpgDurationMs[6] = uint32(std::max(1000, sConfigMgr->GetIntDefault("Playerbots.Rpg.Duration.Rest", 30000)));
     RpgDurationMs[7] = uint32(std::max(1000, sConfigMgr->GetIntDefault("Playerbots.Rpg.Duration.WanderRandom", 300000)));
     RpgNpcStayTime = uint32(std::max(1000, sConfigMgr->GetIntDefault("Playerbots.Rpg.NpcStayTime", 8000)));
+    RpgNpcStandOff = sConfigMgr->GetBoolDefault("Playerbots.Rpg.NpcStandOff", false);
     RpgPoiStayTime = uint32(std::max(1000, sConfigMgr->GetIntDefault("Playerbots.Rpg.PoiStayTime", 300000)));
     RpgStuckTime = uint32(std::max(5000, sConfigMgr->GetIntDefault("Playerbots.Rpg.StuckTime", 90000)));
     RpgSellJunk = sConfigMgr->GetBoolDefault("Playerbots.Rpg.SellJunk", true);

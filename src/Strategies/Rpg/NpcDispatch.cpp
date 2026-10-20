@@ -26,7 +26,9 @@
 #include "Item.h"
 #include "ItemTemplate.h"
 #include "MailPackets.h"
+#include "MotionMaster.h"
 #include "Player.h"
+#include "GearFactory.h"
 #include "PlayerbotsConfig.h"
 #include "SharedDefines.h"
 #include "Travel/HubIndex.h"
@@ -93,6 +95,8 @@ bool NeedsHomeBind(Player const* bot)
     return bot->GetExactDist2d(home) > 1000.0f;
 }
 
+constexpr int32 WalkingNpcPenalty = 20;
+
 int32 ScoreNpcTarget(Player* bot, WorldObject* object)
 {
     if (!object)
@@ -144,22 +148,27 @@ ObjectGuid ChooseNpcTarget(Player* bot, std::vector<std::pair<ObjectGuid, uint32
     std::vector<Creature*> nearby;
     bot->GetCreatureListWithOptionsInGrid(nearby, 50.0f, FindCreatureOptions{});
 
-    std::vector<ObjectGuid> best;
+    // Every NPC within 50 yards with its score. The single best one is not taken: with a unique top scorer (a baker who sells and gives
+    // quests) every bot nearby would walk to him, and behind him if he walks. Any NPC scoring at least half of the best is a candidate,
+    // so an urgent need (repair, 100+) still decides, and similar scores spread the bots out
+    std::vector<std::pair<int32, ObjectGuid>> scored;
     int32 bestScore = 0;
     for (Creature* creature : nearby)
     {
         if (!creature || !creature->IsAlive() || creature->IsHostileTo(bot) || isBlocked(creature->GetGUID()))
             continue;
         int32 score = ScoreNpcTarget(bot, creature);
-        if (score < bestScore)
-            continue;
-        if (score > bestScore)
-        {
-            bestScore = score;
-            best.clear();
-        }
-        best.push_back(creature->GetGUID());
+        // a person goes to the one who stands still before running after one who walks away
+        if (creature->isMoving() || creature->GetMotionMaster()->GetCurrentMovementGeneratorType() == WAYPOINT_MOTION_TYPE)
+            score = std::max(1, score - WalkingNpcPenalty);
+        scored.emplace_back(score, creature->GetGUID());
+        bestScore = std::max(bestScore, score);
     }
+
+    std::vector<ObjectGuid> best;
+    for (auto const& [score, guid] : scored)
+        if (score * 2 >= bestScore)
+            best.push_back(guid);
 
     if (!best.empty())
         return best[urand(0, uint32(best.size() - 1))];
@@ -436,6 +445,9 @@ bool IsPostable(Item const* item, uint32& quality, uint64& unitPrice)
     ItemTemplate const* proto = item->GetTemplate();
     if (!proto || proto->GetSellPrice() == 0)
         return false;
+    // Supply hands these out for free, listing them would mint gold and flood the auction house
+    if (sGearFactory->IsStocked(proto->GetId()))
+        return false;
     quality = proto->GetQuality();
     if (!item->CanBeTraded() || item->IsNotEmptyBag() || proto->HasFlag(ITEM_FLAG_CONJURED) || *item->m_itemData->Expiration)
         return false;
@@ -576,6 +588,33 @@ ObjectGuid FindNearestNpcWithFlag(Player* bot, uint32 npcFlag, float range)
     return best ? best->GetGUID() : ObjectGuid::Empty;
 }
 
+void BeginInteraction(Player* bot, Creature* npc, uint32 holdMs)
+{
+    if (!bot || !npc || !bot->IsInWorld() || !npc->IsInWorld())
+        return;
+
+    bot->SetSelection(npc->GetGUID());
+    bot->SetFacingToObject(npc);
+    bot->RemoveAurasWithInterruptFlags(SpellAuraInterruptFlags::Interacting);
+
+    // The core handler pauses any NPC that has an interaction pause (nearly all of them). An NPC that stands still (an innkeeper, a
+    // counter vendor) keeps its facing; only one that walks (waypoints, random wander, or moving right now) stops and turns to the bot
+    MovementGeneratorType motion = npc->GetMotionMaster()->GetCurrentMovementGeneratorType();
+    bool walker = npc->isMoving() || motion == WAYPOINT_MOTION_TYPE || motion == RANDOM_MOTION_TYPE;
+    if (walker && !npc->IsInCombat() && npc->GetMovementTemplate().GetInteractionPauseTimer())
+    {
+        npc->PauseMovement(holdMs);
+        npc->SetFacingToObject(bot);
+    }
+
+    ObjectGuid guid = npc->GetGUID();
+    bot->m_Events.AddEventAtOffset([bot, guid]()
+    {
+        if (bot->GetTarget() == guid && !bot->GetVictim())
+            bot->SetSelection(ObjectGuid::Empty);
+    }, Milliseconds(holdMs));
+}
+
 bool TryInteract(Player* bot, WorldObject* object)
 {
     if (!bot || !object)
@@ -598,7 +637,7 @@ bool TryInteract(Player* bot, WorldObject* object)
     if (!npc)
         return false;
 
-    bot->SetFacingToObject(npc);
+    BeginInteraction(bot, npc, std::min<uint32>(sPlayerbotsConfig.RpgNpcStayTime, 8000));
     OpenGossip(bot, npc);
 
     if (npc->HasNpcFlag(UNIT_NPC_FLAG_REPAIR) && DurabilityPct(bot) < sPlayerbotsConfig.RpgRepairDurabilityPct)

@@ -41,8 +41,12 @@ struct RpgInfo
     uint32 LastProgress = 0;
     float BestDist = 0.0f;
     Position Dest;
+    Position LaunchDest;               // where a walking NPC was when the bot's path to it was launched
+    uint32 LaunchedAt = 0;
     ObjectGuid Target;
     bool HasDest = false;
+    ObjectGuid StandOffTarget;         // the NPC the stand-off below was rolled for
+    float StandOff = 0.0f;             // yards short of that NPC the walk ends (1 .. its interaction range), rolled once per NPC
     uint64 NodeSpawn = 0;              // gathering: spawn id of the node walked to
     uint32 NodeEntry = 0;
     bool Working = false;              // a work emote is on (cleared by whoever ends the gathering)

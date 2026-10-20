@@ -16,6 +16,7 @@
  */
 
 #include "QuestTravel.h"
+#include "Strategies/Rpg/NpcDispatch.h"
 #include "AreaTriggerPackets.h"
 #include "Creature.h"
 #include "CreatureData.h"
@@ -62,6 +63,7 @@ constexpr uint32 NothingFoundInterval = 45000;
 constexpr uint32 QuestTimeout = 30 * 60 * 1000; // give up on a quest after this long (travelling by route does not count)
 constexpr uint32 StuckTimeout = 90 * 1000;      // no progress towards a destination
 constexpr float ArriveDistance = 5.0f;
+constexpr float NpcStandOffMax = 4.0f;           // a giver or turn-in NPC: the walk ends 1 .. this far short of it (service range is combat reach + 4)
 constexpr float InteractDistance = 25.0f;       // giver/turn-in NPC must be this close (core allows 5.5 + reach, we walk up first)
 constexpr float HuntSearchRange = 70.0f;
 constexpr int32 MaxLevelsBelow = 6;             // quests further below the bot's level give too little XP
@@ -871,7 +873,8 @@ private:
     }
 
     // Walks to a position, true while still travelling
-    bool Travel(PlayerbotAI& ai, uint32 now, float arrive = ArriveDistance)
+    // standoff > 0: the walk ends that many yards short of _dest (a giver or turn-in NPC: the bot stands near it, not on its spot)
+    bool Travel(PlayerbotAI& ai, uint32 now, float arrive = ArriveDistance, float standoff = 0.0f)
     {
         Player* bot = ai.GetBot();
         if (_destMap != bot->GetMapId() || bot->GetExactDist2d(_dest) > FarDistance)
@@ -892,7 +895,7 @@ private:
         {
             if (bot->GetVictim())
                 bot->AttackStop();
-            MoveToward(bot, _dest, arrive);
+            MoveToward(bot, _dest, arrive, standoff);
             _moveIssued = true;
         }
 
@@ -1010,9 +1013,10 @@ private:
                 return false;
             }
             SetDest(pos, mapId);
+            _standoff = sPlayerbotsConfig.RpgNpcStandOff ? frand(1.0f, NpcStandOffMax) : 0.0f;
         }
 
-        if (Travel(ai, now))
+        if (Travel(ai, now, ArriveDistance, _standoff))
             return true;
 
         Creature* giver = FindNearby(bot, plan.Givers, InteractDistance);
@@ -1024,6 +1028,7 @@ private:
 
         bot->GetMotionMaster()->Clear();
         std::vector<uint16> phasesBefore = PhaseGuard::ForeignPhases(bot);
+        BeginInteraction(bot, giver, 4000);
         bot->AddQuestAndCheckCompletion(quest, giver);
         if (GainedPhase(phasesBefore, PhaseGuard::ForeignPhases(bot)))
         {
@@ -1150,9 +1155,10 @@ private:
                 return false;
             }
             SetDest(pos, mapId);
+            _standoff = sPlayerbotsConfig.RpgNpcStandOff ? frand(1.0f, NpcStandOffMax) : 0.0f;
         }
 
-        if (Travel(ai, now))
+        if (Travel(ai, now, ArriveDistance, _standoff))
             return true;
 
         Creature* ender = FindNearby(bot, plan.Enders, InteractDistance);
@@ -1172,6 +1178,7 @@ private:
 
         bot->GetMotionMaster()->Clear();
         std::vector<uint16> phasesBefore = PhaseGuard::ForeignPhases(bot);
+        BeginInteraction(bot, ender, 4000);
         bot->RewardQuest(quest, type, rewardId, ender);
         if (GainedPhase(phasesBefore, PhaseGuard::ForeignPhases(bot)))
             PhaseGuard::BlockQuest(_questId, "reward changed the phase");
@@ -1214,15 +1221,18 @@ private:
                 return false;
             }
             SetDest(pos, mapId);
+            // a talk-to step walks up to an NPC; explore points and objects are walked to as before
+            _standoff = step.Kind == StepKind::Talk && sPlayerbotsConfig.RpgNpcStandOff ? frand(1.0f, NpcStandOffMax) : 0.0f;
         }
 
-        if (Travel(ai, now, arrive))
+        if (Travel(ai, now, arrive, step.Kind == StepKind::Talk ? _standoff : 0.0f))
             return true;
 
         if (step.Kind == StepKind::Talk)
         {
             if (Creature* npc = FindNearby(bot, step.Entries, InteractDistance))
             {
+                BeginInteraction(bot, npc, 4000);
                 bot->TalkedToCreature(npc->GetEntry(), npc->GetGUID());
                 Progress(now);
                 _hasDest = false;
@@ -1372,6 +1382,7 @@ private:
     State _state = State::Idle;
     uint32 _questId = 0;
     Position _dest;
+    float _standoff = 0.0f;          // yards short of a giver or turn-in NPC the walk ends, rolled when its spot is chosen
     uint32 _destMap = 0;
     uint32 _currentMap = 0;      // map of the bot when a destination without a map is set
     uint32 _assignedQuest = 0;
