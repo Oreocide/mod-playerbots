@@ -477,6 +477,15 @@ void PlayerbotAI::Update(uint32 diff)
     }
     _bot->GetSession()->SetDormant(false);
 
+    // A bot has no client, so nothing sends the packets (time sync, "active mover complete") that set this flag, and without it
+    // Player::CanNeverSee hides every object from the bot: CanSeeOrDetect is false for every creature, so it cannot pick a target,
+    // attack or cast at anything. The core's own comment: it delays visible objects "until the client is ready". A bot is ready.
+    if (!_bot->HasPlayerLocalFlag(PLAYER_LOCAL_FLAG_OVERRIDE_TRANSPORT_SERVER_TIME))
+    {
+        _bot->SetPlayerLocalFlag(PLAYER_LOCAL_FLAG_OVERRIDE_TRANSPORT_SERVER_TIME);
+        _bot->UpdateObjectVisibility(false);
+    }
+
     _updateTimer += diff;
     if (_updateTimer < sPlayerbotsConfig.UpdateInterval)
         return;
