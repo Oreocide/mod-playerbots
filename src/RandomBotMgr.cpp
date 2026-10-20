@@ -48,6 +48,7 @@
 #include <sstream>
 #include <unordered_set>
 #include "ObjectAccessor.h"
+#include "ConditionMgr.h"
 #include "ObjectMgr.h"
 #include "Player.h"
 #include "PlayerbotAI.h"
@@ -80,12 +81,55 @@ namespace
 {
 // Bump to put every random bot on a valid spot at its next login (open-world spots scatter inside
 // the graveyard's zone, weighted so cities are crowded and desolate graveyards stay thin)
-constexpr int32 PlacementVersion = 6;
+constexpr int32 PlacementVersion = 7;
 constexpr uint32 RotateCheckMs = 60000;          // hotspot rotation looks at the bots once a minute
 constexpr float RotateObservedDistance = 250.0f; // a bot a player can see is not moved
 
 constexpr uint32 CreateTimeout = 60000;
 constexpr uint32 CreateFailurePause = 300000;
+
+// The terrain a player stands in is the base map with the terrain swaps of its phase on top (map 1 has defaults: after the burning Teldrassil and
+// Darkshore are ocean, Silithus has the Wound, Hyjal is changed). Heights taken with the empty phase come from the base map and are ground that does
+// not exist for the player: bots placed there hang in the air. This is the phase the bot will have on arrival: the swaps of the map whose conditions
+// it meets, evaluated the way PhasingHandler::OnMapChange does.
+PhaseShift PlacementPhase(Player* bot, uint32 mapId)
+{
+    PhaseShift phase;
+    if (!bot)
+        return phase;
+
+    auto const& swaps = sObjectMgr->GetTerrainSwaps();
+    auto itr = swaps.find(mapId);
+    if (itr == swaps.end())
+        return phase;
+
+    ConditionSourceInfo info(bot);
+    for (TerrainSwapInfo const* swap : itr->second)
+        if (sConditionMgr->IsObjectMeetingNotGroupedConditions(CONDITION_SOURCE_TYPE_TERRAIN_SWAP, swap->Id, info))
+            phase.AddVisibleMapId(swap->Id, swap);
+    return phase;
+}
+
+// A bot placed a few yards from an anchor that is known to be good ground (a service NPC, whose spawn stands on a real floor) must stand on that
+// same floor with nothing solid between. The height query alone is not enough: next to the auction house or the bank it also finds the terrain under
+// the building, a roof or a stair, and those are within a few yards of the NPC, so the bot appeared inside a wall or under the floor and walked out
+// through it. The line of sight from the anchor's eyes to the new spot's eyes catches walls and floors in between.
+bool FloorNearAnchor(Map* map, PhaseShift const& phase, Position const& anchor, float x, float y, float& outZ)
+{
+    if (!Trinity::IsValidMapCoord(x, y))
+        return false;
+
+    float const anchorZ = anchor.GetPositionZ();
+    float z = map->GetHeight(phase, x, y, anchorZ + 1.5f, true, 4.0f);
+    if (z <= INVALID_HEIGHT || std::fabs(z - anchorZ) > 2.5f)
+        return false;
+
+    if (!map->isInLineOfSight(phase, anchor.GetPositionX(), anchor.GetPositionY(), anchorZ + 1.5f, x, y, z + 1.5f, LINEOFSIGHT_ALL_CHECKS, VMAP::ModelIgnoreFlags::Nothing))
+        return false;
+
+    outZ = z;
+    return true;
+}
 
 bool IsUsableName(std::string& name)
 {
@@ -1260,6 +1304,9 @@ RandomBotMgr::Spot const* RandomBotMgr::PickSpot(uint8 level, uint32 faction, Ob
         if (spot.HostileMask & (faction == ALLIANCE ? 1 : 2))
             continue;
 
+        if (IsVoid(spot.MapId, spot.X, spot.Y))
+            continue;
+
         candidates.push_back({ &spot, 0 });
     }
 
@@ -1293,7 +1340,7 @@ RandomBotMgr::Spot const* RandomBotMgr::PickSpot(uint8 level, uint32 faction, Ob
     return candidates.back().Place;
 }
 
-Position RandomBotMgr::ScatterSpot(Spot const& spot, ObjectGuid except) const
+Position RandomBotMgr::ScatterSpot(Spot const& spot, ObjectGuid except, Player* bot) const
 {
     Position at(spot.X, spot.Y, spot.Z, frand(0.0f, 2.0f * float(M_PI)));
     if (spot.Scatter < 5.0f)
@@ -1311,7 +1358,7 @@ Position RandomBotMgr::ScatterSpot(Spot const& spot, ObjectGuid except) const
         capped = occupied.size() >= maxGrids;
     }
 
-    PhaseShift const& phase = PhasingHandler::GetEmptyPhaseShift();
+    PhaseShift const phase = PlacementPhase(bot, spot.MapId);
     uint32 const homeZone = map->GetZoneId(phase, spot.X, spot.Y, spot.Z);
 
     for (uint32 attempt = 0; attempt < 8; ++attempt)
@@ -1327,6 +1374,10 @@ Position RandomBotMgr::ScatterSpot(Spot const& spot, ObjectGuid except) const
         if (z <= INVALID_HEIGHT)
             continue;
         if (std::fabs(z - spot.Z) > 80.0f)
+            continue;
+        // open ground only: where the models (a building, a bridge, a cave roof) and the bare terrain disagree, the bot would stand on or inside a structure
+        float terrain = map->GetHeight(phase, x, y, z + 1.0f, false, 6.0f);
+        if (terrain <= INVALID_HEIGHT || std::fabs(z - terrain) > 1.5f)
             continue;
         if (homeZone && map->GetZoneId(phase, x, y, z) != homeZone)
             continue;
@@ -1472,6 +1523,26 @@ bool RandomBotMgr::AdvanceRandomize()
     return false;
 }
 
+void RandomBotMgr::ReportVoid(uint32 mapId, float x, float y)
+{
+    std::lock_guard lock(_voidLock);
+    for (auto const& [map, vx, vy] : _voidSpots)
+        if (map == mapId && std::fabs(vx - x) < 150.0f && std::fabs(vy - y) < 150.0f)
+            return;
+
+    _voidSpots.emplace_back(mapId, x, y);
+    TC_LOG_INFO("server.playerbots", "Playerbots: map {} around ({:.0f}, {:.0f}) has no ground in the players' terrain, no more bots are placed within 200 yards of it", mapId, x, y);
+}
+
+bool RandomBotMgr::IsVoid(uint32 mapId, float x, float y) const
+{
+    std::lock_guard lock(_voidLock);
+    for (auto const& [map, vx, vy] : _voidSpots)
+        if (map == mapId && std::fabs(vx - x) < 200.0f && std::fabs(vy - y) < 200.0f)
+            return true;
+    return false;
+}
+
 void RandomBotMgr::Place(Player* bot)
 {
     if (sPlayerbotsConfig.HotspotProb > 0.0f && roll_chance(sPlayerbotsConfig.HotspotProb * 100.0f) && PlaceAtHotspot(bot))
@@ -1479,9 +1550,25 @@ void RandomBotMgr::Place(Player* bot)
 
     ClearAnchor(bot->GetGUID());
 
-    if (Spot const* spot = PickSpot(bot->GetLevel(), Player::TeamForRace(bot->GetRace()), bot->GetGUID()))
+    // a spot whose ground does not exist in the players' terrain is remembered as void and another one is picked
+    for (uint32 attempt = 0; attempt < 4; ++attempt)
     {
-        Position at = ScatterSpot(*spot, bot->GetGUID());
+        Spot const* spot = PickSpot(bot->GetLevel(), Player::TeamForRace(bot->GetRace()), bot->GetGUID());
+        if (!spot)
+            break;
+
+        Position at = ScatterSpot(*spot, bot->GetGUID(), bot);
+        if (Map* spotMap = sMapMgr->FindMap(spot->MapId, 0); spotMap && spotMap->IsGridLoaded(at.GetPositionX(), at.GetPositionY()))
+        {
+            PhaseShift const phase = PlacementPhase(bot, spot->MapId);
+            float ground = spotMap->GetHeight(phase, at.GetPositionX(), at.GetPositionY(), at.GetPositionZ() + 2.0f, true, 60.0f);
+            if (ground <= INVALID_HEIGHT || std::fabs(ground - at.GetPositionZ()) > 8.0f)
+            {
+                ReportVoid(spot->MapId, spot->X, spot->Y);
+                continue;
+            }
+        }
+
         if (bot->TeleportTo(spot->MapId, at.GetPositionX(), at.GetPositionY(), at.GetPositionZ(), at.GetOrientation()))
         {
             UpdateHome(bot->GetGUID(), spot->MapId, at);
@@ -1508,6 +1595,22 @@ bool RandomBotMgr::PlaceAtHotspot(Player* bot)
     HotspotPoint const& point = destination->Point;
     Hotspot const& hotspot = destination->Spot;
 
+    if (IsVoid(hotspot.Map, point.X, point.Y))
+        return false;
+
+    // the hotspot itself must have ground in the terrain the player is in; if not, nobody is placed around it any more
+    PhaseShift const placementPhase = PlacementPhase(bot, hotspot.Map);
+    // (an unloaded grid has no height at all: nothing is judged there, the bot's own check after it arrived decides)
+    if (Map* hotspotMap = sMapMgr->FindMap(hotspot.Map, 0); hotspotMap && hotspotMap->IsGridLoaded(point.X, point.Y))
+    {
+        float ground = hotspotMap->GetHeight(placementPhase, point.X, point.Y, point.Z + 1.5f, true, 6.0f);
+        if (ground <= INVALID_HEIGHT || std::fabs(ground - point.Z) > 6.0f)
+        {
+            ReportVoid(hotspot.Map, point.X, point.Y);
+            return false;
+        }
+    }
+
     // grid limit reached: a hotspot in a grid without bots would load a new one
     if (uint32 maxGrids = sPlayerbotsConfig.RandomMaxGrids)
     {
@@ -1525,18 +1628,24 @@ bool RandomBotMgr::PlaceAtHotspot(Player* bot)
     float x = point.X;
     float y = point.Y;
     float z = point.Z;
-    float jitter = frand(4.0f, 16.0f);
-    float angle = frand(0.0f, 2.0f * float(M_PI));
-    float jx = point.X + jitter * std::cos(angle);
-    float jy = point.Y + jitter * std::sin(angle);
+    // (the point is where a service NPC stands: if no offset passes the floor and line-of-sight test, the bot stands exactly there, like the NPC)
     if (Map* map = sMapMgr->FindMap(hotspot.Map, 0))
     {
-        float jz = map->GetHeight(PhasingHandler::GetEmptyPhaseShift(), jx, jy, point.Z + 5.0f, true);
-        if (jz > INVALID_HEIGHT && std::fabs(jz - point.Z) <= 8.0f)
+        Position const anchorPos(point.X, point.Y, point.Z);
+        for (uint32 attempt = 0; attempt < 6; ++attempt)
         {
-            x = jx;
-            y = jy;
-            z = jz;
+            float jitter = frand(2.0f, 10.0f);
+            float angle = frand(0.0f, 2.0f * float(M_PI));
+            float jx = point.X + jitter * std::cos(angle);
+            float jy = point.Y + jitter * std::sin(angle);
+            float jz = 0.0f;
+            if (FloorNearAnchor(map, placementPhase, anchorPos, jx, jy, jz))
+            {
+                x = jx;
+                y = jy;
+                z = jz;
+                break;
+            }
         }
     }
     if (!bot->TeleportTo(hotspot.Map, x, y, z, orientation))

@@ -41,6 +41,7 @@
 #include "Log.h"
 #include "RandomBotMgr.h"
 #include "Travel/AirFollow.h"
+#include "World/WorldActionQueue.h"
 #include "Spawn/SpawnPolicy.h"
 #include "PlayerbotsConfig.h"
 #include "SocialMgr.h"
@@ -369,6 +370,25 @@ bool PlayerbotAI::InAir() const
     return _route.InAir() || AirFollow::Active(_botGuid);
 }
 
+bool PlayerbotAI::IsHoveringOverVoid()
+{
+    Map* map = _bot->GetMap();
+    if (!map || map->Instanceable() || !_bot->IsInWorld() || _bot->IsBeingTeleported() || _bot->GetTransport() || _bot->IsInFlight()
+        || _bot->IsInWater() || _bot->IsUnderWater() || InAir())
+        return false;
+
+    PhaseShift const& phase = _bot->GetPhaseShift();
+    float x = _bot->GetPositionX();
+    float y = _bot->GetPositionY();
+    float z = _bot->GetPositionZ();
+    // standing at the shore or on a dock above shallow water is fine
+    if (map->GetWaterLevel(phase, x, y) > z - 3.0f)
+        return false;
+
+    float ground = map->GetHeight(phase, x, y, z + 2.0f, true, 100.0f);
+    return ground <= INVALID_HEIGHT || z - ground > 30.0f;
+}
+
 bool PlayerbotAI::SnapToGround(bool notify, float lift)
 {
     if (!_bot->IsInWorld() || _bot->IsBeingTeleported() || IsPlayerJumping(_bot) || InAir())
@@ -463,11 +483,34 @@ void PlayerbotAI::Update(uint32 diff)
             if (!_grounded)
                 SnapToGround(sPlayerbotMgr->HasHumanWithin(_bot, 200.0f), 0.0f);
             _bot->SetDisableGravity(true);
+            _gravityOff = true;
         }
         else if (!_grounded)
             SnapToGround(false, 0.0f);
         if (_grounded && _master.IsEmpty())
             SetHome(_bot->GetPosition());
+
+        // A bot that was given ground which does not exist in the terrain the players are in hangs in the air and every player sees it float
+        // (Darnassus: the base map has the old city's ground, the swapped terrain is ocean). It goes somewhere else, and the place is not used again.
+        if (_master.IsEmpty() && _hoverFixes < 6 && GameTime::GetGameTimeMS() >= _hoverCheckMs)
+        {
+            _hoverCheckMs = GameTime::GetGameTimeMS() + 5000 + uint32(_bot->GetGUID().GetCounter() % 1000);
+            if (IsHoveringOverVoid())
+            {
+                ++_hoverFixes;
+                TC_LOG_INFO("server.playerbots.stuck", "Playerbots: {} hangs over nothing at map {} ({:.0f}, {:.0f}, {:.0f}), placing it again",
+                    _bot->GetName(), _bot->GetMapId(), _bot->GetPositionX(), _bot->GetPositionY(), _bot->GetPositionZ());
+                sRandomBotMgr->ReportVoid(_bot->GetMapId(), _bot->GetPositionX(), _bot->GetPositionY());
+                sWorldActionQueue->Enqueue(_botGuid, _bot->GetMapId(), ObjectGuid::Empty, [](Player* player)
+                {
+                    if (player->IsInWorld() && player->IsAlive() && !player->IsBeingTeleported())
+                        sRandomBotMgr->PlaceAgain(player);
+                });
+                _idle = false;
+                _grounded = false;
+                return;
+            }
+        }
 
         // nobody can see the bot: a route is lived through in time, not walked
         if (_route.IsActive())
@@ -495,8 +538,17 @@ void PlayerbotAI::Update(uint32 diff)
     if (_idle)
     {
         SnapToGround(true);
-        _bot->SetDisableGravity(false);
         _idle = false;
+    }
+    // Keyed on our own flag, not on _idle: a route arrival or a hover fix clears _idle while the bot is still frozen with gravity off,
+    // and a bot that turns near before the next frozen tick would otherwise keep the hover animation while it runs.
+    // Not keyed on IsGravityDisabled(): a vehicle, script or aura may have set that on a party bot.
+    if (_gravityOff)
+    {
+        if (!_grounded)
+            SnapToGround(true);   // placed by a route or a hover fix while frozen: it never got its floor
+        _bot->SetDisableGravity(false);
+        _gravityOff = false;
     }
     _bot->GetSession()->SetDormant(false);
 

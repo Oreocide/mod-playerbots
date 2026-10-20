@@ -149,6 +149,8 @@ private:
     uint32 RotatingSlot(uint32 max) const;
     void CompleteTeleportIfNeeded();
     bool SnapToGround(bool notify, float lift = 0.25f);
+    /// No ground below the bot in its own phase (terrain swap) within 100 yards, or only far below it, and it is not in water, a vehicle or in flight
+    bool IsHoveringOverVoid();
     Unit* FindNearbyEnemy() const;
     void MaintainGear(uint32 diff);
     void MaintainTalents();
@@ -180,6 +182,7 @@ private:
     Position _home;
     bool _hasHome = false;
     bool _idle = false;
+    bool _gravityOff = false;        // the frozen branch switched gravity (and with it the hover animation) off; only the unfreeze clears it
     bool _grounded = false;
     uint32 _gearTimer = 5000;
     uint32 _upgradeTimer = 8000;
@@ -219,6 +222,8 @@ private:
     uint32 _verdictJitter = 0;
     uint8 _simClass = SimRotation; // why the bot is simulated alone: the activity rotation or a human nearby
     bool _far = false;         // nobody is near: frozen, or simulated only by the activity rotation
+    uint32 _hoverCheckMs = 0;  // next time a far bot looks for ground under it
+    uint32 _hoverFixes = 0;    // times it was placed again for hanging over nothing
     uint32 _nextGoalMs = 0;    // far-bot goal check, so a frozen tick does not roll the table every time
 };
 }

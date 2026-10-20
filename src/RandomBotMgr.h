@@ -69,6 +69,13 @@ public:
     void EvictFromEnemyGround();
     Optional<Anchor> GetAnchor(ObjectGuid guid) const;
     void ClearAnchor(ObjectGuid guid);
+    /// A far bot hangs over nothing at this point: the height it was given came from the base map, but the terrain swap every player is in
+    /// (Teldrassil after the burning is ocean at Z -24, so the old Darnassus ground does not exist for them) has no ground there. The area is
+    /// not used for placement any more. Any thread.
+    void ReportVoid(uint32 mapId, float x, float y);
+    bool IsVoid(uint32 mapId, float x, float y) const;
+    /// Places the bot on a new valid spot. World thread only
+    void PlaceAgain(Player* bot) { Place(bot); }
     /// Map and position a bot was placed at, false if unknown
     bool GetHomeLocation(ObjectGuid guid, uint32& mapId, Position& position) const;
     /// Playerbots.Random.Maps: an empty list allows every map (valid once BuildSpots ran)
@@ -175,7 +182,7 @@ private:
     uint32 StartLevel(Player const* bot) const;
     Spot const* PickSpot(uint8 level, uint32 faction, ObjectGuid except) const;
     /// A ground point around the graveyard, inside its zone. Under the grid cap, only a grid a bot already occupies.
-    Position ScatterSpot(Spot const& spot, ObjectGuid except) const;
+    Position ScatterSpot(Spot const& spot, ObjectGuid except, Player* bot = nullptr) const;
     bool PlaceAtHotspot(Player* bot);
 
     /// Every loaded 533 yard grid costs ~100-175 MB (terrain, vmaps, nav mesh, all spawns), so the online bots may only
@@ -211,6 +218,8 @@ private:
     // _homes, _homeMaps and _anchors are written from map threads (PlayerbotAI::OnInterrupted, rpg anchor checks)
     // and the world thread, so every access holds _homesLock
     mutable std::shared_mutex _homesLock;
+    mutable std::mutex _voidLock;
+    std::vector<std::tuple<uint32, float, float>> _voidSpots;   // map, x, y of places a bot hung over nothing
     std::unordered_map<ObjectGuid, Position> _homes;
     std::unordered_map<ObjectGuid, uint32> _homeMaps;
     std::unordered_map<ObjectGuid, Anchor> _anchors;
