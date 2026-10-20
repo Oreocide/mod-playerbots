@@ -1404,12 +1404,16 @@ constexpr float HostileRange = 40.0f;
 constexpr float RareRange = 60.0f;
 constexpr float GuardRange = 80.0f;
 constexpr int32 LevelWindow = 5;
+constexpr uint32 RareInterestMs = 30000;          // a bot looks at a rare it does not fight for this long, then goes back to its day
+constexpr uint32 RareIgnoreMs = 10 * 60 * 1000;   // and does not walk up to that rare again for this long
 
 struct ReactState
 {
     uint32 NextScan = 0;
     ObjectGuid Guard;
     ObjectGuid Rare;
+    uint32 RareSince = 0;                                            // when the bot started looking at Rare (ms)
+    std::vector<std::pair<ObjectGuid, uint32>> RareIgnored;          // rares it lost interest in, until the stored time (ms)
 };
 
 std::mutex sReactLock;
@@ -1482,21 +1486,33 @@ Creature* NearestGuard(Player* bot)
     return best;
 }
 
-Creature* NearestRare(Player* bot)
+Creature* NearestRare(Player* bot, ReactState const& state, uint32 now)
 {
     struct Check
     {
+        Player* Bot = nullptr;
+        ReactState const* State = nullptr;
+        uint32 Now = 0;
+
         bool operator()(Creature* creature) const
         {
             if (!creature->IsAlive() || creature->IsCritter() || creature->IsTrigger() || creature->IsPet())
                 return false;
             CreatureClassifications rank = creature->GetCreatureTemplate()->Classification;
-            return rank == CreatureClassifications::Rare || rank == CreatureClassifications::RareElite;
+            if (rank != CreatureClassifications::Rare && rank != CreatureClassifications::RareElite)
+                return false;
+            // one that is evading, or that the bot does not even see, is not worth a walk (a stuck Sewer Beast kept every bot around it busy forever)
+            if (creature->IsInEvadeMode() || !Bot->CanSeeOrDetect(creature))
+                return false;
+            for (auto const& [guid, until] : State->RareIgnored)
+                if (guid == creature->GetGUID() && int32(until - Now) > 0)
+                    return false;
+            return true;
         }
     };
 
     std::vector<Creature*> found;
-    Check check;
+    Check check{ bot, &state, now };
     Trinity::CreatureListSearcher searcher(bot, found, check);
     Cell::VisitGridObjects(bot, searcher, RareRange);
 
@@ -1589,9 +1605,27 @@ public:
         else
             state.Guard.Clear();
 
-        if (Creature* rare = NearestRare(bot))
+        if (Creature* rare = NearestRare(bot, state, now))
         {
-            state.Rare = rare->GetGUID();
+            if (state.Rare != rare->GetGUID())
+            {
+                state.Rare = rare->GetGUID();
+                state.RareSince = now;
+            }
+            else if (now - state.RareSince >= RareInterestMs)
+            {
+                // looked long enough and nothing came of it (a rare it cannot hurt, or one that is not worth the fight): back to its day
+                std::erase_if(state.RareIgnored, [now](auto const& entry) { return int32(entry.second - now) <= 0; });
+                if (state.RareIgnored.size() >= 8)
+                    state.RareIgnored.erase(state.RareIgnored.begin());
+                state.RareIgnored.emplace_back(rare->GetGUID(), now + RareIgnoreMs);
+                TC_LOG_DEBUG("server.playerbots", "Playerbots: {} loses interest in rare {}", bot->GetName(), rare->GetName());
+                state.Rare.Clear();
+                state.RareSince = 0;
+                state.NextScan = now + sPlayerbotsConfig.ScanInterval;
+                SaveReact(bot->GetGUID(), state);
+                return false;
+            }
             int32 gap = std::abs(int32(bot->GetLevel()) - int32(rare->GetLevelForTarget(bot)));
             TC_LOG_DEBUG("server.playerbots", "Playerbots: {} is looking at rare {}", bot->GetName(), rare->GetName());
             if (gap <= LevelWindow && bot->GetExactDist(rare) < 25.0f)
@@ -1604,6 +1638,7 @@ public:
         }
 
         state.Rare.Clear();
+        state.RareSince = 0;
         state.NextScan = now + sPlayerbotsConfig.ScanInterval;
         SaveReact(bot->GetGUID(), state);
         return false;
