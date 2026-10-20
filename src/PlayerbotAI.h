@@ -91,6 +91,8 @@ public:
     }
     /// Full AI (combat, wander, gear). False = freeze in place like AC BotActiveAlone
     bool IsSimulated();
+    /// In the air on purpose: an air leg of the route, or following a flying master (or landing for a fight). The ground checks leave the bot alone
+    bool InAir() const;
     bool ComputeSimulated();
 
     BotRole GetRole() const;

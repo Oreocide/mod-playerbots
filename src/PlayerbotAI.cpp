@@ -40,6 +40,7 @@
 #include "GameTime.h"
 #include "Log.h"
 #include "RandomBotMgr.h"
+#include "Travel/AirFollow.h"
 #include "Spawn/SpawnPolicy.h"
 #include "PlayerbotsConfig.h"
 #include "SocialMgr.h"
@@ -94,6 +95,7 @@ PlayerbotAI::PlayerbotAI(Player* bot, ObjectGuid master, uint8 formationIndex)
 PlayerbotAI::~PlayerbotAI()
 {
     GoalStore::Forget(_botGuid);
+    AirFollow::Forget(_botGuid);
     SaveState();
 }
 
@@ -362,9 +364,14 @@ bool PlayerbotAI::IsActiveAlone()
     return RotatingSlot(100) < pct;
 }
 
+bool PlayerbotAI::InAir() const
+{
+    return _route.InAir() || AirFollow::Active(_botGuid);
+}
+
 bool PlayerbotAI::SnapToGround(bool notify, float lift)
 {
-    if (!_bot->IsInWorld() || _bot->IsBeingTeleported() || IsPlayerJumping(_bot))
+    if (!_bot->IsInWorld() || _bot->IsBeingTeleported() || IsPlayerJumping(_bot) || InAir())
         return false;
 
 
@@ -418,6 +425,12 @@ void PlayerbotAI::Update(uint32 diff)
         _bot->GetSession()->SetDormant(false);
         return;
     }
+
+    // A bot in the air whose route was cancelled (a fight started) or that froze in the air: put it back on the ground before anything else
+    // looks at its height (the ground snap, the hover-over-void check and the fall watchdog would all misread a cruise altitude)
+    if (_route.InAir())
+        _route.TickAir(*this, !IsSimulated());
+    AirFollow::Tick(*this, !IsSimulated());
 
     // A random bot that followed a player's party goes back to its own life when the party is gone
     if (_master.IsEmpty())
@@ -641,7 +654,7 @@ constexpr float InterruptDistance = 60.0f;
 // (walking back to an NPC on the other side of the continent), it looks around where it is now
 void PlayerbotAI::DetectInterruption()
 {
-    if (_bot->IsInFlight())
+    if (_bot->IsInFlight() || InAir())
     {
         _hasKnown = false; // no comparison across a taxi ride
         return;
@@ -710,7 +723,8 @@ void PlayerbotAI::OnInterrupted()
 
 void PlayerbotAI::RememberStand()
 {
-    if (!_bot->IsInWorld() || _bot->IsBeingTeleported() || _bot->IsInFlight() || IsPlayerJumping(_bot))
+    // an air leg is not a fall: its own recovery (RouteFollower::RecoverAir) puts a bot back on the ground
+    if (!_bot->IsInWorld() || _bot->IsBeingTeleported() || _bot->IsInFlight() || IsPlayerJumping(_bot) || InAir())
         return;
 
     float stand = 0.0f;

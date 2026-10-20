@@ -145,6 +145,10 @@ struct Config
     uint32 AirMaxLegYards = 3000;              // ... and at most this far
     uint32 AirNeighbours = 3;                  // each town gets air links to this many towns in that range
     uint32 AirMaxGridLoads = 2;
+    bool AirFollow = false;                    // party and raid bots follow a flying master into the air (Travel/AirFollow)
+    bool AirFollowGrant = true;                // a bot that follows a flying master gets master riding and a flying mount when it has none
+    uint32 AirFollowCatchUpYards = 150;        // a following bot further behind than this ...
+    uint32 AirFollowCatchUpSeconds = 20;       // ... for this long is placed in the air behind the master                // a corridor that needs more unloaded grids than this is refused for now
     bool TravelFreeFlights = true;             // a bot that boards a flight gets the gold for it
     float TravelDangerSecondsPerLevel = 30.0f; // a walk past creatures above the bot's level (beyond 3) counts this much longer per level
     uint32 TravelDangerBlockLevels = 12;       // past creatures this many levels above the bot a route is not walked at all

@@ -160,6 +160,10 @@ void Config::Load()
     AirMaxLegYards = uint32(std::max(int32(AirMinLegYards), sConfigMgr->GetIntDefault("Playerbots.Air.MaxLegYards", 3000)));
     AirNeighbours = uint32(std::clamp(sConfigMgr->GetIntDefault("Playerbots.Air.Neighbours", 3), 1, 8));
     AirMaxGridLoads = uint32(std::clamp(sConfigMgr->GetIntDefault("Playerbots.Air.MaxGridLoads", 2), 0, 8));
+    AirFollow = sConfigMgr->GetBoolDefault("Playerbots.Air.Follow", false);
+    AirFollowGrant = sConfigMgr->GetBoolDefault("Playerbots.Air.FollowGrant", true);
+    AirFollowCatchUpYards = uint32(std::clamp(sConfigMgr->GetIntDefault("Playerbots.Air.FollowCatchUpYards", 150), 40, 1000));
+    AirFollowCatchUpSeconds = uint32(std::clamp(sConfigMgr->GetIntDefault("Playerbots.Air.FollowCatchUpSeconds", 20), 3, 600));
     TravelDangerSecondsPerLevel = std::max(0.0f, sConfigMgr->GetFloatDefault("Playerbots.Travel.DangerSecondsPerLevel", 30.0f));
     TravelDangerBlockLevels = uint32(std::clamp(sConfigMgr->GetIntDefault("Playerbots.Travel.DangerBlockLevels", 12), 3, 255));
 
