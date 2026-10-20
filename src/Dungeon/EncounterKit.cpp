@@ -41,6 +41,7 @@ void RegisterAzjolNerub(AiRegistry& registry);
 void RegisterAhnKahet(AiRegistry& registry);
 void RegisterUtgardePinnacle(AiRegistry& registry);
 void RegisterNexus(AiRegistry& registry);
+void RegisterCullingOfStratholme(AiRegistry& registry);
 
 namespace
 {
@@ -242,5 +243,6 @@ void RegisterAll(AiRegistry& registry)
     RegisterAhnKahet(registry);
     RegisterUtgardePinnacle(registry);
     RegisterNexus(registry);
+    RegisterCullingOfStratholme(registry);
 }
 }
