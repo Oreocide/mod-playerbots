@@ -82,6 +82,8 @@ public:
     /// Newest slot is 0. place and goal keep 16, person keeps 32. One transaction per push.
     void Remember(ObjectGuid bot, std::string const& kind, std::string const& key, std::string const& payload);
     void ForgetMemory(ObjectGuid bot);
+    /// Everything stored for this character: values, events, memory. A random bot that leaves the pool (hire)
+    void ForgetBot(ObjectGuid bot);
     std::vector<MemoryLine> RecentMemory(ObjectGuid bot, uint32 limit) const;
 
 private:

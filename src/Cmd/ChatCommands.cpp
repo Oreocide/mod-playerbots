@@ -598,6 +598,7 @@ void RegisterChatCommands()
     AddCommand("spells", "The damage and healing spells I use.", Spells);
     AddCommand("quests", "My quest log.", Quests);
     AddCommand("spec", "spec [name]: my specializations, or switch to one.", SpecCommand, false, true);
+    AddCommand("hire", "Join your account for good, for gold (Playerbots.Hire.Enable).", HireCommand, false, true);
     AddCommand("maintenance", "Free repair and food and drink (Playerbots.Command.Maintenance).", MaintenanceCommand, false, true);
     AddCommand("equip", "equip <item links>: wear items from my bags.", EquipItems, false, true);
     AddCommand("unequip", "unequip <item links>: take items off.", UnequipItems, false, true);

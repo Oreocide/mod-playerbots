@@ -24,6 +24,7 @@
 #include "PlayerbotsConfig.h"
 #include "PlayerbotAI.h"
 #include "StringFormat.h"
+#include "Social/BotHire.h"
 #include "Talents/BotTalents.h"
 #include "World.h"
 #include <algorithm>
@@ -104,6 +105,30 @@ bool SpecCommand(PlayerbotAI& ai, std::string const& param)
 
     // the gear is the player's: autogear is the explicit way to fit it to the new role
     ai.TellMaster(Trinity::StringFormat("Now {}. \"autogear\" fits my gear to it.", choice.Name));
+    return true;
+}
+
+bool HireCommand(PlayerbotAI& ai, std::string const&)
+{
+    Player* master = ai.GetMaster();
+    if (!master)
+        return false;
+
+    uint64 cost = 0;
+    std::string refusal = sBotHire->Check(master, ai.GetBot(), cost);
+    if (!refusal.empty())
+    {
+        ai.TellMaster(refusal);
+        return true;
+    }
+
+    if (!sBotHire->Start(master, ai.GetBot(), cost))
+    {
+        ai.TellMaster("I can't right now.");
+        return true;
+    }
+
+    ai.TellMaster(Trinity::StringFormat("Deal, {}g {}s {}c. I will be one of your characters once I have logged out.", cost / 10000, (cost / 100) % 100, cost % 100));
     return true;
 }
 

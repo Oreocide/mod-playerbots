@@ -82,6 +82,11 @@ public:
     /// Playerbots.Random.Maps: an empty list allows every map (valid once BuildSpots ran)
     /// Characters ready for random bots (created so far)
     size_t GetCharacterCount() const { return _characters.size(); }
+    /// Hire (Social/BotHire): takes the character out of the pool so it is not logged in again; false if it is not a random bot's.
+    /// Hold keeps it aside, Restore puts it back (the hire failed), Forget drops it for good (the hire went through). World thread
+    bool Hold(ObjectGuid guid);
+    void Restore(ObjectGuid guid);
+    void Forget(ObjectGuid guid);
     /// A character made for random bots (a guild led by one is a bot guild). World thread
     bool IsBotCharacter(ObjectGuid guid) const
     {
@@ -217,6 +222,7 @@ private:
     std::vector<BnetEntry> _bnets;
     std::vector<GameAccount> _accounts;
     std::vector<BotCharacter> _characters;
+    std::unordered_map<ObjectGuid, BotCharacter> _held;   // characters in the middle of a hire
     std::vector<RaceClass> _raceClasses;
     std::vector<Spot> _spots;
     std::unordered_set<ObjectGuid> _randomized;

@@ -29,6 +29,8 @@ namespace Playerbots
 bool SpecCommand(PlayerbotAI& ai, std::string const& param);
 /// maintenance: repair and food, behind Playerbots.Command.Maintenance
 bool MaintenanceCommand(PlayerbotAI& ai, std::string const& param);
+/// hire: a random bot in the party joins the master's account for gold (Playerbots.Hire.Enable)
+bool HireCommand(PlayerbotAI& ai, std::string const& param);
 }
 
 #endif

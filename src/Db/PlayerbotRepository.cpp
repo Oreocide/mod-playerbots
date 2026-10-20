@@ -263,6 +263,19 @@ void PlayerbotRepository::ForgetMemory(ObjectGuid bot)
     CharacterDatabase.PExecute("DELETE FROM playerbots_memory WHERE guid = {}", low);
 }
 
+void PlayerbotRepository::ForgetBot(ObjectGuid bot)
+{
+    uint32 low = Low(bot);
+    {
+        std::scoped_lock lock(_lock);
+        _store.erase(low);
+        std::erase_if(_events, [low](auto const& entry) { return uint32(entry.first.first & 0xFFFFFFFFu) == low; });
+    }
+    CharacterDatabase.PExecute("DELETE FROM playerbots_db_store WHERE guid = {}", low);
+    CharacterDatabase.PExecute("DELETE FROM playerbots_random_bots WHERE bot = {}", low);
+    ForgetMemory(bot);
+}
+
 std::vector<PlayerbotRepository::MemoryLine> PlayerbotRepository::RecentMemory(ObjectGuid bot, uint32 limit) const
 {
     std::vector<MemoryLine> lines;

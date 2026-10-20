@@ -56,6 +56,8 @@ void Config::Load()
     MoveHopLowObstacles = sConfigMgr->GetBoolDefault("Playerbots.Move.HopLowObstacles", false);
     MoveAvoidBlockedPaths = sConfigMgr->GetBoolDefault("Playerbots.Move.AvoidBlockedPaths", false);
     MoveLogBlockedPaths = sConfigMgr->GetBoolDefault("Playerbots.Move.LogBlockedPaths", false);
+    HireEnable = sConfigMgr->GetBoolDefault("Playerbots.Hire.Enable", false);
+    HireCostPercent = uint32(std::clamp(sConfigMgr->GetIntDefault("Playerbots.Hire.CostPercent", 100), 0, 1000));
     GuildEnable = sConfigMgr->GetBoolDefault("Playerbots.Guild.Enable", false);
     GuildPercent = uint32(std::clamp(sConfigMgr->GetIntDefault("Playerbots.Guild.Percent", 25), 0, 100));
     GuildMinLevel = uint32(std::clamp(sConfigMgr->GetIntDefault("Playerbots.Guild.MinLevel", 10), 1, 90));

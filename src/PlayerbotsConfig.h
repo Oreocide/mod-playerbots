@@ -54,6 +54,8 @@ struct Config
     bool MoveHopLowObstacles = false;   // jump low obstacles on level ground instead of walking through them
     bool MoveAvoidBlockedPaths = false; // detour around geometry the mesh does not know, refuse cliff segments
     bool MoveLogBlockedPaths = false;  // log mesh paths that cross VMAP or game object geometry (measurement only, changes nothing)
+    bool HireEnable = false;           // the owner command "hire": a random bot in the party moves to the master's account for gold
+    uint32 HireCostPercent = 100;      // of AzerothCore's price (1 + level / 10) x 5000 x level copper
     bool GuildEnable = false;          // random bots found and join guilds of their own
     uint32 GuildPercent = 25;          // share of the eligible random bots that should be in a bot guild
     uint32 GuildMinLevel = 10;

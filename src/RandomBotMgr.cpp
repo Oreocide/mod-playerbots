@@ -2006,6 +2006,42 @@ void RandomBotMgr::RotateBots()
         TC_LOG_DEBUG("server.playerbots", "Playerbots: hotspot rotation, {} bots to hotspots, {} back to the open world", hotspots, released);
 }
 
+bool RandomBotMgr::Hold(ObjectGuid guid)
+{
+    auto itr = std::ranges::find_if(_characters, [guid](BotCharacter const& c) { return c.Guid == guid; });
+    if (itr == _characters.end())
+        return false;
+
+    _held.emplace(guid, *itr);
+    _characters.erase(itr);
+    return true;
+}
+
+void RandomBotMgr::Restore(ObjectGuid guid)
+{
+    if (auto itr = _held.find(guid); itr != _held.end())
+    {
+        _characters.push_back(itr->second);
+        _held.erase(itr);
+    }
+}
+
+void RandomBotMgr::Forget(ObjectGuid guid)
+{
+    _held.erase(guid);
+    _randomized.erase(guid);
+    _pendingRandomize.erase(guid);
+    _banded.erase(guid);
+    _nextPopulationAt.erase(guid);
+    _reviveAt.erase(guid);
+    _evictedAt.erase(guid);
+
+    std::unique_lock lock(_homesLock);
+    _homes.erase(guid);
+    _homeMaps.erase(guid);
+    _anchors.erase(guid);
+}
+
 void RandomBotMgr::UpdateHome(ObjectGuid guid, uint32 mapId, Position const& home)
 {
     {
