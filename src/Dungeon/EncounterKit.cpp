@@ -47,6 +47,7 @@ void RegisterAuchenaiCrypts(AiRegistry& registry);
 void RegisterGundrak(AiRegistry& registry);
 void RegisterDrakTharonKeep(AiRegistry& registry);
 void RegisterForgeOfSouls(AiRegistry& registry);
+void RegisterPitOfSaron(AiRegistry& registry);
 
 namespace
 {
@@ -254,5 +255,6 @@ void RegisterAll(AiRegistry& registry)
     RegisterGundrak(registry);
     RegisterDrakTharonKeep(registry);
     RegisterForgeOfSouls(registry);
+    RegisterPitOfSaron(registry);
 }
 }
