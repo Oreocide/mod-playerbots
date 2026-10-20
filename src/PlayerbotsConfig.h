@@ -139,6 +139,12 @@ struct Config
     uint32 TravelMaxRouteMinutes = 45;         // routes longer than this are not taken
     uint32 TravelHopMinSeconds = 120;          // a bot nobody can see jumps ahead along its route every hop,
     uint32 TravelHopMaxSeconds = 300;          // as long as the travel time of that stretch, within these limits
+    bool AirEnable = false;                    // air legs: bots on the test list (or with a master) may fly between towns (Travel/AirCorridor)
+    std::string AirTestBots;                   // names of the random bots allowed to fly, comma separated, any case
+    uint32 AirMinLegYards = 400;               // an air link joins two towns at least this far apart ...
+    uint32 AirMaxLegYards = 3000;              // ... and at most this far
+    uint32 AirNeighbours = 3;                  // each town gets air links to this many towns in that range
+    uint32 AirMaxGridLoads = 2;
     bool TravelFreeFlights = true;             // a bot that boards a flight gets the gold for it
     float TravelDangerSecondsPerLevel = 30.0f; // a walk past creatures above the bot's level (beyond 3) counts this much longer per level
     uint32 TravelDangerBlockLevels = 12;       // past creatures this many levels above the bot a route is not walked at all

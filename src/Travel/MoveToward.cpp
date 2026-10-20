@@ -5,6 +5,7 @@
 #include "GridDefines.h"
 #include "Log.h"
 #include "Economy/MountVariety.h"
+#include "Economy/FlyingMounts.h"
 #include "Economy/RaceMounts.h"
 #include "GameTime.h"
 #include "Map.h"
@@ -323,6 +324,7 @@ void UpdateMountForTravel(Player* bot, float distanceToDest, float mountAtOverri
     if (!info || info->CheckLocation(bot->GetMapId(), bot->GetZoneId(), bot->GetAreaId(), bot) != SPELL_CAST_OK)
         return;
 
+    FlyingMounts::EnsureSteadyStyle(bot);    // every bot flies steady: a hybrid mount never resolves to skyriding
     bot->CastSpell(bot, spell);
 }
 

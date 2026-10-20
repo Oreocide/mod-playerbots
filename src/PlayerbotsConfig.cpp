@@ -154,6 +154,12 @@ void Config::Load()
     TravelHopMinSeconds = uint32(std::clamp(sConfigMgr->GetIntDefault("Playerbots.Travel.HopMinSeconds", 120), 10, 3600));
     TravelHopMaxSeconds = std::max(TravelHopMinSeconds, uint32(std::clamp(sConfigMgr->GetIntDefault("Playerbots.Travel.HopMaxSeconds", 300), 10, 3600)));
     TravelFreeFlights = sConfigMgr->GetBoolDefault("Playerbots.Travel.FreeFlights", true);
+    AirEnable = sConfigMgr->GetBoolDefault("Playerbots.Air.Enable", false);
+    AirTestBots = sConfigMgr->GetStringDefault("Playerbots.Air.TestBots", "");
+    AirMinLegYards = uint32(std::max(100, sConfigMgr->GetIntDefault("Playerbots.Air.MinLegYards", 400)));
+    AirMaxLegYards = uint32(std::max(int32(AirMinLegYards), sConfigMgr->GetIntDefault("Playerbots.Air.MaxLegYards", 3000)));
+    AirNeighbours = uint32(std::clamp(sConfigMgr->GetIntDefault("Playerbots.Air.Neighbours", 3), 1, 8));
+    AirMaxGridLoads = uint32(std::clamp(sConfigMgr->GetIntDefault("Playerbots.Air.MaxGridLoads", 2), 0, 8));
     TravelDangerSecondsPerLevel = std::max(0.0f, sConfigMgr->GetFloatDefault("Playerbots.Travel.DangerSecondsPerLevel", 30.0f));
     TravelDangerBlockLevels = uint32(std::clamp(sConfigMgr->GetIntDefault("Playerbots.Travel.DangerBlockLevels", 12), 3, 255));
 

@@ -29,6 +29,11 @@
 #include "StringFormat.h"
 #include "Taxi.h"
 #include "MoveToward.h"
+#include "AirCorridor.h"
+#include "Economy/FlyingMounts.h"
+#include "MoveSpline.h"
+#include "MoveSplineInit.h"
+#include "NavSnap.h"
 #include "TravelMgr.h"
 #include <algorithm>
 #include <cmath>
@@ -44,6 +49,10 @@ constexpr float NodeArrive = 8.0f;          // yards from a node that count as b
 constexpr float TaxiBoard = 20.0f;          // yards from a flight master node to take the flight
 constexpr uint32 HearthWaitMs = 25000;
 constexpr uint32 PortalWaitMs = 12000;
+constexpr float AirTakeoffArrive = 14.0f;    // yards from the takeoff town spot at which the bot mounts and takes off
+constexpr uint32 AirMountTries = 3;
+constexpr uint32 AirMountWaitMs = 3500;
+constexpr uint32 AirMaxFlightMs = 6 * 60 * 1000;   // a flight that has not ended by then is recovered
 }
 
 bool RouteFollower::Begin(PlayerbotAI& ai, Position3 const& goal, float arriveYards)
@@ -65,6 +74,8 @@ bool RouteFollower::Begin(PlayerbotAI& ai, Position3 const& goal, float arriveYa
     _leg = 0;
     _replans = 0;
     _noHearth = false;
+    _noAir = false;
+    _airTries = 0;
     _active = true;
     _virtualStarted = false;
     NextLeg();
@@ -88,6 +99,7 @@ void RouteFollower::NextLeg()
     _flying = false;
     _casting = false;
     _waitUntil = 0;
+    _airTries = 0;
 }
 
 std::string RouteFollower::Summary() const
@@ -131,10 +143,13 @@ bool RouteFollower::Replan(PlayerbotAI& ai)
     if (_noHearth)
     {
         Position3 start{ bot->GetMapId(), bot->GetPositionX(), bot->GetPositionY(), bot->GetPositionZ() };
-        route = sTravelMgr->GetGraph().PlanPositions(start, _goal, sTravelMgr->OptionsFor(bot));
+        RouteOptions options = sTravelMgr->OptionsFor(bot);
+        if (_noAir)
+            options.AllowAir = false;
+        route = sTravelMgr->GetGraph().PlanPositions(start, _goal, options);
     }
     else
-        route = sTravelMgr->PlanFor(bot, _goal);
+        route = sTravelMgr->PlanFor(bot, _goal, _noAir);
 
     if (!route.Found)
         return false;
@@ -208,6 +223,191 @@ RouteStatus RouteFollower::WalkTo(PlayerbotAI& ai, Position3 const& target, floa
     }
 
     (void)lastLeg;
+    return RouteStatus::Running;
+}
+
+// ---- air legs (Playerbots.Air.*): the one flight the module flies itself ----
+
+void RouteFollower::RecoverAir(PlayerbotAI& ai, char const* reason)
+{
+    Player* bot = ai.GetBot();
+    if (!_air.Flying)
+        return;
+
+    // the nearer of the two navmesh points, so the bot never lands on a floor the mesh did not put it on
+    Position const& target = bot->GetExactDist2d(_air.Takeoff) <= bot->GetExactDist2d(_air.Landing) ? _air.Takeoff : _air.Landing;
+    TC_LOG_INFO("server.playerbots.air", "Playerbots: {} recovered from an air leg ({}) at ({:.0f}, {:.0f}, {:.0f}), placed at ({:.0f}, {:.0f}, {:.0f})",
+        bot->GetName(), reason, bot->GetPositionX(), bot->GetPositionY(), bot->GetPositionZ(), target.GetPositionX(), target.GetPositionY(), target.GetPositionZ());
+
+    Position place = target;
+    _air = AirState();
+    _noAir = true;
+    ai.NoteExpectedMove();
+    bot->GetMotionMaster()->Clear();
+    bot->StopMoving();
+    bot->CancelMountAura();
+    if (bot->IsInWorld() && !bot->IsBeingTeleported())
+    {
+        bot->NearTeleportTo(place.GetPositionX(), place.GetPositionY(), place.GetPositionZ(), bot->GetOrientation());
+        bot->SetFallInformation(0, place.GetPositionZ());
+    }
+}
+
+bool RouteFollower::TickAir(PlayerbotAI& ai, bool frozen)
+{
+    if (!_air.Flying)
+        return false;
+
+    Player* bot = ai.GetBot();
+    uint32 now = GameTime::GetGameTimeMS();
+    char const* reason = nullptr;
+    if (!_active)
+        reason = "route ended";
+    else if (frozen)
+        reason = "frozen in the air";
+    else if (!bot->IsAlive())
+        reason = "died";
+    else if (bot->IsInCombat())
+        reason = "combat";
+    else if (!bot->IsMounted())
+        reason = "dismounted";
+    else if (!bot->CanFly())
+        reason = "flight lost";
+    else if (now - _air.StartedMs > AirMaxFlightMs)
+        reason = "too long";
+
+    if (!reason)
+        return false;
+    RecoverAir(ai, reason);
+    return true;
+}
+
+RouteStatus RouteFollower::StepAir(PlayerbotAI& ai, RouteLeg const& leg)
+{
+    Player* bot = ai.GetBot();
+    uint32 now = GameTime::GetGameTimeMS();
+    TravelGraph const& graph = sTravelMgr->GetGraph();
+    TravelNode const& fromNode = graph.GetNode(leg.From);
+    TravelNode const& toNode = graph.GetNode(leg.To);
+
+    // the flight itself is watched every tick by TickAir (it runs in combat too, when this is not stepped); here only its end is handled
+    if (_air.Flying)
+    {
+        ai.NoteExpectedMove();
+        if (IsMovingOnFoot(bot))
+            return RouteStatus::Running;
+
+        // the spline ended: it only counts as a landing if the bot is on the landing point (a launch that was refused, or a spline cut
+        // short, leaves it somewhere else and the route must not go on from there as if it had arrived)
+        if (bot->GetExactDist2d(_air.Landing) > 3.0f || std::fabs(bot->GetPositionZ() - _air.Landing.GetPositionZ()) > 3.0f)
+        {
+            RecoverAir(ai, "the flight ended away from the landing point");
+            return RouteStatus::Failed;
+        }
+
+        bot->CancelMountAura();
+        bot->SetFallInformation(0, bot->GetPositionZ());
+        TC_LOG_DEBUG("server.playerbots.air", "Playerbots: {} landed at ({:.0f}, {:.0f}, {:.0f})", bot->GetName(), bot->GetPositionX(), bot->GetPositionY(), bot->GetPositionZ());
+        _air = AirState();
+        return RouteStatus::Arrived;
+    }
+
+    // a flight that was recovered or refused earlier: this route goes on without air
+    if (_noAir)
+        return RouteStatus::Failed;
+
+    // to the takeoff town spot first
+    Position3 takeoffSpot{ fromNode.Map, fromNode.X, fromNode.Y, fromNode.Z };
+    if (bot->GetMapId() != fromNode.Map || bot->GetExactDist2d(Position(fromNode.X, fromNode.Y, fromNode.Z)) > AirTakeoffArrive)
+        return WalkTo(ai, takeoffSpot, AirTakeoffArrive - 4.0f, false);
+
+    if (bot->IsInCombat() || bot->HasUnitState(UNIT_STATE_CASTING))
+        return RouteStatus::Running;
+
+    // a mount cannot be summoned under a roof: a takeoff spot of a town may be indoors
+    if (!bot->IsMounted() && !bot->IsOutdoors())
+    {
+        TC_LOG_INFO("server.playerbots.air", "Playerbots: {} cannot take off from {}: the takeoff spot is indoors", bot->GetName(), fromNode.Name);
+        _noAir = true;
+        return RouteStatus::Failed;
+    }
+
+    // a flying mount that really gives flight here (the style aura of the account makes the hybrid mounts steady fliers)
+    if (!bot->IsMounted() || !bot->CanFly())
+    {
+        if (now < _waitUntil)
+            return RouteStatus::Running;
+
+        std::vector<uint32> flyers = FlyingMounts::Known(bot);
+        if (flyers.empty() || ++_airTries > AirMountTries)
+        {
+            TC_LOG_INFO("server.playerbots.air", "Playerbots: {} cannot take off: {}", bot->GetName(), flyers.empty() ? "no flying mount" : "the mount gave no flight");
+            _noAir = true;
+            return RouteStatus::Failed;
+        }
+
+        // the walk to the takeoff spot ends within 10 yards of it, but its spline may still be running: that would cancel the cast
+        if (IsMovingOnFoot(bot))
+        {
+            bot->GetMotionMaster()->Clear();
+            bot->StopMoving();
+            --_airTries;
+            return RouteStatus::Running;
+        }
+
+        if (bot->IsMounted())
+            bot->CancelMountAura();
+        FlyingMounts::EnsureSteadyStyle(bot);
+        bot->CastSpell(bot, flyers[bot->GetGUID().GetCounter() % flyers.size()]);
+        _waitUntil = now + AirMountWaitMs;
+        return RouteStatus::Running;
+    }
+
+    // the landing point is a navmesh point too, and the corridor between the two is read from the map before the bot leaves the ground
+    Position landing;
+    if (!SnapPointToNavMesh(bot, Position(toNode.X, toNode.Y, toNode.Z), landing))
+    {
+        TC_LOG_INFO("server.playerbots.air", "Playerbots: {} cannot fly to {}: the landing point is not on the navmesh", bot->GetName(), toNode.Name);
+        _noAir = true;
+        return RouteStatus::Failed;
+    }
+
+    AirCorridor::Plan plan = AirCorridor::PlanLeg(bot, bot->GetPosition(), landing);
+    if (!plan.Ok)
+    {
+        TC_LOG_INFO("server.playerbots.air", "Playerbots: {} does not fly to {}: {}{}", bot->GetName(), toNode.Name, plan.Why, plan.Transient ? " (for now)" : "");
+        _noAir = true;       // this route goes on without air; the link itself is not blocked for everybody
+        if (bot->IsMounted())
+            bot->CancelMountAura();
+        return RouteStatus::Failed;
+    }
+
+    Movement::PointsArray points;
+    for (Position const& point : plan.Path)
+        points.emplace_back(point.GetPositionX(), point.GetPositionY(), point.GetPositionZ());
+
+    _air.Takeoff = bot->GetPosition();
+    _air.Landing = landing;
+    _air.StartedMs = now;
+    _air.Flying = true;     // set before the launch so the ground checks of PlayerbotAI already leave the bot alone; cleared if the launch is refused
+    ai.NoteExpectedMove();
+    bot->GetMotionMaster()->Clear();
+    Movement::MoveSplineInit init(bot);
+    init.MovebyPath(points);
+    init.SetFly();
+    init.SetUncompressed();
+    init.SetVelocity(bot->GetSpeed(MOVE_FLIGHT));
+    if (init.Launch() <= 0)
+    {
+        // the spline validator refused the path (nothing is moving): this is not a flight
+        TC_LOG_INFO("server.playerbots.air", "Playerbots: {} could not launch the flight to {}: the spline was refused", bot->GetName(), toNode.Name);
+        _air = AirState();
+        _noAir = true;
+        if (bot->IsMounted())
+            bot->CancelMountAura();
+        return RouteStatus::Failed;
+    }
+    TC_LOG_DEBUG("server.playerbots.air", "Playerbots: {} takes off for {} ({} points, cruise height {:.0f})", bot->GetName(), toNode.Name, points.size(), plan.CruiseZ);
     return RouteStatus::Running;
 }
 
@@ -386,6 +586,9 @@ RouteStatus RouteFollower::Step(PlayerbotAI& ai)
                 break;
             case LinkType::Transport:
                 status = StepTransport(ai, leg);
+                break;
+            case LinkType::Air:
+                status = StepAir(ai, leg);
                 break;
         }
 

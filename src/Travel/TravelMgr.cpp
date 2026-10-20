@@ -16,6 +16,7 @@
  */
 
 #include "TravelMgr.h"
+#include "Economy/FlyingMounts.h"
 #include "DB2Stores.h"
 #include "DangerMap.h"
 #include "DatabaseEnv.h"
@@ -39,6 +40,30 @@ namespace Playerbots
 namespace
 {
 constexpr float FlightSpeed = 32.0f;         // yards per second on a flight path
+constexpr float AirSpeed = 22.0f;            // yards per second of steady flight on a Master Riding mount (310% of 7)
+constexpr float AirOverheadSeconds = 12.0f;  // mounting up, the climb out and the landing
+
+// Playerbots.Air.TestBots: comma separated names, any case
+bool AirListed(std::string const& name)
+{
+    std::string wanted = name;
+    std::ranges::transform(wanted, wanted.begin(), [](unsigned char c) { return char(std::tolower(c)); });
+    std::string const& list = sPlayerbotsConfig.AirTestBots;
+    size_t start = 0;
+    while (start <= list.size())
+    {
+        size_t comma = list.find(',', start);
+        std::string entry = list.substr(start, comma == std::string::npos ? std::string::npos : comma - start);
+        std::erase(entry, ' ');
+        std::ranges::transform(entry, entry.begin(), [](unsigned char c) { return char(std::tolower(c)); });
+        if (!entry.empty() && entry == wanted)
+            return true;
+        if (comma == std::string::npos)
+            break;
+        start = comma + 1;
+    }
+    return false;
+}
 constexpr float MountedRunSpeed = 11.2f;     // 160 percent of a run
 constexpr float HearthSeconds = 15.0f;       // ten second cast and the loading screen
 constexpr uint32 HearthstoneItem = 6948;
@@ -73,6 +98,7 @@ char const* TypeName(LinkType type)
         case LinkType::Transport: return "ride";
         case LinkType::Portal: return "portal";
         case LinkType::Teleport: return "teleport";
+        case LinkType::Air: return "air";
     }
     return "?";
 }
@@ -189,6 +215,61 @@ void TravelMgr::AddTaxi()
 }
 
 // Portals that join two places of the open world. Most area triggers lead into instances, which bots do not enter
+// Air links join towns and flight masters of Eastern Kingdoms and Kalimdor (the continents whose steady-flight capabilities were checked in
+// the client data) that are Playerbots.Air.MinLegYards to MaxLegYards apart: the nearest few in that range for each node. Which bot may use
+// them, and whether the corridor is safe, is decided when a bot plans (RouteOptions::AllowAir, AirCorridor), not here
+void TravelMgr::AddAirLinks()
+{
+    if (!sPlayerbotsConfig.AirEnable)
+        return;
+
+    float const minYards = float(sPlayerbotsConfig.AirMinLegYards);
+    float const maxYards = float(sPlayerbotsConfig.AirMaxLegYards);
+
+    std::vector<std::pair<uint32, uint32>> pairs;
+    for (uint32 id = 0; id < _graph.NodeCount(); ++id)
+    {
+        TravelNode const& node = _graph.GetNode(id);
+        if ((node.Map != 0 && node.Map != 1) || node.Team == 3 || (node.Kind != NodeKind::Hub && node.Kind != NodeKind::FlightMaster))
+            continue;
+
+        uint32 taken = 0;
+        for (uint32 other : _graph.NearestNodes(node.Map, node.X, node.Y, 40, maxYards))
+        {
+            TravelNode const& target = _graph.GetNode(other);
+            if (other == id || target.Team == 3 || (target.Kind != NodeKind::Hub && target.Kind != NodeKind::FlightMaster))
+                continue;
+            float distance = std::hypot(target.X - node.X, target.Y - node.Y);
+            if (distance < minYards)
+                continue;
+
+            pairs.emplace_back(std::min(id, other), std::max(id, other));
+            if (++taken >= sPlayerbotsConfig.AirNeighbours)
+                break;
+        }
+    }
+
+    std::ranges::sort(pairs);
+    pairs.erase(std::unique(pairs.begin(), pairs.end()), pairs.end());
+    for (auto const& [a, b] : pairs)
+    {
+        TravelNode const& from = _graph.GetNode(a);
+        TravelNode const& to = _graph.GetNode(b);
+        float distance = std::sqrt((to.X - from.X) * (to.X - from.X) + (to.Y - from.Y) * (to.Y - from.Y) + (to.Z - from.Z) * (to.Z - from.Z));
+
+        TravelLink link;
+        link.Type = LinkType::Air;
+        link.Seconds = distance / AirSpeed + AirOverheadSeconds;
+        link.From = a;
+        link.To = b;
+        _graph.AddLink(link);
+        std::swap(link.From, link.To);
+        _graph.AddLink(link);
+    }
+
+    TC_LOG_INFO("server.playerbots", "Playerbots: {} air links between {} town pairs", pairs.size() * 2, pairs.size());
+}
+
 void TravelMgr::AddPortals()
 {
     uint32 added = 0;
@@ -415,6 +496,7 @@ void TravelMgr::Build()
     _graph.ConnectNeighbours(NeighbourCount, NeighbourDistance, 7.0f);
     AddTransports();
     MarkTeams();
+    AddAirLinks();
     RateWalkLinks();
     _built = true;
 
@@ -476,13 +558,13 @@ std::string TravelMgr::Summary() const
     for (uint32 i = 0; i < _graph.NodeCount(); ++i)
         ++kinds[uint8(_graph.GetNode(i).Kind)];
 
-    uint32 types[5] = {};
+    uint32 types[6] = {};
     for (uint32 i = 0; i < _graph.LinkCount(); ++i)
         ++types[uint8(_graph.GetLink(i).Type)];
 
-    return Trinity::StringFormat("{} nodes ({} towns, {} flight masters, {} portal mouths), {} links ({} walk, {} flight, {} boat or zeppelin, {} portal)", _graph.NodeCount(),
+    return Trinity::StringFormat("{} nodes ({} towns, {} flight masters, {} portal mouths), {} links ({} walk, {} flight, {} boat or zeppelin, {} portal, {} air)", _graph.NodeCount(),
         kinds[uint8(NodeKind::Hub)], kinds[uint8(NodeKind::FlightMaster)], kinds[uint8(NodeKind::PortalMouth)], _graph.LinkCount(),
-        types[uint8(LinkType::Walk)], types[uint8(LinkType::Taxi)], types[uint8(LinkType::Transport)], types[uint8(LinkType::Portal)]);
+        types[uint8(LinkType::Walk)], types[uint8(LinkType::Taxi)], types[uint8(LinkType::Transport)], types[uint8(LinkType::Portal)], types[uint8(LinkType::Air)]);
 }
 
 bool TravelMgr::IsBlocked(uint32 linkId) const
@@ -520,6 +602,10 @@ RouteOptions TravelMgr::OptionsFor(Player const* bot) const
     options.DangerSecondsPerLevel = sPlayerbotsConfig.TravelDangerSecondsPerLevel;
     options.DangerBlockLevels = uint8(sPlayerbotsConfig.TravelDangerBlockLevels);
     options.Blocked = [this](TravelLink const& link) { return IsBlocked(link.Id); };
+    // air legs: only a bot on the test list that could really take to the air (riding skill and a flying mount of its account); the
+    // collection of a random bot is account wide, so "it has no flying mount" is not a reason to leave the rule out
+    options.AllowAir = sPlayerbotsConfig.AirEnable && AirListed(bot->GetName()) && bot->GetSkillValue(SKILL_RIDING) >= FlyingMounts::MinRidingSkill
+        && !FlyingMounts::Known(bot).empty();
     return options;
 }
 
@@ -544,7 +630,7 @@ std::vector<TravelLink> TravelMgr::HearthLinks(Player const* bot) const
     return links;
 }
 
-Route TravelMgr::PlanFor(Player const* bot, Position3 const& goal) const
+Route TravelMgr::PlanFor(Player const* bot, Position3 const& goal, bool noAir) const
 {
     if (!_built)
         return {};
@@ -554,7 +640,10 @@ Route TravelMgr::PlanFor(Player const* bot, Position3 const& goal) const
     start.X = bot->GetPositionX();
     start.Y = bot->GetPositionY();
     start.Z = bot->GetPositionZ();
-    return _graph.PlanPositions(start, goal, OptionsFor(bot), HearthLinks(bot));
+    RouteOptions options = OptionsFor(bot);
+    if (noAir)
+        options.AllowAir = false;
+    return _graph.PlanPositions(start, goal, options, HearthLinks(bot));
 }
 
 TravelMgr::BotReach TravelMgr::ReachFor(Player const* bot) const

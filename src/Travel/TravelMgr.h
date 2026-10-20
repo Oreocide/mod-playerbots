@@ -46,7 +46,8 @@ public:
     RouteOptions OptionsFor(Player const* bot) const;
     /// Hearthstone as a way out of where the bot stands, empty if it has none or it is on cooldown
     std::vector<TravelLink> HearthLinks(Player const* bot) const;
-    Route PlanFor(Player const* bot, Position3 const& goal) const;
+    /// noAir: leave the air links out (an air leg of this route failed)
+    Route PlanFor(Player const* bot, Position3 const& goal, bool noAir = false) const;
 
     /// Costs from where the bot stands to the whole graph: rank many goals with one pass (see Estimate)
     struct BotReach
@@ -81,6 +82,8 @@ private:
     void AddPortals();
     /// Boats and zeppelins as links between the ground nodes next to their docks (after Finalize)
     void AddTransports();
+    /// Playerbots.Air.Enable: air links between towns of the continents where steady flight is checked (Eastern Kingdoms, Kalimdor)
+    void AddAirLinks();
     /// Teams of the nodes (enemy towns are closed to the other team) and the danger along each walk link
     void MarkTeams();
     void RateWalkLinks();

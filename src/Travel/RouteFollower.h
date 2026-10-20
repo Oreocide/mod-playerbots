@@ -20,7 +20,10 @@
 
 #include "Graph/TravelGraph.h"
 #include "Define.h"
+#include "Position.h"
 #include <string>
+#include <vector>
+
 
 namespace Playerbots
 {
@@ -55,6 +58,16 @@ public:
     /// What the planned route looks like, for the bot's reply
     std::string Summary() const;
 
+    /// An air leg is in progress: the bot is, or is about to be, off the ground on its own flying mount. The fall watchdog, the ground snap
+    /// and the interruption check of PlayerbotAI leave it alone while this is true
+    bool InAir() const { return _air.Flying; }
+    /// Every tick of a bot in the air, whether or not its route is stepped (the route is not stepped in combat): the checks that put it
+    /// back on the ground. True if it did.
+    bool TickAir(PlayerbotAI& ai, bool frozen);
+    /// Puts a bot that is in the air back on the ground: the nearer of the takeoff and the landing point (both navmesh points), mount off.
+    /// Logged under server.playerbots.air, separate from the fall rescue and ground snap lines
+    void RecoverAir(PlayerbotAI& ai, char const* reason);
+
     /// One AI tick of a bot that is moving for real
     RouteStatus Step(PlayerbotAI& ai);
     /// A bot nobody can see: lets time pass, places the bot at the goal when the (shortened) route time is over
@@ -69,6 +82,7 @@ private:
     RouteStatus StepPortal(PlayerbotAI& ai, RouteLeg const& leg);
     RouteStatus StepHearth(PlayerbotAI& ai);
     RouteStatus StepTransport(PlayerbotAI& ai, RouteLeg const& leg);
+    RouteStatus StepAir(PlayerbotAI& ai, RouteLeg const& leg);
     void PlanHop();
     void NextLeg();
     float RemainingSeconds() const;
@@ -80,6 +94,15 @@ private:
     size_t _leg = 0;
     uint32 _replans = 0;
     bool _noHearth = false;
+    bool _noAir = false;       // an air leg failed: planned again without air links
+    uint32 _airTries = 0;      // mount attempts of the current air leg
+    struct AirState
+    {
+        bool Flying = false;
+        Position Takeoff;
+        Position Landing;
+        uint32 StartedMs = 0;
+    } _air;
 
     // progress of the current leg
     uint32 _legStarted = 0;

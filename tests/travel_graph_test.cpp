@@ -299,6 +299,50 @@ int main()
         CHECK(g.NearestNodes(7, 0, 0, 3, 100.0f).empty());
     }
 
+    {   // air links: used only by a bot that may fly, never otherwise; cost = its seconds; a blocked one is skipped
+        World w;
+        TravelLink air;
+        air.From = w.A;
+        air.To = w.C;
+        air.Type = LinkType::Air;
+        air.Seconds = 5000.0f / 22.0f + 12.0f;    // 239 s: slower than the 60 s flight path, faster than walking (~930 s)
+        uint32_t airId = w.G.AddLink(air);
+        std::swap(air.From, air.To);
+        w.G.AddLink(air);
+
+        RouteOptions noFlight;                    // no taxi gold: the flight path is out, only the walk and the air are left
+        noFlight.Team = 1;
+        noFlight.Level = 20;
+        noFlight.Money = 0;
+        Route walked = w.G.Plan(w.A, w.C, noFlight);
+        CHECK(walked.Found && walked.Legs[0].Type == LinkType::Walk);                 // AllowAir is false by default
+
+        RouteOptions flyer = noFlight;
+        flyer.AllowAir = true;
+        Route flown = w.G.Plan(w.A, w.C, flyer);
+        CHECK(flown.Found && flown.Legs.size() == 1 && flown.Legs[0].Type == LinkType::Air && Near(flown.Seconds, 5000.0f / 22.0f + 12.0f));
+
+        RouteOptions both = flyer;                // with the gold the 60 s flight path still wins
+        both.Money = 1000;
+        Route taxi = w.G.Plan(w.A, w.C, both);
+        CHECK(taxi.Found && taxi.Legs[0].Type == LinkType::Taxi);
+
+        flyer.Blocked = [airId](TravelLink const& link) { return link.Id == airId; };   // the A to C air link failed recently
+        Route fallback = w.G.Plan(w.A, w.C, flyer);
+        CHECK(fallback.Found && fallback.Legs[0].Type == LinkType::Walk);
+
+        // the way back is its own link and is not blocked by the failure of the way there
+        RouteOptions back = noFlight;
+        back.AllowAir = true;
+        Route home = w.G.Plan(w.C, w.A, back);
+        CHECK(home.Found && home.Legs.size() == 1 && home.Legs[0].Type == LinkType::Air);
+
+        // an air link to a node closed to the bot's team (enemy ground) is refused
+        w.G.MutableNode(w.C).Team = 2;
+        Route enemy = w.G.Plan(w.A, w.C, flyer);
+        CHECK(!enemy.Found || enemy.Legs[0].Type != LinkType::Air);
+    }
+
     if (Failures)
         std::printf("%d check(s) failed\n", Failures);
     else

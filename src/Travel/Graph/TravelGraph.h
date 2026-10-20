@@ -35,7 +35,8 @@ enum class LinkType : uint8_t
     Taxi,        // flight path, Ref = taxi node id of the destination
     Transport,   // boat, zeppelin, elevator, Ref = transport entry
     Portal,      // area trigger or portal object, Ref = area trigger id
-    Teleport     // hearthstone or a teleport spell
+    Teleport,    // hearthstone or a teleport spell
+    Air          // a flight on the bot's own flying mount along a straight line (Playerbots.Air.*), cost = distance / air speed + takeoff and landing
 };
 
 enum class NodeKind : uint8_t
@@ -86,6 +87,7 @@ struct RouteOptions
     bool AllowTransport = true;
     bool AllowPortal = true;
     bool AllowTeleport = true;
+    bool AllowAir = false;           // only a bot that may and can fly (Playerbots.Air.*)
     float GoldSecondsPerCopper = 0.0f; // time a bot is willing to trade for gold, 0 = gold is free once affordable
     uint8_t DangerFreeLevels = 3;      // creatures this many levels above the bot or less are no reason to detour
     float DangerSecondsPerLevel = 30.0f; // each level above that makes a walk link this much longer

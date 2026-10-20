@@ -164,6 +164,7 @@ bool TravelGraph::Allowed(TravelLink const& link, RouteOptions const& options) c
         case LinkType::Transport: if (!options.AllowTransport) return false; break;
         case LinkType::Portal: if (!options.AllowPortal) return false; break;
         case LinkType::Teleport: if (!options.AllowTeleport) return false; break;
+        case LinkType::Air: if (!options.AllowAir) return false; break;
         case LinkType::Walk: break;
     }
 

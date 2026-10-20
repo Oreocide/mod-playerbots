@@ -17,14 +17,23 @@
 
 #include "CharacterCache.h"
 #include "Chat.h"
+#include "DB2Stores.h"
+#include "DatabaseEnv.h"
+#include "Util.h"
+#include "WorldSession.h"
 #include "GameTime.h"
+#include "World.h"
 #include "ChatCommand.h"
+#include "Log.h"
+#include "Map.h"
+#include "MoveSpline.h"
 #include "ObjectAccessor.h"
 #include "ObjectMgr.h"
 #include "Player.h"
 #include "Engine/PerfMonitor.h"
 #include "GearFactory.h"
 #include "Db/PlayerbotRepository.h"
+#include "Economy/FlyingMounts.h"
 #include "Goal/GoalStore.h"
 #include "Perf/BotPerfReporter.h"
 #include "PlayerbotAI.h"
@@ -38,6 +47,7 @@
 #include "Travel/MoveToward.h"
 #include "Travel/HotspotMgr.h"
 #include "Travel/TravelMgr.h"
+#include "World/WorldActionQueue.h"
 #include "ScriptMgr.h"
 #include "StringFormat.h"
 #include <algorithm>
@@ -93,6 +103,13 @@ public:
             { "route", HandleTravelRouteCommand, rbac::RBAC_PERM_COMMAND_DEBUG, Console::No },
         };
 
+        static ChatCommandTable airCommandTable =
+        {
+            { "probe", HandleAirProbeCommand, rbac::RBAC_PERM_COMMAND_DEBUG, Console::Yes },
+            { "grant", HandleAirGrantCommand, rbac::RBAC_PERM_COMMAND_DEBUG, Console::Yes },
+            { "fly",   HandleAirFlyCommand,   rbac::RBAC_PERM_COMMAND_DEBUG, Console::Yes },
+        };
+
         static ChatCommandTable botCommandTable =
         {
             { "add",     HandleBotAddCommand,    RBAC_PERM_COMMAND_BOT, Console::No },
@@ -103,6 +120,7 @@ public:
             { "autogear", HandleBotAutogearCommand, rbac::RBAC_PERM_COMMAND_DEBUG, Console::No },
             { "goal",    HandleBotGoalCommand,   rbac::RBAC_PERM_COMMAND_DEBUG, Console::Yes },
             { "inspect", HandleBotInspectCommand, rbac::RBAC_PERM_COMMAND_DEBUG, Console::Yes },
+            { "air",     airCommandTable },
             { "hotspot", hotspotCommandTable },
             { "travel",  travelCommandTable },
             { "rotation", rotationCommandTable },
@@ -127,6 +145,66 @@ public:
 
         uint32 rows = GoalStore::Load();
         handler->PSendSysMessage("Playerbots: goal table reloaded, %u rows.", rows);
+        return true;
+    }
+
+    // .bot air probe <name> [steady]: what the core's mount logic gives this bot on a flying mount here (result in the log, on the bot's map thread)
+    static bool HandleAirProbeCommand(ChatHandler* handler, std::string name, Optional<std::string> mode)
+    {
+        Player* bot = ObjectAccessor::FindPlayerByName(name);
+        if (!bot || !sPlayerbotMgr->GetAI(bot))
+        {
+            handler->PSendSysMessage("No online bot named %s.", name.c_str());
+            return false;
+        }
+
+        FlyingMounts::ProbeAsync(bot, mode && *mode == "steady");
+        handler->PSendSysMessage("Probing %s, the answer is in the next log lines (\"Playerbots air probe\").", bot->GetName().c_str());
+        return true;
+    }
+
+    // .bot air grant <name>: master riding and a flying mount for a test bot
+    static bool HandleAirGrantCommand(ChatHandler* handler, std::string name)
+    {
+        Player* bot = ObjectAccessor::FindPlayerByName(name);
+        if (!bot || !sPlayerbotMgr->GetAI(bot))
+        {
+            handler->PSendSysMessage("No online bot named %s.", name.c_str());
+            return false;
+        }
+
+        FlyingMounts::GrantAsync(bot);
+        handler->PSendSysMessage("Granting %s master riding and a flying mount (log line \"granted\").", bot->GetName().c_str());
+        return true;
+    }
+
+    // .bot air fly <name> <node id>: the bot plans a route to a travel graph node (find one with .bot travel nodes <text>). It takes an air leg
+    // only if Playerbots.Air.Enable is on, the bot is on Playerbots.Air.TestBots, has master riding and a flying mount (.bot air grant)
+    static bool HandleAirFlyCommand(ChatHandler* handler, std::string name, uint32 nodeId)
+    {
+        Player* bot = ObjectAccessor::FindPlayerByName(name);
+        if (!bot || !sPlayerbotMgr->GetAI(bot))
+        {
+            handler->PSendSysMessage("No online bot named %s.", name.c_str());
+            return false;
+        }
+        if (!sTravelMgr->IsBuilt() || nodeId >= sTravelMgr->GetGraph().NodeCount())
+        {
+            handler->SendSysMessage("Unknown node, find one with .bot travel nodes <text>.");
+            return false;
+        }
+
+        TravelNode const& target = sTravelMgr->GetGraph().GetNode(nodeId);
+        Position3 goal{ target.Map, target.X, target.Y, target.Z };
+        sWorldActionQueue->Enqueue(bot->GetGUID(), bot->GetMapId(), ObjectGuid::Empty, [goal, nodeId](Player* player)
+        {
+            PlayerbotAI* ai = sPlayerbotMgr->GetAI(player);
+            if (!ai)
+                return;
+            bool begun = ai->GetRoute().Begin(*ai, goal, 8.0f);
+            TC_LOG_INFO("server.playerbots.air", "Playerbots: {} route to node {}: {}", player->GetName(), nodeId, begun ? ai->GetRoute().Summary() : "no route");
+        });
+        handler->PSendSysMessage("%s plans a route to node %u (log line \"route to node\").", bot->GetName().c_str(), nodeId);
         return true;
     }
 
