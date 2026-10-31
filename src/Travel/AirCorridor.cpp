@@ -79,6 +79,27 @@ Plan PlanLeg(Player* bot, Position const& from, Position const& to)
             return itr->second;
     }
 
+    // takeoff and landing are on dry ground: a bot in the water is offered no flying capability, and one that lands in deep water drowns
+    auto inWater = [&](Position const& p)
+    {
+        LiquidData liquid;
+        ZLiquidStatus status = map->GetLiquidStatus(bot->GetPhaseShift(), p.GetPositionX(), p.GetPositionY(), p.GetPositionZ(), {}, &liquid);
+        return (status & (LIQUID_MAP_IN_WATER | LIQUID_MAP_UNDER_WATER)) != 0;
+    };
+    if (inWater(from))
+    {
+        plan.Transient = true;     // about where this bot stands now
+        plan.Why = "the takeoff point is in the water";
+        return plan;
+    }
+    if (inWater(to))
+    {
+        plan.Why = "the landing point is in the water";
+        std::lock_guard lock(CacheLock);
+        Cache[key] = plan;
+        return plan;
+    }
+
     float length = from.GetExactDist2d(to);
     Air::ProfileParams params;
     size_t steps = size_t(std::ceil(length / params.SampleYards));

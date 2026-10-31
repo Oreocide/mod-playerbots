@@ -329,10 +329,11 @@ RouteStatus RouteFollower::StepAir(PlayerbotAI& ai, RouteLeg const& leg)
     if (bot->IsInCombat() || bot->HasUnitState(UNIT_STATE_CASTING))
         return RouteStatus::Running;
 
-    // a mount cannot be summoned under a roof: a takeoff spot of a town may be indoors
-    if (!bot->IsMounted() && !bot->IsOutdoors())
+    // a mount cannot be summoned under a roof (a takeoff spot of a town may be indoors), and a bot under water is only offered capabilities
+    // with the underwater flag, never a flying one
+    if (!bot->IsMounted() && (!bot->IsOutdoors() || bot->IsInWater() || bot->IsUnderWater()))
     {
-        TC_LOG_INFO("server.playerbots.air", "Playerbots: {} cannot take off from {}: the takeoff spot is indoors", bot->GetName(), fromNode.Name);
+        TC_LOG_INFO("server.playerbots.air", "Playerbots: {} cannot take off from {}: the takeoff spot is {}", bot->GetName(), fromNode.Name, bot->IsOutdoors() ? "in the water" : "indoors");
         _noAir = true;
         return RouteStatus::Failed;
     }

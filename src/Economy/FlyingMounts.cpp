@@ -17,6 +17,7 @@
 
 #include "FlyingMounts.h"
 #include "CollectionMgr.h"
+#include "ConditionMgr.h"
 #include "DB2Stores.h"
 #include "Log.h"
 #include "Map.h"
@@ -24,6 +25,7 @@
 #include "MoveToward.h"
 #include "Player.h"
 #include "SharedDefines.h"
+#include "SpellAuraEffects.h"
 #include "SpellInfo.h"
 #include "SpellMgr.h"
 #include "StringFormat.h"
@@ -111,6 +113,61 @@ std::vector<std::string> Describe(Player* bot, bool steadyTest)
     };
 
     report("as is");
+
+    // every capability of the mount type, in the order the core tries them, with the first test it fails (the same tests as
+    // Unit::GetMountCapability): shows why a flying mount gives only a ground capability to one bot and flight to another
+    if (DB2Manager::MountTypeXCapabilitySet const* capabilities = sDB2Manager.GetMountCapabilities(mount->MountTypeID))
+    {
+        LiquidData liquid;
+        ZLiquidStatus liquidStatus = bot->GetMap()->GetLiquidStatus(bot->GetPhaseShift(), bot->GetPositionX(), bot->GetPositionY(), bot->GetPositionZ(), {}, &liquid);
+        bool submerged = (liquidStatus & LIQUID_MAP_UNDER_WATER) != 0 || bot->HasUnitMovementFlag(MOVEMENTFLAG_SWIMMING);
+        bool inWater = (liquidStatus & (LIQUID_MAP_IN_WATER | LIQUID_MAP_UNDER_WATER)) != 0;
+        EnumFlag<AreaMountFlags> mountFlags = AreaMountFlags::None;
+        bool restricted = bot->HasAuraType(SPELL_AURA_MOUNT_RESTRICTIONS);
+        if (restricted)
+            for (AuraEffect const* effect : bot->GetAuraEffectsByType(SPELL_AURA_MOUNT_RESTRICTIONS))
+                mountFlags |= AreaMountFlags(effect->GetMiscValue());
+        else if (AreaTableEntry const* areaTable = sAreaTableStore.LookupEntry(bot->GetAreaId()))
+            mountFlags = areaTable->GetMountFlags();
+        lines.push_back(Trinity::StringFormat("  where it stands: in water {}, submerged {}, mount restriction aura {} -> mount flags {:#x}", inWater, submerged, restricted, uint32(mountFlags.AsUnderlyingType())));
+
+        for (MountTypeXCapabilityEntry const* link : *capabilities)
+        {
+            MountCapabilityEntry const* c = sMountCapabilityStore.LookupEntry(link->MountCapabilityID);
+            if (!c)
+                continue;
+            std::string verdict = "passes";
+            if (riding < c->ReqRidingSkill)
+                verdict = Trinity::StringFormat("riding skill {} < {}", riding, c->ReqRidingSkill);
+            else if (!(c->Flags & MOUNT_CAPABIILTY_FLAG_IGNORE_RESTRICTIONS) && ((c->Flags & MOUNT_CAPABILITY_FLAG_FLYING && !mountFlags.HasFlag(AreaMountFlags::AllowFlyingMounts))
+                || (c->Flags & MOUNT_CAPABILITY_FLAG_GROUND && !mountFlags.HasFlag(AreaMountFlags::AllowGroundMounts))))
+                verdict = "the area does not allow this kind of mount";
+            else if (!submerged && !inWater && !(c->Flags & MOUNT_CAPABILITY_FLAG_GROUND))
+                verdict = "needs the ground flag out of the water";
+            else if (!submerged && inWater && !(c->Flags & MOUNT_CAPABILITY_FLAG_FLOAT))
+                verdict = "needs the float flag on the water";
+            else if (submerged && inWater && !(c->Flags & MOUNT_CAPABILITY_FLAG_UNDERWATER))
+                verdict = "the bot is under water: needs the underwater flag (a flying capability has none)";
+            else if (submerged && !inWater && !(c->Flags & MOUNT_CAPABILITY_FLAG_FLOAT))
+                verdict = "needs the float flag";
+            else if (c->ReqMapID != -1 && int32(bot->GetMapId()) != c->ReqMapID)
+                verdict = Trinity::StringFormat("wrong map (needs {})", c->ReqMapID);
+            else if (c->ReqAreaID && !DB2Manager::IsInArea(bot->GetAreaId(), c->ReqAreaID))
+                verdict = Trinity::StringFormat("wrong area (needs {})", c->ReqAreaID);
+            else if (c->ReqSpellAuraID && !bot->HasAura(c->ReqSpellAuraID))
+                verdict = Trinity::StringFormat("lacks the aura {}", c->ReqSpellAuraID);
+            else if (c->ReqSpellKnownID && !bot->HasSpell(c->ReqSpellKnownID))
+                verdict = Trinity::StringFormat("lacks the spell {}", c->ReqSpellKnownID);
+            else if (!ConditionMgr::IsPlayerMeetingCondition(bot, c->PlayerConditionID))
+            {
+                PlayerConditionEntry const* condition = sPlayerConditionStore.LookupEntry(c->PlayerConditionID);
+                verdict = Trinity::StringFormat("player condition {} fails (its modifier tree {}: {}, aura {} on the bot: {}, content tuning {})", c->PlayerConditionID,
+                    condition ? condition->ModifierTreeID : 0, condition && condition->ModifierTreeID ? bot->ModifierTreeSatisfied(condition->ModifierTreeID) : true,
+                    condition ? condition->AuraSpellID[0] : 0, condition ? bot->HasAura(condition->AuraSpellID[0]) : false, condition ? condition->ContentTuningID : 0);
+            }
+            lines.push_back(Trinity::StringFormat("    capability {} (order {}, flags {:#x}, flight {}, skill {}): {}", c->ID, link->OrderIndex, c->Flags, c->FlightCapabilityID, c->ReqRidingSkill, verdict));
+        }
+    }
     if (steadyTest && !bot->HasAura(SteadyFlightStyleAura))
     {
         bot->AddAura(SteadyFlightStyleAura, bot);
@@ -156,7 +213,8 @@ MountState EnsureMounted(Player* bot, bool grantMissing)
         return MountState::Ready;
     if (bot->HasUnitState(UNIT_STATE_CASTING))
         return MountState::Casting;
-    if (!bot->IsOutdoors())
+    // outdoors, and out of the water: under water the core only offers capabilities with the underwater flag, never a flying one
+    if (!bot->IsOutdoors() || bot->IsInWater() || bot->IsUnderWater())
         return MountState::Cannot;
 
     std::vector<uint32> flyers = Known(bot);
