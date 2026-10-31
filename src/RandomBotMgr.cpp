@@ -118,6 +118,8 @@ bool FloorNearAnchor(Map* map, PhaseShift const& phase, Position const& anchor, 
 {
     if (!Trinity::IsValidMapCoord(x, y))
         return false;
+    if (sPlayerbotsConfig.FarBotHeightNoGridLoad && !map->IsGridLoaded(x, y))
+        return false;
 
     float const anchorZ = anchor.GetPositionZ();
     float z = map->GetHeight(phase, x, y, anchorZ + 1.5f, true, 4.0f);
@@ -140,8 +142,6 @@ bool IsUsableName(std::string& name)
         return false;
 
     if (ObjectMgr::CheckPlayerName(name, LOCALE_enUS, true) != CHAR_NAME_SUCCESS)
-        return false;
-    if (sPlayerbotsConfig.FarBotHeightNoGridLoad && !map->IsGridLoaded(x, y))
         return false;
 
     if (sObjectMgr->IsReservedName(name))
@@ -357,6 +357,7 @@ void RandomBotMgr::Update(uint32 diff)
         _rotateTimer = 0;
         RotateBots();
     }
+    RotateNext(diff);
 
     _populationTimer += diff;
     if (_populationTimer >= 10000)
@@ -364,7 +365,6 @@ void RandomBotMgr::Update(uint32 diff)
         _populationTimer = 0;
         MaintainPopulation();
     }
-    RotateNext(diff);
 
     if (sPlayerbotsConfig.RandomOnlyWithPlayers)
     {
@@ -1378,6 +1378,8 @@ Position RandomBotMgr::ScatterSpot(Spot const& spot, ObjectGuid except, Player* 
         float y = spot.Y + dist * std::sin(angle);
         if (!Trinity::IsValidMapCoord(x, y))
             continue;
+        if (loadedGridsOnly && !map->IsGridLoaded(x, y))
+            continue;
 
         float z = map->GetHeight(phase, x, y, spot.Z + 5.0f, true);
         if (z <= INVALID_HEIGHT)
@@ -1391,8 +1393,6 @@ Position RandomBotMgr::ScatterSpot(Spot const& spot, ObjectGuid except, Player* 
         if (homeZone && map->GetZoneId(phase, x, y, z) != homeZone)
             continue;
         if (capped && !occupied.contains(GridKeyOf(spot.MapId, x, y)))
-            continue;
-        if (loadedGridsOnly && !map->IsGridLoaded(x, y))
             continue;
 
         at.Relocate(x, y, z, frand(0.0f, 2.0f * float(M_PI)));

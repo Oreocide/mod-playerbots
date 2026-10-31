@@ -677,15 +677,6 @@ Playerbots.FrozenTickMs = 0
 Playerbots.SleepElevators = 0
 
 #
-#    Playerbots.FarBotHeightNoGridLoad
-#        Description: The bots' ground-height lookup (route points, wander targets, every candidate quest point) used to LOAD the grid it asked about,
-#                     ~34 MB and ~600 ms each, often far away; in the rotation benchmark that was 28% of all grids created. With this on, a bot nobody
-#                     is near (frozen, or simulated only by the activity rotation) reads the height only if the terrain is already loaded and otherwise keeps
-#                     the height it already had (route nodes carry their own Z); bots near a human, in a group or in an instance load as before. Default: 0
-
-Playerbots.FarBotHeightNoGridLoad = 0
-
-#
 #    Playerbots.SleepBattlefields
 #        Description: Everything a battlefield spawns is "active" too, so Wintergrasp and Tol Barad update their cells every map tick with nobody there.
 #                     With this on the module takes them off the active list while no awake player or simulated bot is in the zone, and pins their grids,
@@ -693,6 +684,15 @@ Playerbots.FarBotHeightNoGridLoad = 0
 #                     within 5 seconds. Battle timers do not need them. This is a world change for everybody, not only for bots. Default: 0
 
 Playerbots.SleepBattlefields = 0
+
+#
+#    Playerbots.FarBotHeightNoGridLoad
+#        Description: The bots' ground-height lookup (route points, wander targets, every candidate quest point) used to LOAD the grid it asked about,
+#                     ~34 MB and ~600 ms each, often far away; in the rotation benchmark that was 28% of all grids created. With this on, a bot nobody
+#                     is near (frozen, or simulated only by the activity rotation) reads the height only if the terrain is already loaded and otherwise keeps
+#                     the height it already had (route nodes carry their own Z); bots near a human, in a group or in an instance load as before. Default: 0
+
+Playerbots.FarBotHeightNoGridLoad = 0
 
 #
 #    Playerbots.FarBotNoVisibilityLoad
