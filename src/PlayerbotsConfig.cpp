@@ -85,6 +85,7 @@ void Config::Load()
     ManagerSliceMs = uint32(std::clamp(sConfigMgr->GetIntDefault("Playerbots.ManagerSliceMs", 0), 0, 2000));
     SimVerdictCacheMs = uint32(std::clamp(sConfigMgr->GetIntDefault("Playerbots.SimVerdictCacheMs", 0), 0, 2000));
     SleepElevators = sConfigMgr->GetBoolDefault("Playerbots.SleepElevators", false);
+    SleepBattlefields = sConfigMgr->GetBoolDefault("Playerbots.SleepBattlefields", false);
     WarmHubs = uint32(std::clamp(sConfigMgr->GetIntDefault("Playerbots.Warm.Hubs", 0), 0, 100));
     WarmPlayerPositions = uint32(std::clamp(sConfigMgr->GetIntDefault("Playerbots.Warm.PlayerPositions", 0), 0, 50));
     WarmPin = sConfigMgr->GetBoolDefault("Playerbots.Warm.Pin", true);

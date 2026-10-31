@@ -15,12 +15,18 @@
  * with this program. If not, see <http://www.gnu.org/licenses/>.
  */
 
+#include "Creature.h"
 #include "DB2Stores.h"
 #include "GameObject.h"
+#include "GridDefines.h"
 #include "Log.h"
 #include "Map.h"
+#include "Player.h"
 #include "PlayerbotsConfig.h"
 #include "ScriptMgr.h"
+#include "TypeContainerVisitor.h"
+#include "WorldSession.h"
+#include <vector>
 
 // Playerbots.SleepElevators
 //
@@ -74,6 +80,126 @@ private:
     uint32 _accumulated = 0;
     uint32 _total = 0;
 };
+
+// Playerbots.SleepBattlefields
+//
+// Everything a battlefield spawns is active (Battlefield::SpawnCreature, SpawnGameObject, capture points by their type), so every map tick updates its cells with
+// nobody there. In the 2026-10-30 audit Tol Barad and Wintergrasp took 19% of the map thread on empty ground.
+//
+// While no awake player is in the zone they leave the active list. The battle timers run in Battlefield::Update and do not need them. An active object is also what
+// keeps its grid loaded and these spawns are not in the database, an unloaded grid would lose them for the battlefield: the grid is pinned first, and stays pinned
+// (the lock is one flag shared with Warm.Pin). An awake player or simulated bot in the zone gets everything back at the next sweep.
+class BattlefieldObjectSleeper
+{
+public:
+    BattlefieldObjectSleeper(Map& map, uint32 zoneId, std::vector<ObjectGuid>& slept) : _map(map), _zoneId(zoneId), _slept(slept) { }
+
+    void Visit(std::unordered_map<ObjectGuid, Creature*>& creatures)
+    {
+        for (auto const& [guid, creature] : creatures)
+            if (!creature->IsPet() && !creature->IsSummon() && creature->GetCharmerOrOwnerGUID().IsEmpty())
+                Sleep(creature);
+    }
+
+    void Visit(std::unordered_map<ObjectGuid, GameObject*>& gameObjects)
+    {
+        for (auto const& [guid, gameObject] : gameObjects)
+            if (gameObject->GetGoType() != GAMEOBJECT_TYPE_TRANSPORT && gameObject->GetOwnerGUID().IsEmpty())
+                Sleep(gameObject);
+    }
+
+    template<class ObjectType>
+    void Visit(std::unordered_map<ObjectGuid, ObjectType*>&) { }
+
+private:
+    void Sleep(WorldObject* object)
+    {
+        if (!object->IsInWorld() || !object->isActiveObject() || (_zoneId && object->GetZoneId() != _zoneId))
+            return;
+
+        _map.SetUnloadLock(Trinity::ComputeGridCoord(object->GetPositionX(), object->GetPositionY()), true);
+        object->setActive(false);
+        _slept.push_back(object->GetGUID());
+    }
+
+    Map& _map;
+    uint32 _zoneId;
+    std::vector<ObjectGuid>& _slept;
+};
+
+class playerbots_battlefield_sleep : public WorldMapScript
+{
+public:
+    // zoneId 0: the whole map
+    playerbots_battlefield_sleep(uint32 mapId, uint32 zoneId) : WorldMapScript("playerbots_battlefield_sleep", mapId), _zoneId(zoneId) { }
+
+    void OnUpdate(Map* map, uint32 diff) override
+    {
+        bool const enabled = sPlayerbotsConfig.SleepBattlefields;
+        if (!enabled && _slept.empty())
+            return;
+
+        _accumulated += diff;
+        if (_accumulated < SweepIntervalMs)
+            return;
+        _accumulated = 0;
+
+        if (enabled && !HasAwakePlayer(map))
+            Sleep(map);
+        else
+            Wake(map);
+    }
+
+private:
+    bool HasAwakePlayer(Map const* map) const
+    {
+        for (MapReference const& ref : map->GetPlayers())
+            if (Player const* player = ref.GetSource(); player && !player->GetSession()->IsDormant() && (!_zoneId || player->GetZoneId() == _zoneId))
+                return true;
+
+        return false;
+    }
+
+    void Sleep(Map* map)
+    {
+        size_t const before = _slept.size();
+        BattlefieldObjectSleeper worker(*map, _zoneId, _slept);
+        TypeContainerVisitor<BattlefieldObjectSleeper, MapStoredObjectTypesContainer> visitor(worker);
+        visitor.Visit(map->GetObjectsStore());
+
+        if (_slept.size() != before)
+            TC_LOG_INFO("server.playerbots", "Playerbots: map {} put {} battlefield object(s) to sleep", map->GetId(), _slept.size() - before);
+    }
+
+    void Wake(Map* map)
+    {
+        if (_slept.empty())
+            return;
+
+        uint32 woken = 0;
+        for (ObjectGuid const& guid : _slept)
+        {
+            WorldObject* object = nullptr;
+            if (guid.IsGameObject())
+                object = map->GetGameObject(guid);
+            else
+                object = map->GetCreature(guid);
+
+            if (object)
+            {
+                object->setActive(true);
+                ++woken;
+            }
+        }
+
+        TC_LOG_INFO("server.playerbots", "Playerbots: map {} woke {} battlefield object(s)", map->GetId(), woken);
+        _slept.clear();
+    }
+
+    uint32 _zoneId;
+    uint32 _accumulated = 0;
+    std::vector<ObjectGuid> _slept;
+};
 }
 
 void AddSC_playerbots_elevator_sleep()
@@ -82,4 +208,7 @@ void AddSC_playerbots_elevator_sleep()
     for (MapEntry const* entry : sMapStore)
         if (entry->IsContinent())
             new playerbots_elevator_sleep(entry->ID);
+
+    new playerbots_battlefield_sleep(571, 4197);    // Wintergrasp
+    new playerbots_battlefield_sleep(732, 0);       // Tol Barad
 }

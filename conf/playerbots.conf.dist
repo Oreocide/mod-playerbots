@@ -686,6 +686,15 @@ Playerbots.SleepElevators = 0
 Playerbots.FarBotHeightNoGridLoad = 0
 
 #
+#    Playerbots.SleepBattlefields
+#        Description: Everything a battlefield spawns is "active" too, so Wintergrasp and Tol Barad update their cells every map tick with nobody there.
+#                     With this on the module takes them off the active list while no awake player or simulated bot is in the zone, and pins their grids,
+#                     because an active object is what keeps a grid loaded and these spawns would be lost with it. An awake player in the zone gets them back
+#                     within 5 seconds. Battle timers do not need them. This is a world change for everybody, not only for bots. Default: 0
+
+Playerbots.SleepBattlefields = 0
+
+#
 #    Playerbots.FarBotNoVisibilityLoad
 #        Description: When a player moves, arrives or logs in, the core loads every grid within its visibility range (Map::LoadGridsInRange, from the
 #                     relocation notify) and tells it about everything there. For a bot that is the only player around, that is a grid load nobody
