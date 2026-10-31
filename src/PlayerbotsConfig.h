@@ -144,7 +144,7 @@ struct Config
     bool BotActiveAloneZone = false;
     bool BotActiveAloneMap = false;
     bool BotActiveAloneFriend = true;
-    bool BotActiveAloneGuild = true;
+    bool BotActiveAloneGuild = false;
     uint32 BotActiveAloneDurationSeconds = 30;   // the roster of lonely active bots changes this often
     uint32 BotActiveAloneForceGraceSeconds = 10; // a bot a player left stays awake this long (no flicker)
     uint32 DebugForceActive = 0;                 // test knob: about this many random bots run as if a player were near (0 = off)

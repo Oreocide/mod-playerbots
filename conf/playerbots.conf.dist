@@ -764,7 +764,7 @@ Playerbots.BotActiveAlone.Radius = 150
 Playerbots.BotActiveAlone.Zone = 0
 Playerbots.BotActiveAlone.Map = 0
 Playerbots.BotActiveAlone.Friend = 1
-Playerbots.BotActiveAlone.Guild = 1
+Playerbots.BotActiveAlone.Guild = 0
 
 #
 #    Playerbots.BotActiveAlone.DurationSeconds

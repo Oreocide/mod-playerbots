@@ -149,7 +149,7 @@ void Config::Load()
     BotActiveAloneZone = sConfigMgr->GetBoolDefault("Playerbots.BotActiveAlone.Zone", false);
     BotActiveAloneMap = sConfigMgr->GetBoolDefault("Playerbots.BotActiveAlone.Map", false);
     BotActiveAloneFriend = sConfigMgr->GetBoolDefault("Playerbots.BotActiveAlone.Friend", true);
-    BotActiveAloneGuild = sConfigMgr->GetBoolDefault("Playerbots.BotActiveAlone.Guild", true);
+    BotActiveAloneGuild = sConfigMgr->GetBoolDefault("Playerbots.BotActiveAlone.Guild", false);
     BotActiveAloneDurationSeconds = uint32(std::clamp(sConfigMgr->GetIntDefault("Playerbots.BotActiveAlone.DurationSeconds", 30), 5, 3600));
     BotActiveAloneForceGraceSeconds = uint32(std::clamp(sConfigMgr->GetIntDefault("Playerbots.BotActiveAlone.ForceGraceSeconds", 10), 0, 600));
     BotActiveAloneZoneMaxActive = uint32(std::max(0, sConfigMgr->GetIntDefault("Playerbots.BotActiveAlone.ZoneMaxActive", 0)));
