@@ -141,6 +141,8 @@ bool IsUsableName(std::string& name)
 
     if (ObjectMgr::CheckPlayerName(name, LOCALE_enUS, true) != CHAR_NAME_SUCCESS)
         return false;
+    if (sPlayerbotsConfig.FarBotHeightNoGridLoad && !map->IsGridLoaded(x, y))
+        return false;
 
     if (sObjectMgr->IsReservedName(name))
         return false;
@@ -362,6 +364,7 @@ void RandomBotMgr::Update(uint32 diff)
         _populationTimer = 0;
         MaintainPopulation();
     }
+    RotateNext(diff);
 
     if (sPlayerbotsConfig.RandomOnlyWithPlayers)
     {
@@ -1350,6 +1353,12 @@ Position RandomBotMgr::ScatterSpot(Spot const& spot, ObjectGuid except, Player* 
     if (!map)
         return at;
 
+    // A zone or height query on a grid nobody loaded pulls in its terrain and every child terrain, on the world thread: seconds on a cold spot.
+    // The spot itself is known ground: the first bot stands on it, its arrival loads the grid and the next ones scatter.
+    bool const loadedGridsOnly = sPlayerbotsConfig.FarBotHeightNoGridLoad;
+    if (loadedGridsOnly && !map->IsGridLoaded(spot.X, spot.Y))
+        return at;
+
     bool capped = false;
     std::unordered_set<uint64> occupied;
     if (uint32 maxGrids = sPlayerbotsConfig.RandomMaxGrids)
@@ -1382,6 +1391,8 @@ Position RandomBotMgr::ScatterSpot(Spot const& spot, ObjectGuid except, Player* 
         if (homeZone && map->GetZoneId(phase, x, y, z) != homeZone)
             continue;
         if (capped && !occupied.contains(GridKeyOf(spot.MapId, x, y)))
+            continue;
+        if (loadedGridsOnly && !map->IsGridLoaded(x, y))
             continue;
 
         at.Relocate(x, y, z, frand(0.0f, 2.0f * float(M_PI)));
@@ -1620,7 +1631,8 @@ bool RandomBotMgr::PlaceAtHotspot(Player* bot)
     }
 
     // the same predicate as the eviction pass: a hotspot on ground the bot's team may not stand on is no hotspot for it
-    if (SpawnPolicy::IsEnemyGroundAt(bot, hotspot.Map, Position(point.X, point.Y, point.Z)))
+    // (on an unloaded grid only the town check answers, the eviction pass moves the bot if the rest of the rule disagrees once it stands there)
+    if (SpawnPolicy::IsEnemyGroundAt(bot, hotspot.Map, Position(point.X, point.Y, point.Z), sPlayerbotsConfig.FarBotHeightNoGridLoad))
         return false;
 
     // a few yards off the shared point, so a crowd at one inn is not one model
@@ -1960,6 +1972,20 @@ void RandomBotMgr::EvictFromEnemyGround()
     }
 }
 
+namespace
+{
+bool CanRotate(Player* bot, PlayerbotAI* ai)
+{
+    RpgStatus status = ai->GetRpg().Status;
+    if (!bot->IsAlive() || bot->IsInCombat() || bot->IsBeingTeleported() || bot->GetGroup() || bot->InBattleground()
+        || bot->InBattlegroundQueue() || bot->isUsingLfg() || ai->GetMaster() || !bot->GetMap() || bot->GetMap()->Instanceable()
+        || status == RpgStatus::DoQuest || status == RpgStatus::TravelFlight || bot->IsInFlight())
+        return false;
+
+    return !sPlayerbotMgr->HasHumanWithin(bot, RotateObservedDistance);
+}
+}
+
 void RandomBotMgr::RotateBots()
 {
     EvictFromEnemyGround();
@@ -1968,42 +1994,41 @@ void RandomBotMgr::RotateBots()
     if (!minutes || sPlayerbotsConfig.HotspotProb <= 0.0f || !sPlayerbotMgr->GetRandomBotCount())
         return;
 
-    std::vector<Player*> due;
+    _rotateQueue.clear();
     sPlayerbotMgr->ForEachRandomBot([&](Player* bot, PlayerbotAI* ai)
     {
-        if (urand(1, minutes) != 1)
-            return;
-
-        RpgStatus status = ai->GetRpg().Status;
-        if (!bot->IsAlive() || bot->IsInCombat() || bot->IsBeingTeleported() || bot->GetGroup() || bot->InBattleground()
-            || bot->InBattlegroundQueue() || bot->isUsingLfg() || ai->GetMaster() || !bot->GetMap() || bot->GetMap()->Instanceable()
-            || status == RpgStatus::DoQuest || status == RpgStatus::TravelFlight || bot->IsInFlight())
-            return;
-
-        if (sPlayerbotMgr->HasHumanWithin(bot, RotateObservedDistance))
-            return;
-
-        due.push_back(bot);
+        if (urand(1, minutes) == 1 && CanRotate(bot, ai))
+            _rotateQueue.push_back(bot->GetGUID());
     });
 
-    uint32 hotspots = 0;
-    uint32 released = 0;
-    for (Player* bot : due)
-    {
-        if (roll_chance(sPlayerbotsConfig.HotspotProb * 100.0f))
-        {
-            if (PlaceAtHotspot(bot))
-                ++hotspots;
-        }
-        else if (GetAnchor(bot->GetGUID()))
-        {
-            Place(bot);   // its hotspot roll fails again most of the time, then it is an ordinary open world spot
-            ++released;
-        }
-    }
+    // spread over the minute until the next check: an arrival can create a grid, a batch of them in one tick stalls the world for seconds
+    _rotateGapMs = RotateCheckMs / std::max<uint32>(1, uint32(_rotateQueue.size()));
+    _rotateGapTimer = 0;
+}
 
-    if (hotspots || released)
-        TC_LOG_DEBUG("server.playerbots", "Playerbots: hotspot rotation, {} bots to hotspots, {} back to the open world", hotspots, released);
+void RandomBotMgr::RotateNext(uint32 diff)
+{
+    if (_rotateQueue.empty())
+        return;
+
+    _rotateGapTimer += diff;
+    if (_rotateGapTimer < _rotateGapMs)
+        return;
+    _rotateGapTimer = 0;
+
+    ObjectGuid guid = _rotateQueue.front();
+    _rotateQueue.pop_front();
+
+    // it was picked up to a minute ago: it may have logged out, or a player may have walked up to it
+    Player* bot = ObjectAccessor::FindPlayer(guid);
+    PlayerbotAI* ai = bot ? sPlayerbotMgr->GetAI(bot) : nullptr;
+    if (!ai || !CanRotate(bot, ai))
+        return;
+
+    if (roll_chance(sPlayerbotsConfig.HotspotProb * 100.0f))
+        PlaceAtHotspot(bot);
+    else if (GetAnchor(guid))
+        Place(bot);   // its hotspot roll fails again most of the time, then it is an ordinary open world spot
 }
 
 bool RandomBotMgr::Hold(ObjectGuid guid)

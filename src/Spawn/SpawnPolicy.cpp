@@ -123,14 +123,14 @@ bool IsEnemyGround(uint32 mapId, uint32 areaId, float x, float y, float z, Team 
     return HubIndex::IsBuilt() && sTravelMgr->IsHostileGround(mapId, x, y, team == ALLIANCE ? 1 : 2);
 }
 
-bool IsEnemyGroundAt(Player const* bot, uint32 mapId, Position const& pos)
+bool IsEnemyGroundAt(Player const* bot, uint32 mapId, Position const& pos, bool loadedGridsOnly /*= false*/)
 {
     if (!bot)
         return false;
 
     // the area id needs a loaded map; without one only the town check can answer
     uint32 areaId = 0;
-    if (Map* map = sMapMgr->FindMap(mapId, 0))
+    if (Map* map = sMapMgr->FindMap(mapId, 0); map && (!loadedGridsOnly || map->IsGridLoaded(pos)))
         areaId = map->GetAreaId(bot->GetPhaseShift(), pos);
 
     return IsEnemyGround(mapId, areaId, pos.GetPositionX(), pos.GetPositionY(), pos.GetPositionZ(), Player::TeamForRace(bot->GetRace()));

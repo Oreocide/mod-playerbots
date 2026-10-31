@@ -33,8 +33,9 @@ namespace Playerbots::SpawnPolicy
 /// Uses the map's terrain data: call from the world thread or the bot's own map thread.
 bool IsEnemyGround(Player const* bot);
 
-/// The same for a point the bot is about to be sent to (its area comes from the loaded map, if any)
-bool IsEnemyGroundAt(Player const* bot, uint32 mapId, Position const& pos);
+/// The same for a point the bot is about to be sent to (its area comes from the loaded map, if any).
+/// loadedGridsOnly: no area lookup on an unloaded grid, that would load its terrain on the caller's thread
+bool IsEnemyGroundAt(Player const* bot, uint32 mapId, Position const& pos, bool loadedGridsOnly = false);
 
 /// The same for a point that is not where a bot stands (spot lists): the area id and the team are given.
 /// z is used for the Northrend Dalaran street boxes (0 skips the box and still checks the area id).

@@ -204,6 +204,8 @@ private:
     bool LoadAnchor(ObjectGuid guid, Anchor& anchor);
     /// Idle bots roll again for a hotspot or the open world, a small share per minute
     void RotateBots();
+    /// Places the next bot RotateBots picked, one at a time over the minute
+    void RotateNext(uint32 diff);
     /// Far bots: one-time level from the band weights, then a relocate every 1-5 hours with a small chance of +1 level.
     /// A corpse with nobody near is resurrected after 60-300 seconds and placed. World thread.
     void MaintainPopulation();
@@ -236,6 +238,9 @@ private:
     std::unordered_map<ObjectGuid, uint32> _homeMaps;
     std::unordered_map<ObjectGuid, Anchor> _anchors;
     uint32 _rotateTimer = 0;
+    std::deque<ObjectGuid> _rotateQueue;
+    uint32 _rotateGapMs = 0;
+    uint32 _rotateGapTimer = 0;
     uint32 _populationTimer = 0;
     std::unordered_set<ObjectGuid> _banded;                 // world thread: level already drawn from the band weights
     std::unordered_map<ObjectGuid, uint32> _nextPopulationAt; // unix seconds of the next far relocate
