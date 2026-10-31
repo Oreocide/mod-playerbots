@@ -8,7 +8,7 @@ Target (user, 2026-10-15): **100 ACTIVE, 1000 logged in.** `mod:` = `modules/mod
 |---|---|---|
 | Idle world | 5.4 GiB | FINDINGS "CURRENT STATE" |
 | First login into the big continents | ~3 GiB one time (navmesh/VMAP init) | same |
-| Per loaded grid | ~34.5 MB (31.2 MB navmesh tile), ~400-600 ms to load | same |
+| Per loaded grid | was ~34.5 MB, ~400-600 ms to load: 31.2 MB of that was about 39 copies of one 0.7 MB tile, one per terrain child (fixed by `mmap.onlyUsedTerrainSwaps`, ~6 MB navmesh per grid, 84 ms) | audit 2026-10-30 |
 | Per bot | ~0.47-0.52 MB | same |
 | 750 bots, all gates on, nobody online | 9.4-10 GiB, ~33% of one core | same |
 | CPU drivers | active GOs (elevators/doors) keep creatures updating (~340-500 ms/s at 200 bots); per-bot module loops every world tick | same |
