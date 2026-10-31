@@ -40,11 +40,17 @@ constexpr float MaxDistance = 9.0f;            // a mounted run covers 14 yards 
 std::mutex sLock;
 std::unordered_map<ObjectGuid, uint32> sUntil;   // game time ms: end of the arc
 
+// Clients only act on a movement status that names the unit, and a bot has no client to fill the guid in. It names the bot for this packet
+// alone: the status of a bot on a spline is never refreshed, so a guid left in it makes every later speed change (a mount, a dismount) and
+// teleport tell the clients the bot is back where it last jumped, and it flies there and back in a blink
 void Broadcast(Player* bot)
 {
+    MovementInfo& info = bot->m_movementInfo;
+    info.guid = bot->GetGUID();
     WorldPackets::Movement::MoveUpdate update;
-    update.Status = &bot->m_movementInfo;
+    update.Status = &info;
     bot->SendMessageToSet(update.Write(), true);
+    info.guid.Clear();
 }
 }
 
@@ -86,8 +92,6 @@ bool StartPlayerJump(Player* bot, Position const& to)
     bot->SetOrientation(angle);
 
     MovementInfo& info = bot->m_movementInfo;
-    // the guid is only ever filled from a client's packet: without it the clients drop the update (a bot has no client)
-    info.guid = bot->GetGUID();
     info.time = now;
     info.pos.Relocate(bot->GetPositionX(), bot->GetPositionY(), bot->GetPositionZ(), angle);
     info.AddMovementFlag(MovementFlags(MOVEMENTFLAG_FORWARD | MOVEMENTFLAG_FALLING));
