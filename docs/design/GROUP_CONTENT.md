@@ -13,7 +13,7 @@ Paths: `mod:` = `modules/mod-playerbots/src/`, core = `src/server/game/`, `AC:` 
   - arena = a bot group of the opposite faction ±5 levels (`:530-614`);
   - LFG fills missing roles ±4 levels with 2-6 s delays (`:52-61,201-221,330-430`);
   - bots leave a queue after 60 s without a human (`:58,317`).
-- Gap A: each team is filled only to `GetMinPlayersPerTeam`, at most 6 bots per scan (`:491-497,60`). AC fills each side to team size × (queues + running instances) (`AC:src/Ai/Base/Actions/BattleGroundJoinAction.cpp:195-439`).
+- Gap A (corrected 2026-11-02, see BG_PLAN.md §1): the fill already goes to `GetMaxPlayersPerTeam` (`ActivityMgr.cpp:533`). The match still starts near the minimum because core `CheckNormalMatch` picks only `minPlayers` per team (`BattlegroundQueue.cpp:658`) and the module stops once the human is invited (`ActivityMgr.cpp:517`). Old wording: each team is filled only to `GetMinPlayersPerTeam`, at most 6 bots per scan (`:491-497,60`). AC fills each side to team size × (queues + running instances) (`AC:src/Ai/Base/Actions/BattleGroundJoinAction.cpp:195-439`).
 - Gap B: **inside a BG bots have no objectives.** The "pvp" action chases the nearest enemy player. There is no prep-gate handling, and the in-place `AutoResurrect` is not retail behavior (`mod:PlayerbotAI.cpp:137-139`; `mod:Strategies/GenericStrategies.cpp:322-354,570-587`; README "Not done yet").
 
 ### Design

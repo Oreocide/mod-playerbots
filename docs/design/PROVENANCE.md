@@ -63,7 +63,7 @@ The bot session patch, `PlayerScript::OnUpdate`, the modules framework and the B
 | `src/Spawn/SpawnPolicy.*` | design-from-AC (enemy-zone/team filters, `AC:src/Bot/RandomPlayerbotMgr.cpp:1595-1741`) + original (graveyard conditions, DangerMap level fit) | IDENTITY §1 |
 | GearFactory filter/score + `autogear` commands | design-from-AC (`AC:src/Ai/Base/Actions/TrainerAction.cpp:586-700`, `PlayerbotFactory::InitEquipment`, `StatsWeightCalculator`); armor rule original (`ChrClasses.ArmorTypeMask`) | IDENTITY §3 |
 | `playerbots_race_mounts` seed | original (client Mount.db2 vendor rows); AC per-race lists **not** copied (they contain swapped factions) | IDENTITY §2 |
-| `src/Bg/*` objective layer | design-from-AC (roles, `AC:BattleGroundTactics.cpp:1207-1275`); generic GO objective approach original | GROUP_CONTENT §1 |
+| `src/Battleground/*` team planner | design-from-AC (role idea `AC:BattleGroundTactics.cpp:1867-1923`, AV objective tables 1207-1247); seeded team split, objective graph, rally state machine original | BG_PLAN.md |
 | `src/Social/BotGuildMgr.*` | design-from-AC (`AC:src/Mgr/Guild/PlayerbotGuildMgr.cpp:26-247`) | GROUP_CONTENT §2 |
 | `data/rotations/assisted_combat/*` (offline dumps) | client data reference (Blizzard DB2), used only to review `.rot` scripts | GROUP_CONTENT §3 |
 | `src/Combat/HazardScan.*`, `SafeSpot.*` | design-from-AC (`AvoidAoeAction`, `AC:src/Ai/Base/Actions/MovementActions.cpp:1846-2245`) | GROUP_CONTENT §4 |
