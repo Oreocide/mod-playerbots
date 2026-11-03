@@ -966,6 +966,19 @@ Playerbots.Quest.AbstractXp = 0
 Playerbots.Bg.Objectives = 0
 Playerbots.World.Reactions = 0
 
+# Battleground team planner (docs/design/BG_PLAN.md), needs Playerbots.Bg.Objectives = 1. One plan per match and team:
+# each team rolls its defence share between DefendMinPct and DefendMaxPct (seeded by instance, team and start time),
+# a seeded shuffle picks the defenders, the defenders spread over the held objectives, the rest attack or escort a carrier.
+# A bot keeps its job at least RoleHoldSeconds. Captures cast the real spell (Capturing, 6 s; any hit breaks it).
+# Off: the pilot objective code plays these maps as before. ".bot bg" shows the plan.
+# Planner.Maps: Warsong Gulch 2106, Twin Peaks 726, Arathi Basin 2107, Battle for Gilneas 761, Eye of the Storm 566.
+Playerbots.Bg.Planner = 0
+Playerbots.Bg.Planner.Maps = 2106,726,2107,761,566
+Playerbots.Bg.Planner.TickMs = 3000
+Playerbots.Bg.DefendMinPct = 20
+Playerbots.Bg.DefendMaxPct = 40
+Playerbots.Bg.RoleHoldSeconds = 45
+
 Playerbots.React.ReturnEmotes = 1
 Playerbots.React.Chairs = 1
 

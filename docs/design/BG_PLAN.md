@@ -50,19 +50,19 @@ Isle of Conquest 628 (nodes + gates, vehicles), Strand 607 (gates in rounds, veh
 ### Threads
 - The planner ticks from a module `WorldScript::OnUpdate` (`playerbots_bg`, `src/Battleground/BgScripts.cpp`), world thread, after the map threads finish. Each instance re-plans every `Bg.Planner.TickMs` (3000), staggered by instance id.
 - BG bots stay on the world thread (`TickOtherMapBots`) and read their assignment from the planner on that same thread. No locks. The chat hook (phase 4) runs there too.
-- If BG bot ticks ever move to a map thread, the planner API needs a lock first (rule for NOTES.md).
+- If BG bot ticks ever move to a map thread, the planner API needs a lock first (the rule is written at the top of `BgPlanner.h`).
 
 ### Planner (`src/Battleground/BgPlanner.*`)
-- Registry keyed by `(mapId, instanceId)`: two team plans plus objective states. Bots touch it from their BG action; no touch for 30 s or `STATUS_WAIT_LEAVE` drops it. `Battleground*` is never stored: re-fetched each tick from a live member.
+- Registry keyed by `(mapId, instanceId)`: two team plans plus objective states. Bots touch it from their BG action; no touch for 30 s or `STATUS_WAIT_LEAVE` drops it. `Battleground*` is never stored: re-fetched each tick through `sMapMgr->FindMap(map, instance)`.
 - Roster from `bg->GetBgMap()->GetPlayers()`: bots and humans, alive, spec role.
-- Objective state: AV from world states; pilot maps from GO guids cached per match (`Map::GetGameObject`), with a fresh grid search for a node only when its guid misses (flags and respawned banners get new guids). Score from `GetTeamScore` or a world-state pair per map.
+- Objective state: AV from world states; pilot maps from GO guids cached per match (`Map::GetGameObject`), with one pass over the map's object store, at most every 5 s, only when a guid misses (flags and respawned banners get new guids). Capture points are read from `GetGOValue()->CapturePoint` (state, last capturing team), towers from `GetControllingTeam`, flags from `GetFlagState`/`GetFlagCarrierGUID` and their `NEW_FLAG_DROP` object. Score from `GetTeamScore` or a world-state pair per map.
 - Output per bot: job (attack, defend, carrier, escort, heal, rally), objective, point, radius, squad, since. Kept in the planner's own map keyed by `ObjectGuid`, never a `PlayerbotAI` member.
 - Runs only with `Playerbots.Bg.Objectives = 1`, `Playerbots.Bg.Planner = 1` and the map in `Playerbots.Bg.Planner.Maps`; the startup log warns about Planner on with Objectives off.
 
 ### Random split (`src/Battleground/BgRules.h`, pure, unit-tested)
 - At match start each team rolls `share` in `[Bg.DefendMinPct, Bg.DefendMaxPct]` (20-40), seeded from instance id, team and match start time. The teams roll separately. `.bot bg` prints the seed.
 - Bots are ordered by `hash(seed, guid)`, a seeded shuffle. Defenders are the first `round(share x bots)`, spread over held objectives by weight; a team that holds nothing has no defenders that tick (the WSG flag room always counts).
-- Reassign on: an objective changing hands, a bot joining or leaving, a score swing (the lead changes sign or crosses a per-map step), and every 60 s. Only the difference moves: bots whose `Bg.RoleHoldSeconds` (45) ran out, nearest to the new job first. A defender whose node fell is free at once. A bot that joins mid-match gets the job the team is short of.
+- Reassign on: an objective changing hands, a flag picked up, dropped or back in base, a bot joining or leaving, a score swing (phase 1: the lead changes sign; a per-map score step comes with reactive #4), and every 60 s. Only the difference moves: bots whose `Bg.RoleHoldSeconds` (45) ran out, nearest to the new job first. A defender whose node fell is free at once. A bot that joins mid-match gets the job the team is short of.
 
 ### Objective graph (phase 3, world table `playerbots_bg_node`)
 `map, node, kind (capture | burn | kill_captain | kill_general | take_mine | flag | rally), x, y, z, radius, go_entry, creature_entry, ws_a_ctrl, ws_a_assault, ws_h_ctrl, ws_h_assault, ws_alive, requires, ally_weight, horde_weight, min_group, rally, leash_x, leash_y, leash_r, aliases, comment`. Rally points are rows of kind `rally`. `requires` lists node keys and is a soft gate; weights are tuning; `aliases` feed the /bg call parser. Routes are not stored: bots path with `MoveAlongMesh` (old plan, still true).
@@ -89,7 +89,8 @@ Mines are a spare-bot job (reactive #13). Defenders keep our towers and graveyar
 - Tuning: `.bot bg rally set <node>` stores the GM's position in the row; `.bot bg show` summons temporary GM-only markers (5 min despawn). No permanent spawns, nothing always active, bots never need a marker.
 
 ### Bot side (`src/Battleground/BgPlay.*`)
-- One hook in `PlayObjective`, after the `BgObjectives` check: `if (sPlayerbotsConfig.BgPlanner) return BgPlay(bot, ai);`. With the key off the pilot runs exactly as today.
+- One hook in `PlayObjective`, after the `BgObjectives` check: `if (Bg::Plays(bot)) return Bg::Play(bot, ai);`. With the key off the pilot runs exactly as today.
+- Flags: lock-free flags (WSG, Twin Peaks) are picked up with `GameObject::Use`, as a click does; a dropped flag is its `NEW_FLAG_DROP` object (return or pick up). The Eye flag has lock 2178 and takes the 156098 cast. The pilot never picked a flag up.
 - Movement only through `MoveAlongMesh`; `NoPath` writes `badspot` and the planner drops that node for that bot. Mounting through `UpdateMountForTravel`.
 - Captures cast the real spell on the GO (156098 on type 42, 21651 on AV banners): damage interrupts, one capper per node, the others guard. M until seen in game (a server-side cast of a spell the bot does not know).
 - Targets only inside the objective radius: enemy carrier, then enemies on our node, then the nearest. Never past a leash.
@@ -98,7 +99,7 @@ Mines are a spare-bot job (reactive #13). Defenders keep our towers and graveyar
 `.bot bg` (your battleground), `.bot bg list`, `.bot bg <instanceId>` (console): per team the seed and roll, job counts, current target, rally state (`gathering 9/12, 74 s left`) and objective states. `.bot bg roles` adds every bot's job, objective and job age. Phase 3 adds `rally set` and `show`.
 
 ### Talk (old plan, still the target)
-Fixed phrase table, instance chat, at most one line per bot per 20 s and one per event per team. No model. Until reactive #9 is built the planner path keeps the pilot's /say lines.
+Fixed phrase table, instance chat, at most one line per bot per 20 s and one per event per team. No model. Until reactive #9 is built the planner path says nothing; the pilot keeps its /say lines.
 
 ### Failure and fallback (old plan, still true)
 - No mesh path to a node: `badspot`, move to the nearest node that does path. Never a raw `MoveTo`.
@@ -117,7 +118,7 @@ Fixed phrase table, instance chat, at most one line per bot per 20 s and one per
 | 4 | Reactive behaviours the owner picks from section 4 | one key each | - |
 | 5 | Later maps, one note each, vehicles first | - | - |
 
-Files: `src/Battleground/{BgRules.h, BgPlanner.*, BgPlay.*, BgMapData.*, BgCommands.cpp, BgScripts.cpp}`, `tests/bg_rules_test.cpp`. Shared one-line edits: `GenericStrategies.cpp`, `PlayerbotCommandScript.cpp`, `playerbots_loader.cpp`, `PlayerbotsConfig.h/.cpp`, `conf/playerbots.conf.dist`, `tests/run_engine_test.sh`, later `ActivityMgr.cpp`. Several of these hold other sessions' uncommitted work: check ListAgents before each edit, splice hunks for the commit (`modules/CLAUDE.md`). `PlayerbotsConfig.h` changes layout: touch it, full rebuild with nothing else building, then install.
+Files (phase 1 as built): `src/Battleground/{BgRules.h, BgConfig.*, BgMapData.*, BgPlanner.*, BgPlay.*, BgScripts.cpp}`, `tests/bg_rules_test.cpp`. The `Playerbots.Bg.*` keys live in `BgConfig` (loaded by the `playerbots_bg_world` script), not in `PlayerbotsConfig.h`, so no header layout changes; `.bot bg` is its own CommandScript whose `"bot bg"` entry the core merges into the `.bot` table, so `PlayerbotCommandScript.cpp` is untouched. Shared edits: `GenericStrategies.cpp` (include + hook), `playerbots_loader.cpp`, `conf/playerbots.conf.dist`, `tests/run_engine_test.sh`; later `ActivityMgr.cpp`. Several of these hold other sessions' uncommitted work: check ListAgents before each edit, splice hunks for the commit (`modules/CLAUDE.md`).
 
 ## 4. Reactive behaviours, ranked
 
@@ -153,10 +154,10 @@ Later, each with its own vehicle note first: IoC and Strand siege vehicles, Wint
 Before each install or restart: ask the owner, check `SELECT online FROM auth.account WHERE id=2`, look in `docker/etc/worldserver.conf.d/` for a PacketLogFile drop-in, `docker restart -t 120`.
 
 Phase 1
-1. `tests/run_engine_test.sh` passes (roll stays inside min-max, the two teams roll apart, the shuffle is not in guid order, the hold time holds, only the difference moves).
+1. `tests/run_engine_test.sh` passes (roll stays inside min-max, the two teams get different shuffle orders, the shuffle is not in guid order, the hold time holds, only the difference moves).
 2. Conf: `Playerbots.Bg.Planner = 1` (Objectives already 1). Queue Warsong Gulch.
-3. `.bot bg`: two seeds, two different rolls, job counts adding up to the bots per team. `.bot bg roles`: defenders in our flag room, the rest attacking or escorting.
-4. After a flag capture `.bot bg` shows a reassign with its reason; no bot changes job twice inside 45 s.
+3. `.bot bg`: two seeds and two rolls (equal shares are possible, about 1 match in 21), job counts adding up to the bots per team. `.bot bg roles`: defenders in our flag room, the rest attacking or escorting.
+4. A flag pickup, drop or capture shows as `last event` in `.bot bg`; while our flag carrier runs, `.bot bg roles` shows it as `carrier` and two attackers as `escort ... with <carrier>`. `last change` names the event that moved jobs; no bot changes job twice inside 45 s.
 5. Queue Arathi Basin: defenders spread over held nodes; a capper stands 6 s casting "Capturing" and stops when hit, the others guard.
 6. Second match: different rolls. `Playerbots.Bg.Planner = 0` + `.reload config`: the next match plays like the pilot.
 

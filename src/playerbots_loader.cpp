@@ -19,6 +19,7 @@ void AddSC_playerbots_scripts();
 void AddSC_playerbots_commandscript();
 void AddSC_playerbots_hotspot();
 void AddSC_playerbots_elevator_sleep();
+void AddSC_playerbots_bg();
 
 void Addmod_playerbotsScripts()
 {
@@ -26,4 +27,5 @@ void Addmod_playerbotsScripts()
     AddSC_playerbots_commandscript();
     AddSC_playerbots_hotspot();
     AddSC_playerbots_elevator_sleep();
+    AddSC_playerbots_bg();
 }

@@ -64,3 +64,6 @@ g++ $FLAGS "$HERE/command_text_test.cpp" -o "$OUT/playerbots_command_text_test"
 
 g++ $FLAGS "$HERE/guild_names_test.cpp" -o "$OUT/playerbots_guild_names_test"
 "$OUT/playerbots_guild_names_test"
+
+g++ $FLAGS "$HERE/bg_rules_test.cpp" -o "$OUT/playerbots_bg_rules_test"
+"$OUT/playerbots_bg_rules_test"

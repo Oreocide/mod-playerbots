@@ -16,6 +16,7 @@
  */
 
 #include "GenericStrategies.h"
+#include "Battleground/BgPlay.h"
 #include "Combat/GroupCombat.h"
 #include "Dungeon/EncounterKit.h"
 #include "Economy/PotionRules.h"
@@ -1285,6 +1286,10 @@ bool PlayObjective(Player* bot, PlayerbotAI& ai)
 {
     if (!sPlayerbotsConfig.BgObjectives)
         return false;
+
+    // Playerbots.Bg.Planner: the team planner plays this map (Battleground/BgPlay.h), the pilot below does not
+    if (Bg::Plays(bot))
+        return Bg::Play(bot, ai);
 
     Battleground* bg = bot->GetBattleground();
     if (!bg || !IsObjectiveMap(bot->GetMapId()))
