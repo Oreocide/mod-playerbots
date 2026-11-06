@@ -21,6 +21,9 @@
 #include "Battleground/BgConfig.h"
 #include "Battleground/BgPlanner.h"
 #include "Battleground.h"
+#include "BattlegroundMgr.h"
+#include "BattlegroundQueue.h"
+#include "BotSession.h"
 #include "Chat.h"
 #include "ChatCommand.h"
 #include "GameObject.h"
@@ -93,6 +96,37 @@ Battleground* FindBg(BgPlan const& plan)
     return bgMap ? bgMap->GetBG() : nullptr;
 }
 
+// Team sizes of any battleground, planned or not: inside, invited and still on the way, waiting in its queue (Playerbots.Bg.FillToMax)
+void SendTeamSizes(ChatHandler* handler, Battleground const* bg)
+{
+    uint32 humans[2] = { 0, 0 };
+    for (auto const& [guid, member] : bg->GetPlayers())
+        if (Player* player = ObjectAccessor::FindConnectedPlayer(guid); player && !Playerbots::IsBot(player))
+            ++humans[member.Team == ALLIANCE ? TEAM_ALLIANCE : TEAM_HORDE];
+
+    uint32 queued[2] = { 0, 0 };
+    BattlegroundQueue& queue = sBattlegroundMgr->GetBattlegroundQueue(bg->GetQueueID());
+    for (uint32 type = 0; type < BG_QUEUE_GROUP_TYPES_COUNT; ++type)
+        for (GroupQueueInfo const* info : queue.m_QueuedGroups[bg->GetBracketId()][type])
+            if (!info->IsInvitedToBGInstanceGUID)
+                queued[type == BG_QUEUE_PREMADE_ALLIANCE || type == BG_QUEUE_NORMAL_ALLIANCE ? TEAM_ALLIANCE : TEAM_HORDE] += uint32(info->Players.size());
+
+    std::string teams;
+    for (uint32 team = 0; team < 2; ++team)
+    {
+        Team side = team == TEAM_ALLIANCE ? ALLIANCE : HORDE;
+        uint32 inside = bg->GetPlayersCountByTeam(side);
+        uint32 invited = bg->GetInvitedCount(side);
+        teams += Trinity::StringFormat("{}{} {} in ({} human), {} on the way, {} queued", team ? "; " : "", TeamLabel(team), inside, humans[team],
+            invited > inside ? invited - inside : 0, queued[team]);
+    }
+
+    char const* status = bg->GetStatus() == STATUS_WAIT_JOIN ? "preparation" : bg->GetStatus() == STATUS_IN_PROGRESS ? "in progress"
+        : bg->GetStatus() == STATUS_WAIT_LEAVE ? "ending" : "waiting";
+    handler->PSendSysMessage("  %s (map %u, instance %u, %s): %s; max %u per team, Playerbots.Bg.FillToMax %s",
+        bg->GetName(), bg->GetMapId(), bg->GetInstanceID(), status, teams.c_str(), bg->GetMaxPlayersPerTeam(), sBgConfig.FillToMax ? "on" : "off");
+}
+
 class playerbots_bg_commandscript : public CommandScript
 {
 public:
@@ -149,11 +183,24 @@ public:
                 plan->InstanceId, plan->Def ? plan->Def->Name : "?", plan->MapId, plan->Ticks,
                 plan->Teams[0].Assignable, plan->Teams[0].Others, plan->Teams[0].DefendPct,
                 plan->Teams[1].Assignable, plan->Teams[1].Others, plan->Teams[1].DefendPct);
+
+        handler->SendSysMessage("Running battlegrounds:");
+        sMapMgr->DoForAllMaps([handler](Map* map)
+        {
+            if (BattlegroundMap* bgMap = map->ToBattlegroundMap())
+                if (Battleground const* bg = bgMap->GetBG(); bg && bg->isBattleground())
+                    SendTeamSizes(handler, bg);
+        });
         return true;
     }
 
     static bool HandleBgCommand(ChatHandler* handler, Optional<uint32> instanceId)
     {
+        // the game master's own battleground first, also when it is not planned (Alterac Valley before phase 3)
+        if (Player* player = handler->GetPlayer(); player && !instanceId)
+            if (Battleground const* own = player->GetBattleground(); own && own->isBattleground())
+                SendTeamSizes(handler, own);
+
         BgPlan const* plan = Pick(handler, instanceId);
         if (!plan)
             return true;

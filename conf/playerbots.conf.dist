@@ -979,6 +979,13 @@ Playerbots.Bg.DefendMinPct = 20
 Playerbots.Bg.DefendMaxPct = 40
 Playerbots.Bg.RoleHoldSeconds = 45
 
+# Battleground fill (needs Playerbots.Random.Battlegrounds = 1). Off: bots fill a queue a real player waits in and stop
+# once the match starts, which is at the minimum per team (Alterac Valley 10 of 40). On: bots keep joining the running
+# match the player is in until each team has FillMaxPerTeam (0 = the battleground's maximum). The core lets them in
+# during the preparation in batches, then one per team at a time. ".bot bg list" shows each team's size.
+Playerbots.Bg.FillToMax = 0
+Playerbots.Bg.FillMaxPerTeam = 0
+
 Playerbots.React.ReturnEmotes = 1
 Playerbots.React.Chairs = 1
 

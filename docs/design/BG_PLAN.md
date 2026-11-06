@@ -113,12 +113,12 @@ Fixed phrase table, instance chat, at most one line per bot per 20 s and one per
 |---|---|---|---|
 | 0 | This document, memory, issues | none | done 2026-11-02 |
 | 1 | Planner and random split on the pilot maps, code tables, no SQL; real capture casts | `Bg.Planner` 0, `Bg.Planner.Maps` 2106,726,2107,761,566, `Bg.Planner.TickMs` 3000, `Bg.DefendMinPct` 20, `Bg.DefendMaxPct` 40, `Bg.RoleHoldSeconds` 45 | H design |
-| 2 | Keep filling the running BG a human is in, up to the template max: human-gated, 6 per scan, rated excluded. Per team `need = cap - (GetPlayersCountByTeam + GetInvitedCount + queued)`, `GetFreeSlotsForTeam` as a cross-check | `Bg.FillToMax` 0, `Bg.FillMaxPerTeam` 0 (= template max) | M runtime |
+| 2 | Keep filling the running BG a human is in, up to its max: human-gated, rated and arenas excluded. Per team `need = cap - GetInvitedCount - queued` (the invited count already holds the players inside: it drops only on leave or a removed invite). The core invites from the queue into the free slots (`FillPlayersToBG`): during the preparation `GetFreeSlotsForTeam` is `max - invited` (`Battleground.InvitationType = 0`), after the gates open one per team per queue update. So at most 3 bots per team wait during the preparation and 2 after, and each scan calls `BattlegroundMgr::ScheduleQueueUpdate` while bots wait (a public call, the one the join handler makes). Bots waiting for a running match with a human inside are kept past the 60 s empty-queue grace | `Bg.FillToMax` 0, `Bg.FillMaxPerTeam` 0 (= the BG's max, never below its min) | built 2026-11-03, M runtime |
 | 3 | AV: `playerbots_bg_node` SQL and loader, AV rows, rally state machine, boss pushes | `Bg.Rally.*`, add 30 to `Bg.Planner.Maps` | M positions |
 | 4 | Reactive behaviours the owner picks from section 4 | one key each | - |
 | 5 | Later maps, one note each, vehicles first | - | - |
 
-Files (phase 1 as built): `src/Battleground/{BgRules.h, BgConfig.*, BgMapData.*, BgPlanner.*, BgPlay.*, BgScripts.cpp}`, `tests/bg_rules_test.cpp`. The `Playerbots.Bg.*` keys live in `BgConfig` (loaded by the `playerbots_bg_world` script), not in `PlayerbotsConfig.h`, so no header layout changes; `.bot bg` is its own CommandScript whose `"bot bg"` entry the core merges into the `.bot` table, so `PlayerbotCommandScript.cpp` is untouched. Shared edits: `GenericStrategies.cpp` (include + hook), `playerbots_loader.cpp`, `conf/playerbots.conf.dist`, `tests/run_engine_test.sh`; later `ActivityMgr.cpp`. Several of these hold other sessions' uncommitted work: check ListAgents before each edit, splice hunks for the commit (`modules/CLAUDE.md`).
+Files (phase 1 as built): `src/Battleground/{BgRules.h, BgConfig.*, BgMapData.*, BgPlanner.*, BgPlay.*, BgScripts.cpp}`, `tests/bg_rules_test.cpp`. The `Playerbots.Bg.*` keys live in `BgConfig` (loaded by the `playerbots_bg_world` script), not in `PlayerbotsConfig.h`, so no header layout changes; `.bot bg` is its own CommandScript whose `"bot bg"` entry the core merges into the `.bot` table, so `PlayerbotCommandScript.cpp` is untouched. Shared edits: `GenericStrategies.cpp` (include + hook), `playerbots_loader.cpp`, `conf/playerbots.conf.dist`, `tests/run_engine_test.sh`; phase 2: `ActivityMgr.cpp` (running-match fill in `FillBattlegrounds`, the grace exception in `ServeBots`). Several of these hold other sessions' uncommitted work: check ListAgents before each edit, splice hunks for the commit (`modules/CLAUDE.md`).
 
 ## 4. Reactive behaviours, ranked
 
@@ -162,8 +162,8 @@ Phase 1
 6. Second match: different rolls. `Playerbots.Bg.Planner = 0` + `.reload config`: the next match plays like the pilot.
 
 Phase 2
-1. With the phase 1 build, queue AV and count the bots per team after the gates open (`.bot bg`): the baseline.
-2. `Playerbots.Bg.FillToMax = 1`: counts climb in steps of 6 to 40 v 40 (39 bots on your side).
+1. With `Playerbots.Bg.FillToMax = 0` (the fill code path is the old one), queue AV and count each team after the gates open: `.bot bg` in the match prints a team size line (`.bot bg list` from the console). That is the baseline.
+2. `Playerbots.Bg.FillToMax = 1` and `.reload config` (it wipes Server.log and DBErrors.log, copy them first). During the preparation the counts rise by up to 3 per team per 5 s scan; once the gates are open, by about 1 per team per scan to 40 v 40 (39 bots on your side), with no more than 2 per team `queued`. The two teams stay within a few of each other (the core's balance rule).
 3. Record `.bot perf` (needs `Playerbots.PerfMon.Enable = 1`), RSS against `Playerbots.Random.MaxRssMB` (20000) and the world tick time at 80 active bots. Any bench-only conf is removed afterwards.
 4. With nobody queued, no bot joins a BG queue.
 

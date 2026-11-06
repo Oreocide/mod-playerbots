@@ -17,6 +17,7 @@
 
 #include "ActivityMgr.h"
 #include "Social/LootRolls.h"
+#include "Battleground/BgConfig.h"
 #include "BotSession.h"
 #include "ArenaTeam.h"
 #include "BattlegroundMgr.h"
@@ -60,6 +61,7 @@ constexpr uint32 ArenaLevelSpread = 5;
 constexpr uint32 EmptyQueueGrace = 60 * 1000;    // bots leave a queue that has no player in it after this long
 constexpr uint32 DungeonTeleportRetry = 30 * 1000;
 constexpr uint32 MaxBgBotsPerScan = 6;
+constexpr uint32 RunningFillAhead = 2;          // bots per team waiting in the queue for a running match once its gates are open
 constexpr uint32 MaxLfgBotsPerScan = 2;
 
 uint8 LfgRolesOf(PlayerbotAI const& ai)
@@ -160,6 +162,51 @@ void JoinBattlegroundQueue(Player* bot, BattlegroundQueueTypeId queueId)
     WorldPackets::Battleground::BattlemasterJoin join{ WorldPacket(CMSG_BATTLEMASTER_JOIN) };
     join.QueueIDs.push_back(queueId.GetPacked());
     bot->GetSession()->HandleBattlemasterJoinOpcode(join);
+}
+
+// ---- Playerbots.Bg.FillToMax (docs/design/BG_PLAN.md phase 2)
+
+// A match the queue still sends players into: a normal, not rated, battleground from its preparation until it ends
+bool TakesLateJoiners(Battleground const* bg)
+{
+    return bg && bg->isBattleground() && !bg->isRated() && bg->GetStatus() > STATUS_WAIT_QUEUE && bg->GetStatus() < STATUS_WAIT_LEAVE;
+}
+
+bool HasHumanInside(Battleground const* bg)
+{
+    for (auto const& entry : bg->GetPlayers())
+        if (IsHuman(ObjectAccessor::FindConnectedPlayer(entry.first)))
+            return true;
+
+    return false;
+}
+
+// Playerbots.Bg.FillMaxPerTeam: the team size the fill stops at, never below what the match needs to start
+uint32 FillCap(uint32 maxPerTeam, uint32 minPerTeam)
+{
+    uint32 cap = std::max<uint32>(maxPerTeam, 1);
+    if (sBgConfig.FillMaxPerTeam)
+        cap = std::min(cap, std::max(sBgConfig.FillMaxPerTeam, minPerTeam));
+    return cap;
+}
+
+// The bot waits in this queue for a running match: one of its bracket that has a real player inside and a free slot.
+// The human left the queue when they entered (HandleBattleFieldPortOpcode), so QueueHasHuman no longer sees them
+bool RunningMatchWaitsFor(Player const* bot, BattlegroundQueueTypeId queueId)
+{
+    BattlegroundTemplate const* bgTemplate = sBattlegroundMgr->GetBattlegroundTemplateByTypeId(BattlegroundTypeId(queueId.BattlemasterListId));
+    if (!bgTemplate || bgTemplate->MapIDs.empty())
+        return false;
+
+    PVPDifficultyEntry const* bracket = DB2Manager::GetBattlegroundBracketByLevel(bgTemplate->MapIDs.front(), bot->GetLevel());
+    if (!bracket)
+        return false;
+
+    for (Battleground const* bg : sBattlegroundMgr->GetBGFreeSlotQueueStore(queueId))
+        if (TakesLateJoiners(bg) && bg->GetBracketId() == bracket->GetBracketId() && HasHumanInside(bg))
+            return true;
+
+    return false;
 }
 }
 
@@ -356,7 +403,8 @@ void ActivityMgr::ServeBots(std::vector<BotRef> const& bots)
             }
 
             uint32 since = _queueSince.try_emplace(guid, now).first->second;
-            if (now - since > EmptyQueueGrace && !QueueHasHuman(sBattlegroundMgr->GetBattlegroundQueue(queueId)))
+            if (now - since > EmptyQueueGrace && !QueueHasHuman(sBattlegroundMgr->GetBattlegroundQueue(queueId))
+                && !(sBgConfig.FillToMax && RunningMatchWaitsFor(bot, queueId)))
             {
                 AnswerBattlefieldPort(bot, slot, false);
                 _queueSince.erase(guid);
@@ -509,6 +557,74 @@ void ActivityMgr::FillBattlegrounds(std::vector<Player*> const& humans, std::vec
 {
     uint32 now = _clock.load();
 
+    // Playerbots.Bg.FillToMax: a match with a real player inside keeps taking bots until each team is full. The core invites
+    // them from the queue into its free slots (BattlegroundQueue::FillPlayersToBG): up to a whole team at once during the
+    // preparation, one per team per queue update after the gates open, so only a few bots per team wait in the queue.
+    // GetInvitedCount counts the players inside as well as those still on the accept dialog
+    if (sBgConfig.FillToMax)
+    {
+        std::set<uint32> served;
+        for (Player* human : humans)
+        {
+            Battleground* bg = human->GetBattleground();
+            if (!TakesLateJoiners(bg) || !served.insert(bg->GetInstanceID()).second)
+                continue;
+
+            BattlegroundQueueTypeId queueId = bg->GetQueueID();
+            BattlegroundTemplate const* bgTemplate = sBattlegroundMgr->GetBattlegroundTemplateByTypeId(BattlegroundTypeId(queueId.BattlemasterListId));
+            if (queueId.TeamSize || !bgTemplate || bgTemplate->MapIDs.empty())
+                continue;
+
+            BattlegroundQueue& queue = sBattlegroundMgr->GetBattlegroundQueue(queueId);
+            uint32 queued[PVP_TEAMS_COUNT] = { };
+            uint32 groups = 0;
+            CountQueued(queue, bg->GetBracketId(), queued[TEAM_ALLIANCE], queued[TEAM_HORDE], groups);
+
+            uint32 cap = FillCap(bg->GetMaxPlayersPerTeam(), bg->GetMinPlayersPerTeam());
+            uint32 ahead = bg->GetStatus() == STATUS_WAIT_JOIN ? MaxBgBotsPerScan / 2 : RunningFillAhead;
+            uint32 added = 0;
+            for (TeamId team : { TEAM_ALLIANCE, TEAM_HORDE })
+            {
+                uint32 taken = bg->GetInvitedCount(team == TEAM_ALLIANCE ? ALLIANCE : HORDE) + queued[team];
+                for (BotRef const& ref : bots)
+                {
+                    if (taken >= cap || queued[team] >= ahead)
+                        break;
+
+                    Player* bot = ref.Bot;
+                    if (bot->GetTeamId() != team || !IsIdle(bot) || bot->GetLevel() < bgTemplate->GetMinLevel() || bot->GetLevel() > bgTemplate->GetMaxLevel())
+                        continue;
+
+                    if (auto backoff = _backoff.find(bot->GetGUID()); backoff != _backoff.end() && backoff->second > now)
+                        continue;
+
+                    PVPDifficultyEntry const* botBracket = DB2Manager::GetBattlegroundBracketByLevel(bgTemplate->MapIDs.front(), bot->GetLevel());
+                    if (!botBracket || botBracket->GetBracketId() != bg->GetBracketId())
+                        continue;
+
+                    JoinBattlegroundQueue(bot, queueId);
+                    if (bot->InBattlegroundQueueForBattlegroundQueueType(queueId))
+                    {
+                        ++queued[team];
+                        ++taken;
+                        ++added;
+                        _queueSince[bot->GetGUID()] = now;
+                    }
+                    else
+                        _backoff[bot->GetGUID()] = now + FailedJoinBackoff;
+                }
+            }
+
+            // a join schedules a queue update by itself; bots that have waited since an earlier scan need one as well
+            if (queued[TEAM_ALLIANCE] || queued[TEAM_HORDE])
+                sBattlegroundMgr->ScheduleQueueUpdate(0, queueId, bg->GetBracketId());
+
+            if (added)
+                TC_LOG_DEBUG("server.playerbots", "Playerbots: {} bots joined battleground queue {} for the running match {} of {}",
+                    added, queueId.BattlemasterListId, bg->GetInstanceID(), human->GetName());
+        }
+    }
+
     for (Player* human : humans)
     {
         for (uint32 slot = 0; slot < PLAYER_MAX_BATTLEGROUND_QUEUES; ++slot)
@@ -531,6 +647,8 @@ void ActivityMgr::FillBattlegrounds(std::vector<Player*> const& humans, std::vec
             CountQueued(queue, bracket->GetBracketId(), counts[TEAM_ALLIANCE], counts[TEAM_HORDE], groups);
 
             uint32 cap = std::max<uint32>(bgTemplate->GetMaxPlayersPerTeam(), 1);
+            if (sBgConfig.FillToMax)
+                cap = FillCap(bgTemplate->GetMaxPlayersPerTeam(), bgTemplate->GetMinPlayersPerTeam());
             uint32 added = 0;
             for (TeamId team : { TEAM_ALLIANCE, TEAM_HORDE })
             {

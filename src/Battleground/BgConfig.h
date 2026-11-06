@@ -35,6 +35,8 @@ struct Config
     uint32 DefendMinPct = 20;                               // each team rolls its defence share in this range per match
     uint32 DefendMaxPct = 40;
     uint32 RoleHoldSeconds = 45;                            // a bot keeps its job at least this long
+    bool FillToMax = false;                                 // Playerbots.Bg.FillToMax: bots keep joining a running match a human is in
+    uint32 FillMaxPerTeam = 0;                              // team size the fill stops at, 0 = the battleground's own maximum
 
     void Load();
     /// Planner on, Playerbots.Bg.Objectives on, and the map in the list

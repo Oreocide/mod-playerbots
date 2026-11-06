@@ -51,6 +51,8 @@ void Config::Load()
         std::swap(DefendMinPct, DefendMaxPct);
     }
     RoleHoldSeconds = sConfigMgr->GetIntDefault("Playerbots.Bg.RoleHoldSeconds", 45);
+    FillToMax = sConfigMgr->GetBoolDefault("Playerbots.Bg.FillToMax", false);
+    FillMaxPerTeam = sConfigMgr->GetIntDefault("Playerbots.Bg.FillMaxPerTeam", 0);
 
     if (Planner && !sPlayerbotsConfig.BgObjectives)
         TC_LOG_WARN("server.playerbots", "Playerbots: Playerbots.Bg.Planner = 1 does nothing while Playerbots.Bg.Objectives = 0");
