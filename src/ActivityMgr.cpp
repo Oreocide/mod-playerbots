@@ -113,12 +113,12 @@ uint32 InviteInstance(Player* bot, BattlegroundQueueTypeId queueId)
 }
 
 // A real player is inside this battleground, or still on the accept dialog for it.
-bool HumanPresent(uint32 instanceId)
+bool HumanPresent(uint32 instanceId, BattlegroundQueueTypeId queueId)
 {
     if (!instanceId)
         return false;
 
-    if (Battleground* bg = sBattlegroundMgr->GetBattleground(instanceId, BATTLEGROUND_TYPE_NONE))
+    if (Battleground* bg = sBattlegroundMgr->GetBattleground(instanceId, queueId))
         for (auto const& entry : bg->GetPlayers())
             if (IsHuman(ObjectAccessor::FindConnectedPlayer(entry.first)))
                 return true;
@@ -329,7 +329,8 @@ void ActivityMgr::ServeBots(std::vector<BotRef> const& bots)
         }
 
         // ---- battlegrounds and arenas. A match with no real player is not played.
-        if (bot->InBattleground() && !HumanPresent(bot->GetBattlegroundId()))
+        Battleground const* botBattleground = bot->GetBattleground();
+        if (bot->InBattleground() && !HumanPresent(bot->GetBattlegroundId(), botBattleground ? botBattleground->GetQueueID() : BATTLEGROUND_QUEUE_NONE))
         {
             TC_LOG_DEBUG("server.playerbots", "Playerbots: {} leaves the battleground, no player is in it", bot->GetName());
             bot->LeaveBattleground(true, true);
@@ -346,7 +347,7 @@ void ActivityMgr::ServeBots(std::vector<BotRef> const& bots)
             queued = true;
             if (bot->IsInWorld() && bot->IsInvitedForBattlegroundQueueType(queueId))
             {
-                bool accept = HumanPresent(InviteInstance(bot, queueId));
+                bool accept = HumanPresent(InviteInstance(bot, queueId), queueId);
                 AnswerBattlefieldPort(bot, slot, accept);
                 if (!accept)
                     TC_LOG_DEBUG("server.playerbots", "Playerbots: {} declined a battleground with no player in it", bot->GetName());
