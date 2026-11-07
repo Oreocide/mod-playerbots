@@ -1679,6 +1679,7 @@ void RegisterGenericAi()
     GroupCombat::Register(r);
     Dungeon::RegisterAll(r);
     GroupEvents::Register(r);
+    Bg::Register(r);
 
     r.AddValue("combat target", [](std::string const&) -> std::unique_ptr<ValueBase> { return std::make_unique<CombatTargetValue>(); });
     r.AddValue("heal target", [](std::string const&) -> std::unique_ptr<ValueBase> { return std::make_unique<HealTargetValue>(); });
@@ -1733,7 +1734,9 @@ void RegisterGenericAi()
     AddTriggerStrategy(r, "wander", { { "idle alone", { { "wander", Priority::Idle } }, StrategyStates::NonCombat } });
     AddTriggerStrategy(r, "travel", { { "traveling", { { "travel", Priority::Travel } }, StrategyStates::NonCombat } });
     AddTriggerStrategy(r, "buff", { { "needs buff", { { "buff", Priority::Buff } }, StrategyStates::NonCombat } });
-    AddTriggerStrategy(r, "pvp", { { "pvp zone", { { "pvp", Priority::Pvp } } } });
+    // "bg leash": a bot on an Alterac Valley boss push never chases past the boss's leash (above the attack action, in combat only)
+    AddTriggerStrategy(r, "pvp", { { "pvp zone", { { "pvp", Priority::Pvp } } },
+        { "bg leash", { { "bg leash", Priority::Attack + 3.0f } }, StrategyStates::Combat } });
     AddTriggerStrategy(r, "world", { { "world react", { { "world react", Priority::World } }, StrategyStates::NonCombat } });
     r.AddStrategy("rpg", [](std::string const&) { return CreateRpgStrategy(); });
     r.AddStrategy("quest", [](std::string const&) { return CreateQuestStrategy(); });

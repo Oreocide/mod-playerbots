@@ -23,6 +23,7 @@
 #include "PlayerbotMgr.h"
 #include "Battleground.h"
 #include "BattlegroundPackets.h"
+#include "Creature.h"
 #include "GameObject.h"
 #include "GameTime.h"
 #include "Log.h"
@@ -33,6 +34,7 @@
 #include "StringFormat.h"
 #include <algorithm>
 #include <limits>
+#include <unordered_set>
 
 namespace Playerbots::Bg
 {
@@ -46,6 +48,8 @@ constexpr uint32 RetargetEveryMs = 60000;   // attack targets are picked again a
 constexpr uint32 NoPathMs = 60000;          // an objective without a mesh path is avoided by that bot this long
 constexpr uint32 EscortCount = 2;
 constexpr uint32 FlagRunnerCount = 2;
+constexpr uint32 AbandonMs = 120000;        // Valley: a push given up is not the team's target again for this long
+constexpr uint32 TwoTargetsFrom = 24;       // Valley: this many attackers split over two node targets (never over a boss)
 
 bool Contains(std::vector<int8> const& list, int8 value)
 {
@@ -60,6 +64,121 @@ char const* TeamName(TeamId team)
 bool Blocked(Assignment const& job, int8 objective, uint32 now)
 {
     return job.NoPathObjective == objective && int32(job.NoPathUntilMs - now) > 0;
+}
+
+float DistTo(BgPlan const& plan, Player const* player, int8 objective)
+{
+    Position pos;
+    return ObjectivePosition(plan, objective, pos) ? player->GetExactDist2d(pos) : 100000.0f;
+}
+
+/// The split of the team's ownerless bots into attackers and defenders (BgRules::Split). Returns the bots whose job changed
+uint32 SplitTeam(BgPlan& plan, TeamPlan const& teamPlan, std::vector<Player*> const& bots, uint32 now)
+{
+    std::vector<BgRules::Seat> seats;
+    seats.reserve(bots.size());
+    for (Player* bot : bots)
+    {
+        Assignment& job = plan.Jobs[bot->GetGUID()];
+        if (job.Base == Job::Defend && teamPlan.DefendTargets.empty())
+            job.Base = Job::None;               // nothing left to defend: free at once
+        BgRules::Seat seat;
+        seat.Id = bot->GetGUID().GetCounter();
+        seat.Key = BgRules::ShuffleKey(teamPlan.Seed, seat.Id);
+        seat.JobNow = job.Base == Job::Defend || job.Base == Job::Attack ? job.Base : Job::None;
+        seat.SinceMs = job.SinceMs;
+        seat.DefendCost = 0.0f;
+        if (!teamPlan.DefendTargets.empty())
+        {
+            seat.DefendCost = std::numeric_limits<float>::max();
+            for (int8 target : teamPlan.DefendTargets)
+                seat.DefendCost = std::min(seat.DefendCost, DistTo(plan, bot, target));
+        }
+        seats.push_back(seat);
+    }
+    uint32 changed = BgRules::Split(seats, teamPlan.WantDefenders, now, sBgConfig.RoleHoldSeconds * 1000);
+    for (size_t i = 0; i < bots.size(); ++i)
+    {
+        Assignment& job = plan.Jobs[bots[i]->GetGUID()];
+        job.Base = seats[i].JobNow;
+        job.SinceMs = seats[i].SinceMs;
+    }
+    return changed;
+}
+
+/// Defenders over the defended objectives by weight: the ones already there stay while the node's share has room. Returns the
+/// defenders that moved
+uint32 PlaceDefenders(BgPlan& plan, TeamPlan const& teamPlan, std::vector<Player*> const& defenders, std::vector<float> const& weights, uint32 now)
+{
+    uint32 changed = 0;
+    std::vector<uint32> quota = BgRules::Spread(weights, defenders.size());
+    std::vector<Player*> unplaced;
+    for (Player* bot : defenders)
+    {
+        Assignment& job = plan.Jobs[bot->GetGUID()];
+        auto at = std::find(teamPlan.DefendTargets.begin(), teamPlan.DefendTargets.end(), job.Objective);
+        size_t index = at - teamPlan.DefendTargets.begin();
+        if (at != teamPlan.DefendTargets.end() && quota[index] > 0 && !Blocked(job, job.Objective, now))
+            --quota[index];
+        else
+            unplaced.push_back(bot);
+    }
+    for (Player* bot : unplaced)
+    {
+        Assignment& job = plan.Jobs[bot->GetGUID()];
+        int best = -1;
+        float bestDist = 0.0f;
+        for (int pass = 0; pass < 2 && best < 0; ++pass)
+            for (size_t i = 0; i < teamPlan.DefendTargets.size(); ++i)
+            {
+                int8 target = teamPlan.DefendTargets[i];
+                if ((pass == 0 && !quota[i]) || (Blocked(job, target, now) && teamPlan.DefendTargets.size() > 1))
+                    continue;
+                float dist = DistTo(plan, bot, target);
+                if (best < 0 || dist < bestDist)
+                {
+                    best = int(i);
+                    bestDist = dist;
+                }
+            }
+        if (best < 0)
+            best = 0;
+        if (quota[best])
+            --quota[best];
+        if (job.Objective != teamPlan.DefendTargets[best])
+        {
+            job.Objective = teamPlan.DefendTargets[best];
+            ++changed;
+        }
+    }
+    return changed;
+}
+
+/// Valley: the team has done a node of a "requires" list: holds the graveyard, burnt the tower, killed the boss
+bool DoneBy(BgPlan const& plan, std::string const& key, TeamId team)
+{
+    for (size_t i = 0; i < plan.Def->Nodes.size() && i < plan.Objectives.size(); ++i)
+    {
+        NodeDef const& row = plan.Def->Nodes[i];
+        if (row.Key != key)
+            continue;
+        Objective const& objective = plan.Objectives[i];
+        switch (row.Kind)
+        {
+            case NodeKind::Capture: return objective.Owner == team;
+            case NodeKind::Burn: return objective.Destroyed && objective.Owner == team;
+            case NodeKind::KillCaptain:
+            case NodeKind::KillGeneral: return !objective.Alive;
+            default: return false;
+        }
+    }
+    return false;
+}
+
+bool Pushing(BgRules::RallyState state)
+{
+    return state == BgRules::RallyState::Gathering || state == BgRules::RallyState::Charging || state == BgRules::RallyState::Fighting
+        || state == BgRules::RallyState::Regroup;
 }
 }
 
@@ -102,6 +221,34 @@ std::string ObjectiveName(BgPlan const& plan, int8 objective)
     if (objective < 0 || size_t(objective) >= plan.Objectives.size())
         return "-";
     return plan.Objectives[objective].Name;
+}
+
+uint32 TeamScore(BgPlan const& plan, Battleground const* bg, Map const* map, uint32 team)
+{
+    if (plan.Def && plan.Def->ScoreWs[team] && map)
+        return uint32(std::max(0, map->GetWorldStateValue(int32(plan.Def->ScoreWs[team]))));
+    return bg ? bg->GetTeamScore(TeamId(team)) : 0;
+}
+
+NodeDef const* RowOf(BgPlan const& plan, int8 objective)
+{
+    if (!plan.Def || plan.Def->Kind != MapKind::Valley || objective < 0 || size_t(objective) >= plan.Def->Nodes.size())
+        return nullptr;
+    return &plan.Def->Nodes[objective];
+}
+
+Creature* BossOf(BgPlan const& plan, Map* map, int8 objective)
+{
+    if (objective < 0 || size_t(objective) >= plan.Objectives.size() || plan.Objectives[objective].Boss.IsEmpty())
+        return nullptr;
+    return map->GetCreature(plan.Objectives[objective].Boss);
+}
+
+float RallyRadiusOf(BgPlan const& plan, int8 boss)
+{
+    NodeDef const* row = RowOf(plan, boss);
+    NodeDef const* rally = row && row->Rally >= 0 ? RowOf(plan, row->Rally) : nullptr;
+    return rally && rally->Radius > 0.0f ? rally->Radius : sBgConfig.RallyRadius;
 }
 
 Assignment Planner::Touch(Player* bot)
@@ -164,6 +311,11 @@ BgPlan const* Planner::Find(uint32 mapId, uint32 instanceId) const
 {
     auto it = _plans.find({ mapId, instanceId });
     return it != _plans.end() ? &it->second : nullptr;
+}
+
+void Planner::Reset()
+{
+    _plans.clear();
 }
 
 std::vector<BgPlan const*> Planner::List() const
@@ -332,8 +484,14 @@ void Planner::Plan(BgPlan& plan, Battleground* bg, Map* map, uint32 now)
             plan.Teams[0].DefendPct, plan.Teams[1].DefendPct);
     }
 
-    Discover(plan, map, now);
-    ReadState(plan, map);
+    bool valley = plan.Def->Kind == MapKind::Valley;
+    if (valley)
+        ReadValley(plan, map, now);
+    else
+    {
+        Discover(plan, map, now);
+        ReadState(plan, map);
+    }
 
     std::vector<Player*> members[2];
     for (MapReference const& ref : map->GetPlayers())
@@ -354,11 +512,17 @@ void Planner::Plan(BgPlan& plan, Battleground* bg, Map* map, uint32 now)
     {
         Objective const& objective = plan.Objectives[i];
         if (plan.LastOwners[i * 2] != objective.Owner)
-            reason = Trinity::StringFormat("{} taken by {}", objective.Name, TeamName(objective.Owner));
+            reason = Trinity::StringFormat("{} {} by {}", objective.Name, objective.Destroyed ? "destroyed" : "taken", TeamName(objective.Owner));
         else if (plan.LastOwners[i * 2 + 1] != objective.Assaulting && objective.Assaulting != TEAM_NEUTRAL)
             reason = Trinity::StringFormat("{} assaulted by {}", objective.Name, TeamName(objective.Assaulting));
         plan.LastOwners[i * 2] = objective.Owner;
         plan.LastOwners[i * 2 + 1] = objective.Assaulting;
+    }
+    for (Objective& objective : plan.Objectives)
+    {
+        if (objective.WasAlive && !objective.Alive)
+            reason = Trinity::StringFormat("{} killed", objective.Name);
+        objective.WasAlive = objective.Alive;
     }
     for (uint32 team = 0; team < 2; ++team)
     {
@@ -383,7 +547,7 @@ void Planner::Plan(BgPlan& plan, Battleground* bg, Map* map, uint32 now)
         }
         plan.LastFlagStates[i] = flag.State;
     }
-    uint32 scoreA = bg->GetTeamScore(TEAM_ALLIANCE), scoreH = bg->GetTeamScore(TEAM_HORDE);
+    uint32 scoreA = TeamScore(plan, bg, map, TEAM_ALLIANCE), scoreH = TeamScore(plan, bg, map, TEAM_HORDE);
     int8 leader = scoreA > scoreH ? 0 : scoreH > scoreA ? 1 : 2;
     if (leader != plan.LastLeader)
     {
@@ -403,7 +567,10 @@ void Planner::Plan(BgPlan& plan, Battleground* bg, Map* map, uint32 now)
     for (uint32 team = 0; team < 2; ++team)
     {
         bool retarget = !reason.empty() || now - plan.Teams[team].LastRetargetMs >= RetargetEveryMs;
-        PlanTeam(plan, map, team, members[team], retarget, reason.empty() && retarget ? "periodic" : reason, now);
+        if (valley)
+            PlanValleyTeam(plan, bg, map, team, members[team], retarget, reason.empty() && retarget ? "periodic" : reason, now);
+        else
+            PlanTeam(plan, map, team, members[team], retarget, reason.empty() && retarget ? "periodic" : reason, now);
     }
 
     // players who left the match
@@ -450,41 +617,10 @@ void Planner::PlanTeam(BgPlan& plan, Map* map, uint32 team, std::vector<Player*>
     }
     teamPlan.WantDefenders = teamPlan.DefendTargets.empty() ? 0 : std::min<uint32>(bots.size(), BgRules::ShareOf(bots.size(), teamPlan.DefendPct));
 
-    auto distTo = [&](Player const* player, int8 objective)
-    {
-        Position pos;
-        return ObjectivePosition(plan, objective, pos) ? player->GetExactDist2d(pos) : 100000.0f;
-    };
+    auto distTo = [&](Player const* player, int8 objective) { return DistTo(plan, player, objective); };
 
     // the split
-    std::vector<BgRules::Seat> seats;
-    seats.reserve(bots.size());
-    for (Player* bot : bots)
-    {
-        Assignment& job = plan.Jobs[bot->GetGUID()];
-        if (job.Base == Job::Defend && teamPlan.DefendTargets.empty())
-            job.Base = Job::None;               // nothing left to defend: free at once
-        BgRules::Seat seat;
-        seat.Id = bot->GetGUID().GetCounter();
-        seat.Key = BgRules::ShuffleKey(teamPlan.Seed, seat.Id);
-        seat.JobNow = job.Base == Job::Defend || job.Base == Job::Attack ? job.Base : Job::None;
-        seat.SinceMs = job.SinceMs;
-        seat.DefendCost = 0.0f;
-        if (!teamPlan.DefendTargets.empty())
-        {
-            seat.DefendCost = std::numeric_limits<float>::max();
-            for (int8 target : teamPlan.DefendTargets)
-                seat.DefendCost = std::min(seat.DefendCost, distTo(bot, target));
-        }
-        seats.push_back(seat);
-    }
-    uint32 changed = BgRules::Split(seats, teamPlan.WantDefenders, now, sBgConfig.RoleHoldSeconds * 1000);
-    for (size_t i = 0; i < bots.size(); ++i)
-    {
-        Assignment& job = plan.Jobs[bots[i]->GetGUID()];
-        job.Base = seats[i].JobNow;
-        job.SinceMs = seats[i].SinceMs;
-    }
+    uint32 changed = SplitTeam(plan, teamPlan, bots, now);
 
     // defenders over the defended objectives: the ones already there stay while the node's share has room
     std::vector<Player*> defenders, attackers;
@@ -501,46 +637,7 @@ void Planner::PlanTeam(BgPlan& plan, Map* map, uint32 team, std::vector<Player*>
             float weight = objective.Weight * (objective.Owner == us && objective.Assaulting == them ? 2.0f : 1.0f);
             weights.push_back(weight);
         }
-        std::vector<uint32> quota = BgRules::Spread(weights, defenders.size());
-        std::vector<Player*> unplaced;
-        for (Player* bot : defenders)
-        {
-            Assignment& job = plan.Jobs[bot->GetGUID()];
-            auto at = std::find(teamPlan.DefendTargets.begin(), teamPlan.DefendTargets.end(), job.Objective);
-            size_t index = at - teamPlan.DefendTargets.begin();
-            if (at != teamPlan.DefendTargets.end() && quota[index] > 0 && !Blocked(job, job.Objective, now))
-                --quota[index];
-            else
-                unplaced.push_back(bot);
-        }
-        for (Player* bot : unplaced)
-        {
-            Assignment& job = plan.Jobs[bot->GetGUID()];
-            int best = -1;
-            float bestDist = 0.0f;
-            for (int pass = 0; pass < 2 && best < 0; ++pass)
-                for (size_t i = 0; i < teamPlan.DefendTargets.size(); ++i)
-                {
-                    int8 target = teamPlan.DefendTargets[i];
-                    if ((pass == 0 && !quota[i]) || (Blocked(job, target, now) && teamPlan.DefendTargets.size() > 1))
-                        continue;
-                    float dist = distTo(bot, target);
-                    if (best < 0 || dist < bestDist)
-                    {
-                        best = int(i);
-                        bestDist = dist;
-                    }
-                }
-            if (best < 0)
-                best = 0;
-            if (quota[best])
-                --quota[best];
-            if (job.Objective != teamPlan.DefendTargets[best])
-            {
-                job.Objective = teamPlan.DefendTargets[best];
-                ++changed;
-            }
-        }
+        changed += PlaceDefenders(plan, teamPlan, defenders, weights, now);
     }
 
     // attack targets: picked again on an event, every minute, or when one stops being a target
@@ -696,6 +793,380 @@ void Planner::PlanTeam(BgPlan& plan, Map* map, uint32 team, std::vector<Player*>
         teamPlan.LastReasonMs = now;
         teamPlan.LastChanged = changed;
         ++teamPlan.Reassigns;
+    }
+}
+
+void Planner::ReadValley(BgPlan& plan, Map* map, uint32 now)
+{
+    std::vector<NodeDef> const& rows = plan.Def->Nodes;
+    if (plan.Objectives.size() != rows.size())
+    {
+        plan.Objectives.clear();
+        for (NodeDef const& row : rows)
+        {
+            Objective objective;
+            objective.Name = row.Name;
+            objective.Known = true;
+            objective.Pos = row.Pos;
+            objective.Owner = row.IsNode() ? TeamId(BgRules::TeamOfSide(row.Side)) : TEAM_NEUTRAL;
+            plan.Objectives.push_back(std::move(objective));
+        }
+    }
+
+    // nodes and bosses from the world states the script writes: readable at any distance, no object search
+    auto set = [map](uint32 id) { return id && map->GetWorldStateValue(int32(id)) != 0; };
+    bool lookup = false;
+    for (size_t i = 0; i < rows.size(); ++i)
+    {
+        NodeDef const& row = rows[i];
+        Objective& objective = plan.Objectives[i];
+        objective.Pos = row.Pos;                // .bot bg rally set moves a row in place
+        if (row.IsNode())
+        {
+            BgRules::NodeRead read = BgRules::ReadNode(row.Kind == NodeKind::Burn, BgRules::TeamOfSide(row.Side), uint8(objective.Owner),
+                set(row.WsAllianceControl), set(row.WsAllianceAssault), set(row.WsHordeControl), set(row.WsHordeAssault));
+            objective.Owner = TeamId(read.Owner);
+            objective.Assaulting = TeamId(read.Assaulting);
+            objective.Destroyed = read.Destroyed;
+        }
+        else if (row.IsBoss())
+        {
+            objective.Alive = !row.WsAlive || set(row.WsAlive);
+            lookup |= objective.Alive && (objective.Boss.IsEmpty() || !map->GetCreature(objective.Boss));
+        }
+    }
+
+    // a boss without its creature: one pass over the map's creatures, at most every DiscoverEveryMs
+    if (!lookup || now - plan.LastBossLookupMs < DiscoverEveryMs)
+        return;
+    plan.LastBossLookupMs = now;
+    for (auto const& [guid, creature] : map->GetObjectsStore().Data.FindContainer<Creature>())
+    {
+        if (!creature || !creature->IsInWorld())
+            continue;
+        for (size_t i = 0; i < rows.size(); ++i)
+            if (rows[i].IsBoss() && rows[i].CreatureEntry == creature->GetEntry()
+                && (plan.Objectives[i].Boss.IsEmpty() || !map->GetCreature(plan.Objectives[i].Boss)))
+                plan.Objectives[i].Boss = guid;
+    }
+}
+
+void Planner::PlanValleyTeam(BgPlan& plan, Battleground* bg, Map* map, uint32 team, std::vector<Player*> const& members, bool retarget,
+    std::string const& reason, uint32 now)
+{
+    TeamPlan& teamPlan = plan.Teams[team];
+    TeamId us = TeamId(team);
+    TeamId them = TeamId(1 - team);
+    std::vector<NodeDef> const& rows = plan.Def->Nodes;
+
+    // only bots without an owner play the planner; humans count toward a push (decision 2), bots with an owner follow it
+    std::vector<Player*> bots;
+    uint32 humans = 0;
+    teamPlan.Others = 0;
+    for (Player* player : members)
+    {
+        PlayerbotAI* ai = IsBot(player) ? sPlayerbotMgr->GetAI(player) : nullptr;
+        if (ai && !ai->GetMaster())
+            bots.push_back(player);
+        else
+        {
+            ++teamPlan.Others;
+            if (!IsBot(player))
+                ++humans;
+        }
+    }
+    teamPlan.Assignable = bots.size();
+
+    // what we defend: our graveyards and standing towers, and our own running assaults (they go back to the enemy after 4 minutes
+    // unless held); ours under assault weigh triple: retaking it is the defenders' job, the attackers never turn back for it
+    teamPlan.DefendTargets.clear();
+    std::vector<float> weights;
+    for (size_t i = 0; i < rows.size(); ++i)
+    {
+        NodeDef const& row = rows[i];
+        Objective const& objective = plan.Objectives[i];
+        if (!row.IsNode() || objective.Destroyed || row.Weights[team] <= 0.0f)
+            continue;
+        if (objective.Owner == us || objective.Assaulting == us)
+        {
+            teamPlan.DefendTargets.push_back(int8(i));
+            weights.push_back(row.Weights[team] * (objective.Owner == us && objective.Assaulting == them ? 3.0f : 1.0f));
+        }
+    }
+
+    // a gather started again at its timeout takes the defenders along (Bg.Rally.PullDefenders)
+    bool pulled = teamPlan.Rally.DefendersPulled && Pushing(teamPlan.Rally.State);
+    teamPlan.WantDefenders = teamPlan.DefendTargets.empty() || pulled ? 0
+        : std::min<uint32>(bots.size(), BgRules::ShareOf(bots.size(), teamPlan.DefendPct));
+    if (pulled)
+        for (Player* bot : bots)
+            if (Assignment& job = plan.Jobs[bot->GetGUID()]; job.Base == Job::Defend)
+                job.Base = Job::None;
+
+    uint32 changed = SplitTeam(plan, teamPlan, bots, now);
+
+    std::vector<Player*> defenders, attackers;
+    for (Player* bot : bots)
+        (plan.Jobs[bot->GetGUID()].Base == Job::Defend ? defenders : attackers).push_back(bot);
+    if (!teamPlan.DefendTargets.empty())
+        changed += PlaceDefenders(plan, teamPlan, defenders, weights, now);
+
+    // what we attack: the highest weight first, ties to the nearest. A boss needs its rally row, MinGroup players and its "requires"
+    // done, unless the soft gate is open (match time, or the enemy score low)
+    uint32 startScore = plan.Def->ScoreMaxWs ? uint32(std::max(0, map->GetWorldStateValue(int32(plan.Def->ScoreMaxWs)))) : 0;
+    bool softGate = (sBgConfig.SoftGateMinutes && bg->GetElapsedTime() >= sBgConfig.SoftGateMinutes * 60000u)
+        || (sBgConfig.SoftGateScorePct && startScore && TeamScore(plan, bg, map, them) * 100 <= startScore * sBgConfig.SoftGateScorePct);
+    uint32 force = uint32(attackers.size()) + humans;
+    std::vector<int8> candidates;
+    for (size_t i = 0; i < rows.size(); ++i)
+    {
+        NodeDef const& row = rows[i];
+        Objective const& objective = plan.Objectives[i];
+        if (row.Weights[team] <= 0.0f || int32(objective.BlockedUntilMs[team] - now) > 0)
+            continue;
+        bool attack = false;
+        switch (row.Kind)
+        {
+            case NodeKind::Capture:
+                attack = objective.Owner != us && objective.Assaulting != us;
+                break;
+            case NodeKind::Burn:
+                attack = objective.Owner == them && !objective.Destroyed && objective.Assaulting != us;
+                break;
+            case NodeKind::KillCaptain:
+            case NodeKind::KillGeneral:
+            {
+                if (BgRules::TeamOfSide(row.Side) != uint8(them) || !objective.Alive || row.Rally < 0 || force < row.MinGroup)
+                    break;
+                uint32 done = 0;
+                for (std::string const& key : row.Requires.Keys)
+                    done += DoneBy(plan, key, us) ? 1 : 0;
+                attack = softGate || BgRules::RequirementMet(row.Requires, done);
+                break;
+            }
+            default:
+                break;
+        }
+        if (attack)
+            candidates.push_back(int8(i));
+    }
+
+    // a push that charged keeps its boss until it is dead or the push gives up
+    BgRules::RallyState rally = teamPlan.Rally.State;
+    bool locked = teamPlan.RallyObjective != NoObjective && Contains(candidates, teamPlan.RallyObjective)
+        && (rally == BgRules::RallyState::Charging || rally == BgRules::RallyState::Fighting || rally == BgRules::RallyState::Regroup);
+    bool stale = teamPlan.AttackTargets.empty();
+    for (int8 target : teamPlan.AttackTargets)
+        stale |= !Contains(candidates, target);
+    if (locked)
+    {
+        if (teamPlan.AttackTargets.size() != 1 || teamPlan.AttackTargets[0] != teamPlan.RallyObjective)
+        {
+            teamPlan.AttackTargets = { teamPlan.RallyObjective };
+            ++changed;
+        }
+    }
+    else if (retarget || stale)
+    {
+        Position centre;
+        float x = 0.0f, y = 0.0f;
+        uint32 counted = 0;
+        for (Player* bot : attackers.empty() ? bots : attackers)
+            if (bot->IsAlive())
+            {
+                x += bot->GetPositionX();
+                y += bot->GetPositionY();
+                ++counted;
+            }
+        if (counted)
+            centre.Relocate(x / counted, y / counted, 0.0f);
+
+        std::sort(candidates.begin(), candidates.end(), [&](int8 a, int8 b)
+        {
+            float wa = rows[a].Weights[team], wb = rows[b].Weights[team];
+            if (wa != wb)
+                return wa > wb;
+            return centre.GetExactDist2d(plan.Objectives[a].Pos) < centre.GetExactDist2d(plan.Objectives[b].Pos);
+        });
+        // one push; a big team takes two nodes at once, never a boss and something else
+        uint32 wanted = 1;
+        if (attackers.size() >= TwoTargetsFrom && candidates.size() >= 2 && !rows[candidates[0]].IsBoss() && !rows[candidates[1]].IsBoss())
+            wanted = 2;
+        std::vector<int8> picked(candidates.begin(), candidates.begin() + std::min<size_t>(wanted, candidates.size()));
+        if (picked != teamPlan.AttackTargets)
+            ++changed;
+        teamPlan.AttackTargets = std::move(picked);
+        teamPlan.LastRetargetMs = now;
+    }
+
+    for (Player* bot : attackers)
+    {
+        Assignment& job = plan.Jobs[bot->GetGUID()];
+        if (teamPlan.AttackTargets.empty())
+        {
+            job.Objective = NoObjective;
+            continue;
+        }
+        if (Contains(teamPlan.AttackTargets, job.Objective) && !Blocked(job, job.Objective, now))
+            continue;
+        int8 best = NoObjective;
+        float bestDist = 0.0f;
+        for (int8 target : teamPlan.AttackTargets)
+        {
+            if (Blocked(job, target, now) && teamPlan.AttackTargets.size() > 1)
+                continue;
+            float dist = DistTo(plan, bot, target);
+            if (best == NoObjective || dist < bestDist)
+            {
+                best = target;
+                bestDist = dist;
+            }
+        }
+        if (job.Objective != best)
+        {
+            job.Objective = best;
+            ++changed;
+        }
+    }
+
+    for (Player* bot : bots)
+    {
+        Assignment& job = plan.Jobs[bot->GetGUID()];
+        job.Now = job.Base;
+        job.Follow.Clear();
+    }
+
+    std::string rallyEvent;
+    StepRally(plan, map, team, members, bots, changed, rallyEvent, now);
+
+    if (changed)
+    {
+        teamPlan.LastReason = !rallyEvent.empty() ? rallyEvent : reason.empty() ? "hold time over" : reason;
+        teamPlan.LastReasonMs = now;
+        teamPlan.LastChanged = changed;
+        ++teamPlan.Reassigns;
+    }
+}
+
+void Planner::StepRally(BgPlan& plan, Map* map, uint32 team, std::vector<Player*> const& members, std::vector<Player*> const& bots, uint32& changed,
+    std::string& rallyEvent, uint32 now)
+{
+    TeamPlan& teamPlan = plan.Teams[team];
+    int8 boss = NoObjective;
+    for (int8 target : teamPlan.AttackTargets)
+        if (NodeDef const* row = RowOf(plan, target); row && row->IsBoss())
+            boss = target;
+
+    if (boss != teamPlan.RallyObjective)
+    {
+        teamPlan.RallyObjective = boss;
+        teamPlan.Puller.Clear();
+        teamPlan.RallyOnPush = 0;
+        teamPlan.RallyPresent = 0;
+        if (boss == NoObjective)
+        {
+            teamPlan.Rally = BgRules::Rally();
+            return;
+        }
+        BgRules::RallyStart(teamPlan.Rally, now);
+        rallyEvent = Trinity::StringFormat("{}: gathering", plan.Objectives[boss].Name);
+    }
+    if (boss == NoObjective)
+        return;
+
+    NodeDef const& row = plan.Def->Nodes[boss];
+    Objective& objective = plan.Objectives[boss];
+    Position const& rallyPos = plan.Objectives[row.Rally].Pos;
+    float radius = RallyRadiusOf(plan, boss);
+    Creature* creature = BossOf(plan, map, boss);
+
+    // on the push: the bots sent to this boss, and the humans of the team who are not standing at one of our defended objectives
+    std::unordered_set<ObjectGuid> planned;
+    for (Player* bot : bots)
+        planned.insert(bot->GetGUID());
+    BgRules::RallyView view;
+    for (Player* player : members)
+    {
+        if (!player->IsAlive())
+            continue;
+        if (player->GetExactDist2d(rallyPos) <= radius)
+            ++view.Present;
+        if (planned.contains(player->GetGUID()))
+        {
+            Assignment const& job = plan.Jobs[player->GetGUID()];
+            if (job.Base == Job::Attack && job.Objective == boss)
+                ++view.OnPush;
+            continue;
+        }
+        if (IsBot(player))
+            continue;
+        bool defending = false;
+        for (int8 target : teamPlan.DefendTargets)
+            if (NodeDef const* node = RowOf(plan, target); node && player->GetExactDist2d(plan.Objectives[target].Pos) <= std::max(node->Radius, 15.0f))
+                defending = true;
+        if (!defending)
+            ++view.OnPush;
+    }
+    view.BossAlive = objective.Alive;
+    if (creature)
+    {
+        view.BossInCombat = creature->IsInCombat();
+        view.BossEvading = creature->IsInEvadeMode();
+    }
+
+    BgRules::RallyParams params;
+    params.Floor = row.Kind == NodeKind::KillGeneral ? sBgConfig.RallyGeneralFloor : sBgConfig.RallyCaptainFloor;
+    params.Pct = sBgConfig.RallyPct;
+    params.TimeoutMs = sBgConfig.RallyTimeoutSeconds * 1000;
+    params.TimeoutChargePct = sBgConfig.RallyTimeoutChargePct;
+    params.WipePct = sBgConfig.RallyWipePct;
+    params.MaxRestarts = sBgConfig.RallyMaxRestarts;
+    params.PullDefenders = sBgConfig.RallyPullDefenders;
+
+    BgRules::RallyState before = teamPlan.Rally.State;
+    uint32 restartsBefore = teamPlan.Rally.Restarts;
+    BgRules::RallyState state = BgRules::RallyStep(teamPlan.Rally, view, params, now);
+    teamPlan.RallyOnPush = view.OnPush;
+    teamPlan.RallyPresent = view.Present;
+
+    // the puller: a tank on the push nearest the boss, else the nearest melee, else the nearest ranged; never a healer
+    if (state == BgRules::RallyState::Charging && before != BgRules::RallyState::Charging)
+    {
+        Position bossPos = creature ? creature->GetPosition() : objective.Pos;
+        Player* best = nullptr;
+        int bestRank = 0;
+        float bestDist = 0.0f;
+        for (Player* bot : bots)
+        {
+            Assignment const& job = plan.Jobs[bot->GetGUID()];
+            PlayerbotAI* ai = sPlayerbotMgr->GetAI(bot);
+            if (!ai || !bot->IsAlive() || job.Base != Job::Attack || job.Objective != boss)
+                continue;
+            BotRole role = ai->GetRole();
+            if (role == BotRole::Healer)
+                continue;
+            int rank = role == BotRole::Tank ? 0 : role == BotRole::MeleeDps ? 1 : 2;
+            float dist = bot->GetExactDist2d(bossPos);
+            if (!best || rank < bestRank || (rank == bestRank && dist < bestDist))
+            {
+                best = bot;
+                bestRank = rank;
+                bestDist = dist;
+            }
+        }
+        teamPlan.Puller = best ? best->GetGUID() : ObjectGuid::Empty;
+    }
+
+    if (state != before || teamPlan.Rally.Restarts != restartsBefore)
+    {
+        ++changed;
+        bool restarted = teamPlan.Rally.Restarts != restartsBefore;
+        rallyEvent = Trinity::StringFormat("{}: {}{}", objective.Name, BgRules::RallyStateName(state),
+            restarted ? (teamPlan.Rally.DefendersPulled ? " again, defenders called in" : " again") : "");
+        if (state == BgRules::RallyState::Abandoned)
+            objective.BlockedUntilMs[team] = now + AbandonMs;
+        TC_LOG_DEBUG("server.playerbots", "Playerbots: {} instance {} {}: {} (present {}, on the push {}, need {})", plan.Def->Name, plan.InstanceId,
+            TeamName(TeamId(team)), rallyEvent, view.Present, view.OnPush, teamPlan.Rally.Need);
     }
 }
 }

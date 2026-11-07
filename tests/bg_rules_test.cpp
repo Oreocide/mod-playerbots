@@ -238,6 +238,186 @@ void TestSpread()
     counts = Spread({ 1.0f }, 0);
     CHECK(counts[0] == 0);
 }
+
+void TestReadNode()
+{
+    // a Horde graveyard, held, then assaulted by the Alliance, then taken
+    NodeRead read = ReadNode(false, Horde, Horde, false, false, true, false);
+    CHECK(read.Owner == Horde && read.Assaulting == Nobody && !read.Destroyed);
+    read = ReadNode(false, Horde, Horde, false, true, false, false);
+    CHECK(read.Owner == Horde && read.Assaulting == Alliance);
+    read = ReadNode(false, Horde, Horde, true, false, false, false);
+    CHECK(read.Owner == Alliance && read.Assaulting == Nobody && !read.Destroyed);
+
+    // Snowfall: neutral, assaulted from neutral it stays neutral until it falls
+    read = ReadNode(false, Nobody, Nobody, false, false, false, false);
+    CHECK(read.Owner == Nobody && read.Assaulting == Nobody);
+    read = ReadNode(false, Nobody, Nobody, false, false, false, true);
+    CHECK(read.Owner == Nobody && read.Assaulting == Horde);
+
+    // first read in the middle of an assault by the team that built it can only mean the other side took it before
+    read = ReadNode(false, Alliance, Alliance, true, false, false, false);
+    CHECK(read.Owner == Alliance);
+    read = ReadNode(false, Alliance, Horde, false, true, false, false);
+    CHECK(read.Owner == Horde && read.Assaulting == Alliance);
+
+    // an Alliance bunker: standing, assaulted by the Horde, burnt (the Horde's control state is the destroyed one)
+    read = ReadNode(true, Alliance, Alliance, true, false, false, false);
+    CHECK(read.Owner == Alliance && !read.Destroyed);
+    read = ReadNode(true, Alliance, Alliance, false, false, false, true);
+    CHECK(read.Owner == Alliance && read.Assaulting == Horde && !read.Destroyed);
+    read = ReadNode(true, Alliance, Alliance, false, false, true, false);
+    CHECK(read.Owner == Horde && read.Destroyed);
+    // a tower read under assault on the first plan still belongs to its builder
+    read = ReadNode(true, Horde, Horde, false, true, false, false);
+    CHECK(read.Owner == Horde && read.Assaulting == Alliance && !read.Destroyed);
+}
+
+void TestRequires()
+{
+    Requirement all = ParseRequires("a, b");
+    CHECK(all.Need == 0 && all.Keys.size() == 2 && all.Keys[0] == "a" && all.Keys[1] == "b");
+    CHECK(!RequirementMet(all, 1));
+    CHECK(RequirementMet(all, 2));
+
+    Requirement two = ParseRequires("2:iceblood_tower,tower_point,fw_east,fw_west");
+    CHECK(two.Need == 2 && two.Keys.size() == 4 && two.Keys[3] == "fw_west");
+    CHECK(!RequirementMet(two, 1));
+    CHECK(RequirementMet(two, 2));
+
+    CHECK(RequirementMet(ParseRequires(""), 0));
+    CHECK(ParseRequires("  ").Keys.empty());
+    // more needed than listed: all of them
+    Requirement over = ParseRequires("5:a,b");
+    CHECK(!RequirementMet(over, 1) && RequirementMet(over, 2));
+}
+
+void TestStopDistance()
+{
+    std::set<int> seen;
+    for (uint64 guid = 1; guid < 200; ++guid)
+    {
+        float stop = StopDistance(guid, 6.0f, 13.0f);
+        CHECK(stop >= 6.0f && stop <= 13.0f);
+        CHECK(stop == StopDistance(guid, 6.0f, 13.0f));
+        seen.insert(int(stop));
+    }
+    CHECK(seen.size() >= 6);                                    // a spread, not one spot
+    CHECK(StopDistance(7, 5.0f, 5.0f) == 5.0f);
+}
+
+void TestRallyNeed()
+{
+    RallyParams params;                                         // floor 15, 80 %
+    CHECK(RallyNeed(30, params) == 15);                         // enough people: the floor
+    CHECK(RallyNeed(10, params) == 8);                          // ceil(8.0)
+    CHECK(RallyNeed(11, params) == 9);                          // ceil(8.8)
+    CHECK(RallyNeed(0, params) == 1);
+    params.Floor = 8;
+    CHECK(RallyNeed(30, params) == 8);
+}
+
+void TestRallyCharge()
+{
+    RallyParams params;
+    params.Floor = 8;
+    Rally rally;
+    RallyView view;
+    view.OnPush = 12;
+
+    CHECK(RallyStep(rally, view, params, 0) == RallyState::Idle);  // nothing starts on its own
+    RallyStart(rally, 1000);
+    view.Present = 7;
+    CHECK(RallyStep(rally, view, params, 4000) == RallyState::Gathering && rally.Need == 8);
+    view.Present = 8;
+    CHECK(RallyStep(rally, view, params, 7000) == RallyState::Charging && rally.Charged == 8);
+    view.BossInCombat = true;
+    CHECK(RallyStep(rally, view, params, 9000) == RallyState::Charging);    // the others wait ChargeDelayMs
+    CHECK(RallyStep(rally, view, params, 10000) == RallyState::Fighting);
+    CHECK(RallyStep(rally, view, params, 40000) == RallyState::Fighting);
+    view.BossAlive = false;
+    CHECK(RallyStep(rally, view, params, 43000) == RallyState::Done);
+    CHECK(RallyStep(rally, view, params, 46000) == RallyState::Done);
+}
+
+void TestRallyTimeout()
+{
+    RallyParams params;                                         // 120 s, 50 %, one restart
+    params.Floor = 10;
+    Rally rally;
+    RallyView view;
+    view.OnPush = 20;
+    RallyStart(rally, 0);
+
+    view.Present = 5;                                           // half of 10: charges at the timeout
+    CHECK(RallyStep(rally, view, params, 119000) == RallyState::Gathering);
+    CHECK(RallyStep(rally, view, params, 120000) == RallyState::Charging);
+
+    RallyStart(rally, 0);
+    view.Present = 4;                                           // below half: the gather starts again with the defenders
+    CHECK(RallyStep(rally, view, params, 120000) == RallyState::Gathering);
+    CHECK(rally.Restarts == 1 && rally.DefendersPulled && rally.GatherStartMs == 120000);
+    CHECK(RallyStep(rally, view, params, 200000) == RallyState::Gathering);
+    CHECK(RallyStep(rally, view, params, 240000) == RallyState::Abandoned);
+    CHECK(RallyStep(rally, view, params, 250000) == RallyState::Abandoned);
+
+    params.PullDefenders = false;
+    RallyStart(rally, 0);
+    CHECK(RallyStep(rally, view, params, 120000) == RallyState::Gathering && !rally.DefendersPulled);
+}
+
+void TestRallyWipe()
+{
+    RallyParams params;
+    params.Floor = 10;
+    Rally rally;
+    RallyView view;
+    view.OnPush = 12;
+    view.Present = 10;
+    RallyStart(rally, 0);
+    CHECK(RallyStep(rally, view, params, 3000) == RallyState::Charging);
+    view.BossInCombat = true;
+    CHECK(RallyStep(rally, view, params, 6000) == RallyState::Fighting);
+
+    view.OnPush = 3;                                            // 3 of 10 charged: 30 % is not below 30 %
+    CHECK(RallyStep(rally, view, params, 9000) == RallyState::Fighting);
+    view.OnPush = 2;                                            // below: a wipe
+    CHECK(RallyStep(rally, view, params, 12000) == RallyState::Regroup);
+    // the regroup waits for the boss to leave combat and at least RegroupMinMs
+    CHECK(RallyStep(rally, view, params, 30000) == RallyState::Regroup);
+    view.BossInCombat = false;
+    CHECK(RallyStep(rally, view, params, 31000) == RallyState::Gathering && rally.GatherStartMs == 31000);
+
+    // a far rally point: the walk in takes longer than the reset grace; the reset clock starts at the first contact
+    RallyStart(rally, 0);
+    view.OnPush = 12;
+    view.Present = 10;
+    CHECK(RallyStep(rally, view, params, 1000) == RallyState::Charging);
+    CHECK(RallyStep(rally, view, params, 4000) == RallyState::Fighting);
+    CHECK(RallyStep(rally, view, params, 31000) == RallyState::Fighting);      // 30 s walking in, the boss never in combat
+    CHECK(!rally.Engaged);
+    view.BossInCombat = true;
+    CHECK(RallyStep(rally, view, params, 34000) == RallyState::Fighting && rally.Engaged);
+    view.BossInCombat = false;                                                // the boss leaves combat after contact
+    CHECK(RallyStep(rally, view, params, 46000) == RallyState::Fighting);
+    CHECK(RallyStep(rally, view, params, 49000) == RallyState::Regroup);       // 15 s after the last contact
+
+    // a charge that never reaches the boss fails after ApproachMs
+    RallyStart(rally, 0);
+    CHECK(RallyStep(rally, view, params, 1000) == RallyState::Charging);
+    CHECK(RallyStep(rally, view, params, 4000) == RallyState::Fighting);
+    CHECK(RallyStep(rally, view, params, 60000) == RallyState::Fighting);
+    CHECK(RallyStep(rally, view, params, 61000) == RallyState::Regroup);
+
+    RallyStart(rally, 0);
+    CHECK(RallyStep(rally, view, params, 1000) == RallyState::Charging);
+    CHECK(RallyStep(rally, view, params, 4000) == RallyState::Fighting);
+    view.BossEvading = true;
+    CHECK(RallyStep(rally, view, params, 5000) == RallyState::Regroup);
+    CHECK(RallyStep(rally, view, params, 20000) == RallyState::Regroup);       // still evading
+    view.BossEvading = false;
+    CHECK(RallyStep(rally, view, params, 21000) == RallyState::Gathering);
+}
 }
 
 int main()
@@ -252,6 +432,13 @@ int main()
     TestJoinerAndFreed();
     TestShare();
     TestSpread();
+    TestReadNode();
+    TestRequires();
+    TestStopDistance();
+    TestRallyNeed();
+    TestRallyCharge();
+    TestRallyTimeout();
+    TestRallyWipe();
 
     if (Failures)
     {

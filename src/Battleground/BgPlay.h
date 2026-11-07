@@ -26,6 +26,7 @@ class Player;
 
 namespace Playerbots
 {
+class AiRegistry;
 class PlayerbotAI;
 
 namespace Bg
@@ -34,6 +35,9 @@ namespace Bg
 bool Plays(Player const* bot);
 /// One step of the bot's job. False: nothing to do here, the pvp action chases the nearest enemy instead
 bool Play(Player* bot, PlayerbotAI& ai);
+/// The "bg leash" trigger and action (Alterac Valley boss pushes: nobody chases past the boss's leash, a wipe walks back to the
+/// rally point together); the "pvp" strategy offers them in combat above the attack action
+void Register(AiRegistry& registry);
 }
 }
 

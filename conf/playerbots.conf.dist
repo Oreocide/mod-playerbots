@@ -971,9 +971,10 @@ Playerbots.World.Reactions = 0
 # a seeded shuffle picks the defenders, the defenders spread over the held objectives, the rest attack or escort a carrier.
 # A bot keeps its job at least RoleHoldSeconds. Captures cast the real spell (Capturing, 6 s; any hit breaks it).
 # Off: the pilot objective code plays these maps as before. ".bot bg" shows the plan.
-# Planner.Maps: Warsong Gulch 2106, Twin Peaks 726, Arathi Basin 2107, Battle for Gilneas 761, Eye of the Storm 566.
+# Planner.Maps: Warsong Gulch 2106, Twin Peaks 726, Arathi Basin 2107, Battle for Gilneas 761, Eye of the Storm 566,
+# Alterac Valley 30 (its objective graph is the world table playerbots_bg_node; without rows it is not planned).
 Playerbots.Bg.Planner = 0
-Playerbots.Bg.Planner.Maps = 2106,726,2107,761,566
+Playerbots.Bg.Planner.Maps = 2106,726,2107,761,566,30
 Playerbots.Bg.Planner.TickMs = 3000
 Playerbots.Bg.DefendMinPct = 20
 Playerbots.Bg.DefendMaxPct = 40
@@ -985,6 +986,28 @@ Playerbots.Bg.RoleHoldSeconds = 45
 # during the preparation in batches, then one per team at a time. ".bot bg list" shows each team's size.
 Playerbots.Bg.FillToMax = 0
 Playerbots.Bg.FillMaxPerTeam = 0
+
+# Alterac Valley boss pushes (planner on, map 30 in Planner.Maps). Before a captain or a general the attackers gather at the
+# boss's rally row and charge once Rally.Pct percent of the push is there, or Rally.CaptainFloor / Rally.GeneralFloor
+# players, whichever is fewer ("present": within Rally.Radius yards). A tank pulls, the rest follow 3 s later, nobody chases
+# past the boss's leash. After Rally.TimeoutSeconds the push charges with Rally.TimeoutChargePct percent of its target
+# present; with fewer it gathers once more (Rally.MaxRestarts times), with the defenders too when Rally.PullDefenders = 1,
+# then it picks another objective for 2 minutes. Fewer than Rally.WipePct percent of those who charged still alive, or the
+# boss resetting, is a wipe: the push walks back to the rally point and gathers again.
+# A general's "requires" (towers down first) stops counting after SoftGateMinutes of match time, or once the enemy score is
+# down to SoftGateScorePct percent of its start (0 turns either off).
+# ".bot bg" shows the push; ".bot bg show" marks every row for you, ".bot bg rally set <row>" moves one to where you stand.
+Playerbots.Bg.Rally.Pct = 80
+Playerbots.Bg.Rally.GeneralFloor = 15
+Playerbots.Bg.Rally.CaptainFloor = 8
+Playerbots.Bg.Rally.Radius = 30
+Playerbots.Bg.Rally.TimeoutSeconds = 120
+Playerbots.Bg.Rally.TimeoutChargePct = 50
+Playerbots.Bg.Rally.WipePct = 30
+Playerbots.Bg.Rally.PullDefenders = 1
+Playerbots.Bg.Rally.MaxRestarts = 1
+Playerbots.Bg.SoftGateMinutes = 20
+Playerbots.Bg.SoftGateScorePct = 40
 
 Playerbots.React.ReturnEmotes = 1
 Playerbots.React.Chairs = 1

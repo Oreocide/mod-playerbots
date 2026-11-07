@@ -25,6 +25,8 @@
 #include "Define.h"
 #include <algorithm>
 #include <cmath>
+#include <string>
+#include <string_view>
 #include <utility>
 #include <vector>
 
@@ -183,6 +185,275 @@ inline std::vector<uint32> Spread(std::vector<float> const& weights, uint32 tota
         ++given;
     }
     return counts;
+}
+
+// ---- objective graph maps (Alterac Valley, phase 3) ----
+
+/// Teams as TrinityCore's TeamId numbers them: 0 Alliance, 1 Horde, 2 nobody
+constexpr uint8 Alliance = 0;
+constexpr uint8 Horde = 1;
+constexpr uint8 Nobody = 2;
+
+/// The team of a playerbots_bg_node side value (0 none, 1 Alliance, 2 Horde)
+inline uint8 TeamOfSide(uint8 side)
+{
+    return side == 1 ? Alliance : side == 2 ? Horde : Nobody;
+}
+
+struct NodeRead
+{
+    uint8 Owner = Nobody;       // who holds it; during an assault the team that held it before
+    uint8 Assaulting = Nobody;  // the team whose assault is running
+    bool Destroyed = false;     // a tower the other side burnt: nothing left to click
+};
+
+/// A node from its four world states (each 1 or 0; at most one is set). lastOwner is what the planner read the tick before
+/// (the starting owner at first): an assault keeps it, so a graveyard assaulted from neutral stays neutral. A tower belongs to
+/// builder; once the other side holds it, it is destroyed
+inline NodeRead ReadNode(bool tower, uint8 builder, uint8 lastOwner, bool allianceControl, bool allianceAssault, bool hordeControl, bool hordeAssault)
+{
+    NodeRead read;
+    if (allianceControl)
+        read.Owner = Alliance;
+    else if (hordeControl)
+        read.Owner = Horde;
+    else if (allianceAssault || hordeAssault)
+    {
+        read.Assaulting = allianceAssault ? Alliance : Horde;
+        uint8 other = read.Assaulting == Alliance ? Horde : Alliance;
+        if (lastOwner != read.Assaulting)
+            read.Owner = lastOwner;
+        else if (tower)
+            read.Owner = builder;
+        else
+            read.Owner = builder == Nobody ? Nobody : other;
+    }
+    read.Destroyed = tower && read.Owner != Nobody && builder != Nobody && read.Owner != builder;
+    return read;
+}
+
+/// "requires" of a node: Need of Keys must be done first (Need 0: all of them). Text "a,b" = both, "2:a,b,c" = any two
+struct Requirement
+{
+    uint32 Need = 0;
+    std::vector<std::string> Keys;
+};
+
+inline std::string_view Trim(std::string_view text)
+{
+    while (!text.empty() && (text.front() == ' ' || text.front() == '\t'))
+        text.remove_prefix(1);
+    while (!text.empty() && (text.back() == ' ' || text.back() == '\t'))
+        text.remove_suffix(1);
+    return text;
+}
+
+inline Requirement ParseRequires(std::string_view text)
+{
+    Requirement req;
+    text = Trim(text);
+    if (size_t colon = text.find(':'); colon != std::string_view::npos)
+    {
+        uint32 need = 0;
+        for (char c : Trim(text.substr(0, colon)))
+            if (c >= '0' && c <= '9')
+                need = need * 10 + uint32(c - '0');
+        req.Need = need;
+        text = text.substr(colon + 1);
+    }
+    while (!text.empty())
+    {
+        size_t comma = text.find(',');
+        std::string_view key = Trim(text.substr(0, comma));
+        if (!key.empty())
+            req.Keys.emplace_back(key);
+        if (comma == std::string_view::npos)
+            break;
+        text = text.substr(comma + 1);
+    }
+    return req;
+}
+
+/// done: how many of req.Keys the team has done
+inline bool RequirementMet(Requirement const& req, uint32 done)
+{
+    if (req.Keys.empty())
+        return true;
+    uint32 need = req.Need ? std::min<uint32>(req.Need, uint32(req.Keys.size())) : uint32(req.Keys.size());
+    return done >= need;
+}
+
+/// How far from a gate (or a rally point) a bot stops: from minYards to maxYards, the same for one bot every time, so a team
+/// spreads out in front of the door instead of piling on one spot
+inline float StopDistance(uint64 guidLow, float minYards, float maxYards)
+{
+    if (maxYards <= minYards)
+        return minYards;
+    return minYards + float(Mix(guidLow ^ 0x5DEECE66Dull) % 1000) / 1000.0f * (maxYards - minYards);
+}
+
+// ---- the rally before a boss (docs/design/BG_PLAN.md §2 "Rally") ----
+
+enum class RallyState : uint8
+{
+    Idle,       // no boss is the team's target
+    Gathering,  // walk to the rally point and wait there
+    Charging,   // one bot pulls; the rest follow ChargeDelayMs later
+    Fighting,   // everybody on the push fights the boss inside its leash
+    Regroup,    // a wipe or the boss reset: back to the rally point, nobody runs in alone
+    Done,       // the boss is dead
+    Abandoned   // too few came twice: the planner picks another objective for a while
+};
+
+inline char const* RallyStateName(RallyState state)
+{
+    switch (state)
+    {
+        case RallyState::Gathering: return "gathering";
+        case RallyState::Charging: return "charging";
+        case RallyState::Fighting: return "fighting";
+        case RallyState::Regroup: return "regroup";
+        case RallyState::Done: return "done";
+        case RallyState::Abandoned: return "abandoned";
+        default: return "idle";
+    }
+}
+
+struct RallyParams
+{
+    uint32 Floor = 15;              // this many present is enough to charge (Bg.Rally.GeneralFloor or CaptainFloor)
+    uint32 Pct = 80;                // or this share of the living players on the push, whichever is smaller
+    uint32 TimeoutMs = 120000;
+    uint32 TimeoutChargePct = 50;   // at the timeout, this share of the target present still charges
+    uint32 WipePct = 30;            // fewer living on the push than this share of those who charged: a wipe
+    uint32 MaxRestarts = 1;         // gathers started again at a timeout (with the defenders pulled in) before giving up
+    bool PullDefenders = true;
+    uint32 ChargeDelayMs = 3000;    // the puller goes first, the rest this much later
+    uint32 ApproachMs = 60000;      // a charge that has not reached the boss this long after it began failed (rally spots are up to 130 yd out)
+    uint32 ResetGraceMs = 15000;    // once the boss was in combat, out of combat this long means it reset
+    uint32 RegroupMinMs = 10000;    // a regroup lasts at least this long, and until the boss is out of combat
+};
+
+/// What the planner sees of the push on one tick
+struct RallyView
+{
+    uint32 OnPush = 0;              // living players on the push: its bots and the humans who count (decision 2)
+    uint32 Present = 0;             // living players of the team within the rally radius of the rally point
+    bool BossAlive = true;
+    bool BossInCombat = false;
+    bool BossEvading = false;
+};
+
+struct Rally
+{
+    RallyState State = RallyState::Idle;
+    uint32 SinceMs = 0;             // when State began
+    uint32 GatherStartMs = 0;       // the gather timer
+    uint32 Need = 0;                // how many present the last gathering tick wanted
+    uint32 Charged = 0;             // how many were present at the charge
+    uint32 ChargedMs = 0;           // when the push charged
+    uint32 Restarts = 0;
+    bool DefendersPulled = false;   // a restarted gather: the team's defenders are on the push too
+    bool Engaged = false;           // the boss has been in combat since the charge (the walk in is over)
+    uint32 BossCombatMs = 0;        // the boss was last seen in combat (Charging, Fighting)
+};
+
+/// min(floor, ceil(pct% of the push)), at least one
+inline uint32 RallyNeed(uint32 onPush, RallyParams const& params)
+{
+    uint32 share = (onPush * params.Pct + 99) / 100;
+    return std::max<uint32>(1, std::min(params.Floor, share));
+}
+
+inline void RallyStart(Rally& rally, uint32 nowMs)
+{
+    rally = Rally();
+    rally.State = RallyState::Gathering;
+    rally.SinceMs = nowMs;
+    rally.GatherStartMs = nowMs;
+}
+
+/// One planner tick of the rally. Idle, Done and Abandoned stay as they are (RallyStart begins a push)
+inline RallyState RallyStep(Rally& rally, RallyView const& view, RallyParams const& params, uint32 nowMs)
+{
+    auto enter = [&](RallyState state)
+    {
+        rally.State = state;
+        rally.SinceMs = nowMs;
+    };
+
+    if (rally.State == RallyState::Idle || rally.State == RallyState::Done || rally.State == RallyState::Abandoned)
+        return rally.State;
+    if (!view.BossAlive)
+    {
+        enter(RallyState::Done);
+        return rally.State;
+    }
+
+    switch (rally.State)
+    {
+        case RallyState::Gathering:
+        {
+            rally.Need = RallyNeed(view.OnPush, params);
+            auto charge = [&]
+            {
+                rally.Charged = view.Present;
+                rally.ChargedMs = nowMs;
+                rally.Engaged = false;
+                rally.BossCombatMs = nowMs;
+                enter(RallyState::Charging);
+            };
+            if (view.Present && view.Present >= rally.Need)
+                charge();
+            else if (nowMs - rally.GatherStartMs >= params.TimeoutMs)
+            {
+                uint32 enough = std::max<uint32>(1, (rally.Need * params.TimeoutChargePct + 99) / 100);
+                if (view.Present >= enough)
+                    charge();
+                else if (rally.Restarts < params.MaxRestarts)
+                {
+                    ++rally.Restarts;
+                    rally.GatherStartMs = nowMs;
+                    rally.DefendersPulled = params.PullDefenders;
+                }
+                else
+                    enter(RallyState::Abandoned);
+            }
+            break;
+        }
+        case RallyState::Charging:
+            if (view.BossInCombat)
+            {
+                rally.Engaged = true;
+                rally.BossCombatMs = nowMs;
+            }
+            if (nowMs - rally.SinceMs >= params.ChargeDelayMs)
+                enter(RallyState::Fighting);
+            break;
+        case RallyState::Fighting:
+        {
+            if (view.BossInCombat)
+            {
+                rally.Engaged = true;
+                rally.BossCombatMs = nowMs;
+            }
+            // the reset clock runs from the last contact; before the first one the walk in has its own, longer limit
+            bool reset = rally.Engaged ? nowMs - rally.BossCombatMs >= params.ResetGraceMs : nowMs - rally.ChargedMs >= params.ApproachMs;
+            if (view.BossEvading || view.OnPush * 100 < params.WipePct * rally.Charged || reset)
+                enter(RallyState::Regroup);
+            break;
+        }
+        case RallyState::Regroup:
+            if (!view.BossInCombat && !view.BossEvading && nowMs - rally.SinceMs >= params.RegroupMinMs)
+            {
+                rally.GatherStartMs = nowMs;
+                enter(RallyState::Gathering);
+            }
+            break;
+        default:
+            break;
+    }
+    return rally.State;
 }
 }
 

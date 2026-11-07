@@ -19,14 +19,20 @@
 #include "Battleground/BgConfig.h"
 #include "Battleground/BgPlanner.h"
 #include "Db/PlayerbotRepository.h"
+#include "Engine/AiRegistry.h"
 #include "PlayerbotAI.h"
 #include "Travel/MoveToward.h"
 #include "Battleground.h"
+#include "CellImpl.h"
+#include "Creature.h"
 #include "GameObject.h"
+#include "GridNotifiers.h"
+#include "GridNotifiersImpl.h"
 #include "GameTime.h"
 #include "Log.h"
 #include "Map.h"
 #include "ObjectAccessor.h"
+#include "ObjectMgr.h"
 #include "Player.h"
 #include "Spell.h"
 #include "SpellInfo.h"
@@ -44,6 +50,11 @@ constexpr float EnemyNearCap = 20.0f;       // enemies this close to a node are 
 constexpr float HuntRange = 80.0f;          // attackers this close to the enemy flag carrier go after it
 constexpr uint8 FailuresBeforeUse = 3;      // open-spell failures in a row (not interruptions) before the bot uses the object directly
 constexpr uint8 TransientsBeforeGiveUp = 5; // interrupted or refused for a passing reason this often in a row: move or fight first
+constexpr float BannerRange = 8.0f;         // Valley: a node's banners stand this close to its row position
+constexpr float RallyGuard = 20.0f;         // Valley: a gathering push fights only enemies this close to its rally point
+constexpr float WalkInFrom = 45.0f;         // Valley: farther from the boss than this, a bot on the push walks in first (IsValidEnemy: 60 yd)
+constexpr float HealerStandOff = 25.0f;     // Valley: healers on a push stay this far from the boss's target
+constexpr float LeashReach = 40.0f;         // Valley: the leash rule holds bots this far outside the leash circle; farther out they fight
 
 bool IsOpening(Unit const* unit)
 {
@@ -478,6 +489,249 @@ bool PlayEye(Player* bot, PlayerbotAI& ai, BgPlan const& plan, Assignment const&
     Go(bot, pos, job.Base == Job::Defend ? 10.0f : 6.0f, job.Objective);
     return true;
 }
+
+/// The Alterac Valley banner scripts (go_av_capturable_object, go_av_contested_object), per entry
+bool IsBanner(GameObject const* go)
+{
+    static std::unordered_map<uint32, bool> banners;
+    auto it = banners.find(go->GetEntry());
+    if (it == banners.end())
+    {
+        std::string const& script = sObjectMgr->GetScriptName(go->GetScriptId());
+        it = banners.emplace(go->GetEntry(), script == "go_av_capturable_object" || script == "go_av_contested_object").first;
+    }
+    return it->second;
+}
+
+/// The banner of a node a player can click now: in world, spawned, ready (the script ignores any other state). Several banners
+/// stand on the spot; spawn groups keep only the one of the node's state in the world
+GameObject* FindBanner(Player* bot, Position const& node)
+{
+    struct BannerCheck
+    {
+        Position Node;
+        bool operator()(GameObject* go) const
+        {
+            return go->IsInWorld() && go->isSpawned() && go->GetGoState() == GO_STATE_READY && go->GetExactDist2d(Node) <= BannerRange && IsBanner(go);
+        }
+    };
+    std::vector<GameObject*> found;
+    BannerCheck check{ node };
+    Trinity::GameObjectListSearcher searcher(bot, found, check);
+    Cell::VisitGridObjects(bot, searcher, bot->GetExactDist2d(node) + BannerRange);
+    GameObject* best = nullptr;
+    for (GameObject* go : found)
+        if (!best || go->GetExactDist2d(node) < best->GetExactDist2d(node))
+            best = go;
+    return best;
+}
+
+/// A bot on a boss push: waits at the rally point, the puller goes first, then the push fights the boss (BgRules::Rally)
+bool PlayPush(Player* bot, PlayerbotAI& ai, BgPlan const& plan, Assignment const& job, NodeDef const& row)
+{
+    using BgRules::RallyState;
+    TeamPlan const& teamPlan = plan.Teams[TeamOf(bot)];
+    Creature* boss = BossOf(plan, bot->GetMap(), job.Objective);
+    Position const& rally = plan.Objectives[row.Rally].Pos;
+    bool healer = ai.GetRole() == BotRole::Healer;
+    RallyState state = teamPlan.RallyObjective == job.Objective ? teamPlan.Rally.State : RallyState::Gathering;
+
+    auto atRally = [&]
+    {
+        // the boss is not pulled from here: only who comes to the rally point is fought
+        ai.ClearForcedTarget();
+        Engage(bot, ai, rally, RallyGuard);
+        float stop = BgRules::StopDistance(bot->GetGUID().GetCounter(), 3.0f, std::max(4.0f, RallyRadiusOf(plan, job.Objective) * 0.4f));
+        if (bot->GetExactDist2d(rally) > stop)
+            Go(bot, rally, stop, job.Objective);
+        return true;
+    };
+
+    switch (state)
+    {
+        case RallyState::Charging:
+            if (bot->GetGUID() != teamPlan.Puller)
+                return atRally();
+            [[fallthrough]];
+        case RallyState::Fighting:
+        {
+            if (!boss || !boss->IsAlive())
+                return atRally();
+            if (healer)
+            {
+                Unit* tank = boss->GetVictim();
+                Position where = tank ? tank->GetPosition() : boss->GetPosition();
+                if (bot->GetExactDist2d(where) > HealerStandOff)
+                    Go(bot, where, HealerStandOff, NoObjective);
+                return true;
+            }
+            // the attack action takes the boss once it is in reach (PlayerbotAI::IsValidEnemy: 60 yd); farther, the bot walks in
+            ai.SetForcedTarget(boss->GetGUID());
+            if (bot->GetExactDist(boss) > WalkInFrom)
+                Go(bot, boss->GetPosition(), WalkInFrom - 15.0f, NoObjective);
+            return true;
+        }
+        default:
+            return atRally();
+    }
+}
+
+/// Alterac Valley: graveyards and towers are clicked (21651 "Opening" on the banner, one capper), held, retaken; bosses are pushed
+bool PlayValley(Player* bot, PlayerbotAI& ai, BgPlan const& plan, Assignment const& job)
+{
+    NodeDef const* row = RowOf(plan, job.Objective);
+    if (!row)
+        return false;
+    if (row->IsBoss())
+        return row->Rally >= 0 ? PlayPush(bot, ai, plan, job, *row) : false;
+
+    Objective const& objective = plan.Objectives[job.Objective];
+    TeamId us = TeamOf(bot);
+    TeamId them = us == TEAM_ALLIANCE ? TEAM_HORDE : TEAM_ALLIANCE;
+    Position const& pos = objective.Pos;
+    bool healer = ai.GetRole() == BotRole::Healer;
+
+    // something to click: theirs or neutral that none of ours is taking (an assault), ours that they are taking (a defence)
+    bool clickable = !objective.Destroyed
+        && ((objective.Owner != us && objective.Assaulting != us) || (objective.Owner == us && objective.Assaulting == them));
+    if (!healer && clickable && bot->GetExactDist2d(pos) < CapRange)
+    {
+        // fight first: the 8 s "Opening" breaks on any hit
+        if (EnemyNear(bot, pos, EnemyNearCap) && Engage(bot, ai, pos, EnemyNearCap))
+        {
+            Go(bot, pos, 6.0f, job.Objective);
+            return true;
+        }
+        if (GameObject* banner = FindBanner(bot, pos); banner && !TeammateOpening(bot, banner))
+        {
+            if (Interact(bot, ai, banner))
+                return true;
+            Go(bot, banner->GetPosition(), 1.0f, job.Objective);
+            return true;
+        }
+    }
+
+    if (healer)
+        return PlayHealer(bot, plan, job, pos);
+    Engage(bot, ai, pos, GuardRange);
+    Go(bot, pos, job.Base == Job::Defend ? 8.0f : 6.0f, job.Objective);
+    return true;
+}
+
+/// While the gates are closed: to the team's gate row (a map without one: the bot waits where it stands)
+void WaitAtGate(Player* bot)
+{
+    MapDef const* def = FindMap(bot->GetMapId());
+    if (!def)
+        return;
+    uint8 team = uint8(TeamOf(bot));
+    for (NodeDef const& row : def->Nodes)
+    {
+        if (row.Kind != NodeKind::Gate || BgRules::TeamOfSide(row.Side) != team)
+            continue;
+        float stop = BgRules::StopDistance(bot->GetGUID().GetCounter(), 6.0f, std::max(6.0f, row.Radius));
+        if (bot->GetExactDist2d(row.Pos) > stop + 1.0f)
+            Go(bot, row.Pos, stop, NoObjective);
+        return;
+    }
+}
+
+/// What the leash rule needs while a push fights its boss, or regroups after a wipe
+struct LeashView
+{
+    Creature* Boss = nullptr;
+    Position Home;
+    float Radius = 0.0f;
+    bool Regroup = false;
+    Position Rally;
+};
+
+bool LeashOf(PlayerbotAI& ai, LeashView& out)
+{
+    Player* bot = ai.GetBot();
+    if (!bot->IsAlive() || !bot->IsInCombat() || ai.GetMaster() || !Plays(bot))
+        return false;
+    BgPlan const* plan = sBgPlanner.Find(bot->GetMapId(), bot->GetInstanceId());
+    TeamId team = TeamOf(bot);
+    if (!plan || !plan->Def || plan->Def->Kind != MapKind::Valley || (team != TEAM_ALLIANCE && team != TEAM_HORDE))
+        return false;
+    auto it = plan->Jobs.find(bot->GetGUID());
+    if (it == plan->Jobs.end())
+        return false;
+    Assignment const& job = it->second;
+    TeamPlan const& teamPlan = plan->Teams[team];
+    if (job.Base != Job::Attack || job.Objective == NoObjective || job.Objective != teamPlan.RallyObjective)
+        return false;
+    using BgRules::RallyState;
+    RallyState state = teamPlan.Rally.State;
+    // while the push charges only the puller is at the boss; the rest stay at the rally point and fight there
+    if (state != RallyState::Fighting && state != RallyState::Regroup && !(state == RallyState::Charging && bot->GetGUID() == teamPlan.Puller))
+        return false;
+    NodeDef const* row = RowOf(*plan, job.Objective);
+    Creature* boss = BossOf(*plan, bot->GetMap(), job.Objective);
+    if (!row || row->LeashRadius <= 0.0f || row->Rally < 0 || !boss || !boss->IsAlive())
+        return false;
+    // a bot far from the boss (on its way from a graveyard, attacked on the road) fights like any other: the rule is for the boss room
+    if (bot->GetExactDist2d(boss->GetHomePosition()) > row->LeashRadius + LeashReach)
+        return false;
+    out.Boss = boss;
+    out.Home = boss->GetHomePosition();
+    out.Radius = row->LeashRadius;
+    out.Regroup = state == RallyState::Regroup;
+    out.Rally = plan->Objectives[row->Rally].Pos;
+    return true;
+}
+
+/// In combat on a push: the bot or its target is outside the boss's leash circle (nobody chases out of it), or the push regroups
+bool LeashTrigger(PlayerbotAI& ai)
+{
+    LeashView leash;
+    if (!LeashOf(ai, leash))
+        return false;
+    Player* bot = ai.GetBot();
+    if (leash.Regroup)
+        return bot->GetExactDist2d(leash.Rally) > 10.0f;
+    Unit* victim = bot->GetVictim();
+    if (victim && victim != leash.Boss && victim->GetExactDist2d(leash.Home) > leash.Radius)
+        return true;
+    return bot->GetExactDist2d(leash.Home) > leash.Radius + 10.0f;
+}
+
+class LeashAction : public Action
+{
+public:
+    char const* GetName() const override { return "bg leash"; }
+
+    bool Execute(PlayerbotAI& ai) override
+    {
+        LeashView leash;
+        if (!LeashOf(ai, leash))
+            return false;
+        Player* bot = ai.GetBot();
+
+        // a wipe: everybody back to the rally point together, nobody stays in alone
+        if (leash.Regroup)
+        {
+            ai.ClearForcedTarget();
+            bot->AttackStop();
+            return Go(bot, leash.Rally, 5.0f, NoObjective);
+        }
+
+        // the boss again; a target outside the leash is dropped, a bot outside it walks back in
+        ai.SetForcedTarget(leash.Boss->GetGUID());
+        if (Unit* victim = bot->GetVictim(); victim && victim != leash.Boss && victim->GetExactDist2d(leash.Home) > leash.Radius)
+            bot->AttackStop();
+        if (bot->GetExactDist2d(leash.Home) > leash.Radius + 10.0f)
+            Go(bot, leash.Home, leash.Radius * 0.5f, NoObjective);
+        return true;
+    }
+};
+}
+
+void Register(AiRegistry& registry)
+{
+    registry.AddTrigger("bg leash", 0, LeashTrigger);
+    registry.AddAction<LeashAction>("bg leash");
 }
 
 bool Plays(Player const* bot)
@@ -490,9 +744,13 @@ bool Play(Player* bot, PlayerbotAI& ai)
     Battleground* bg = bot->GetBattleground();
     if (!bg)
         return false;
-    // the gates are still closed: wait like the pilot does
+    // the gates are still closed: wait at our gate on a map that has a gate row, else where the bot stands like the pilot does
     if (bg->GetStatus() != STATUS_IN_PROGRESS)
+    {
+        if (bg->GetStatus() == STATUS_WAIT_JOIN && bot->IsAlive())
+            WaitAtGate(bot);
         return true;
+    }
 
     Assignment job = sBgPlanner.Touch(bot);
     BgPlan const* plan = sBgPlanner.Find(bot->GetMapId(), bot->GetInstanceId());
@@ -510,6 +768,7 @@ bool Play(Player* bot, PlayerbotAI& ai)
         case MapKind::Flag: return PlayFlagMap(bot, ai, *plan, job);
         case MapKind::Capture: return PlayNode(bot, ai, *plan, job);
         case MapKind::Eye: return PlayEye(bot, ai, *plan, job);
+        case MapKind::Valley: return PlayValley(bot, ai, *plan, job);
     }
     return false;
 }

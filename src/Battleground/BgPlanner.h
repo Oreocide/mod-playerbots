@@ -37,6 +37,7 @@
 #include <vector>
 
 class Battleground;
+class Creature;
 class GameObject;
 class Map;
 class Player;
@@ -63,13 +64,20 @@ struct Assignment
 struct Objective
 {
     uint32 Entry = 0;
-    char const* Name = "";
+    std::string Name;
     float Weight = 1.0f;
     ObjectGuid Guid;
     Position Pos;
-    bool Known = false;                 // the game object was found once (Pos is set)
+    bool Known = false;                 // the game object was found once (Pos is set); Valley rows always
     TeamId Owner = TEAM_NEUTRAL;        // capture points: who captured it last and still holds it; towers: who controls it
     TeamId Assaulting = TEAM_NEUTRAL;   // capture points: the team whose assault is running (TEAM_NEUTRAL: none)
+
+    // Valley maps: one objective per playerbots_bg_node row, same index as MapDef::Nodes (rally and gate rows included)
+    bool Destroyed = false;             // a tower the other side burnt
+    bool Alive = true;                  // a boss, from its world state
+    bool WasAlive = true;               // the plan before
+    ObjectGuid Boss;                    // the boss creature, looked up when needed
+    uint32 BlockedUntilMs[2] = { 0, 0 };    // a team gave up its push here: not its target again before this
 };
 
 struct FlagInfo
@@ -98,6 +106,13 @@ struct TeamPlan
     uint32 LastChanged = 0;             // jobs or objectives changed on that event
     uint32 Reassigns = 0;               // events with at least one change
     uint32 LastRetargetMs = 0;
+
+    // Valley maps: the push on a boss (BgRules::Rally)
+    BgRules::Rally Rally;
+    int8 RallyObjective = NoObjective;  // the boss
+    ObjectGuid Puller;                  // the bot that pulls when the push charges
+    uint32 RallyOnPush = 0;             // what the last plan saw
+    uint32 RallyPresent = 0;
 };
 
 struct BgPlan
@@ -127,6 +142,7 @@ struct BgPlan
     uint32 LastCastFailure = 0;         // SpellCastResult of the last failure
     uint32 CaptureGiveUps = 0;          // a bot stopped trying after interruptions in a row (it moves or fights, then tries again)
     uint32 LastGiveUpResult = 0;        // SpellCastResult of the last give-up
+    uint32 LastBossLookupMs = 0;        // Valley: bosses missing a creature are looked up at most this often
 };
 
 class Planner
@@ -148,12 +164,19 @@ public:
 
     BgPlan const* Find(uint32 mapId, uint32 instanceId) const;
     std::vector<BgPlan const*> List() const;
+    /// Drops every plan (the objective rows were read again: plans index them); the next touch makes new ones
+    void Reset();
 
 private:
     void Plan(BgPlan& plan, Battleground* bg, Map* map, uint32 now);
     void Discover(BgPlan& plan, Map* map, uint32 now);
     void ReadState(BgPlan& plan, Map* map);
+    void ReadValley(BgPlan& plan, Map* map, uint32 now);
     void PlanTeam(BgPlan& plan, Map* map, uint32 team, std::vector<Player*> const& members, bool retarget, std::string const& reason, uint32 now);
+    void PlanValleyTeam(BgPlan& plan, Battleground* bg, Map* map, uint32 team, std::vector<Player*> const& members, bool retarget,
+        std::string const& reason, uint32 now);
+    void StepRally(BgPlan& plan, Map* map, uint32 team, std::vector<Player*> const& members, std::vector<Player*> const& bots, uint32& changed,
+        std::string& rallyEvent, uint32 now);
 
     std::map<std::pair<uint32, uint32>, BgPlan> _plans;
 };
@@ -162,6 +185,14 @@ private:
 bool ObjectivePosition(BgPlan const& plan, int8 objective, Position& out);
 std::string ObjectiveName(BgPlan const& plan, int8 objective);
 TeamId TeamOf(Player const* player);
+/// The team's score: Battleground::GetTeamScore, or the map's score world states (Alterac Valley reinforcements)
+uint32 TeamScore(BgPlan const& plan, Battleground const* bg, Map const* map, uint32 team);
+/// Valley maps: the row of an objective (nullptr for the code-table maps or a bad index)
+NodeDef const* RowOf(BgPlan const& plan, int8 objective);
+/// Valley maps: the boss creature of a boss objective, if it is in the world
+Creature* BossOf(BgPlan const& plan, Map* map, int8 objective);
+/// Valley maps: the rally radius of a boss push (the row's, else Playerbots.Bg.Rally.Radius)
+float RallyRadiusOf(BgPlan const& plan, int8 boss);
 }
 
 #define sBgPlanner Playerbots::Bg::Planner::Instance()

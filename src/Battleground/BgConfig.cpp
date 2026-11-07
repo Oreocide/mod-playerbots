@@ -36,7 +36,7 @@ void Config::Load()
     Planner = sConfigMgr->GetBoolDefault("Playerbots.Bg.Planner", false);
 
     PlannerMaps.clear();
-    std::string maps = sConfigMgr->GetStringDefault("Playerbots.Bg.Planner.Maps", "2106,726,2107,761,566");
+    std::string maps = sConfigMgr->GetStringDefault("Playerbots.Bg.Planner.Maps", "2106,726,2107,761,566,30");
     for (std::string_view token : Trinity::Tokenize(maps, ',', false))
         if (Optional<uint32> map = Trinity::StringTo<uint32>(token))
             PlannerMaps.push_back(*map);
@@ -53,6 +53,18 @@ void Config::Load()
     RoleHoldSeconds = sConfigMgr->GetIntDefault("Playerbots.Bg.RoleHoldSeconds", 45);
     FillToMax = sConfigMgr->GetBoolDefault("Playerbots.Bg.FillToMax", false);
     FillMaxPerTeam = sConfigMgr->GetIntDefault("Playerbots.Bg.FillMaxPerTeam", 0);
+
+    RallyPct = std::clamp<uint32>(sConfigMgr->GetIntDefault("Playerbots.Bg.Rally.Pct", 80), 1, 100);
+    RallyGeneralFloor = std::max<uint32>(1, sConfigMgr->GetIntDefault("Playerbots.Bg.Rally.GeneralFloor", 15));
+    RallyCaptainFloor = std::max<uint32>(1, sConfigMgr->GetIntDefault("Playerbots.Bg.Rally.CaptainFloor", 8));
+    RallyRadius = std::max(5.0f, sConfigMgr->GetFloatDefault("Playerbots.Bg.Rally.Radius", 30.0f));
+    RallyTimeoutSeconds = std::max<uint32>(10, sConfigMgr->GetIntDefault("Playerbots.Bg.Rally.TimeoutSeconds", 120));
+    RallyTimeoutChargePct = std::min<uint32>(100, sConfigMgr->GetIntDefault("Playerbots.Bg.Rally.TimeoutChargePct", 50));
+    RallyWipePct = std::min<uint32>(100, sConfigMgr->GetIntDefault("Playerbots.Bg.Rally.WipePct", 30));
+    RallyPullDefenders = sConfigMgr->GetBoolDefault("Playerbots.Bg.Rally.PullDefenders", true);
+    RallyMaxRestarts = sConfigMgr->GetIntDefault("Playerbots.Bg.Rally.MaxRestarts", 1);
+    SoftGateMinutes = sConfigMgr->GetIntDefault("Playerbots.Bg.SoftGateMinutes", 20);
+    SoftGateScorePct = std::min<uint32>(100, sConfigMgr->GetIntDefault("Playerbots.Bg.SoftGateScorePct", 40));
 
     if (Planner && !sPlayerbotsConfig.BgObjectives)
         TC_LOG_WARN("server.playerbots", "Playerbots: Playerbots.Bg.Planner = 1 does nothing while Playerbots.Bg.Objectives = 0");
