@@ -32,6 +32,7 @@
 #include "DatabaseEnv.h"
 #include "GameObject.h"
 #include "GameTime.h"
+#include "Log.h"
 #include "Map.h"
 #include "MapManager.h"
 #include "ObjectAccessor.h"
@@ -40,6 +41,19 @@
 #include "ScriptMgr.h"
 #include "StringFormat.h"
 #include "TemporarySummon.h"
+#include "ChatPackets.h"
+#include "DB2Stores.h"
+#include "MoveSpline.h"
+#include "MoveSplineInit.h"
+#include "Opcodes.h"
+#include "PathGenerator.h"
+#include "PlayerbotAI.h"
+#include "PlayerbotMgr.h"
+#include "PlayerbotsConfig.h"
+#include "SpellInfo.h"
+#include "SpellMgr.h"
+#include "Vehicle.h"
+#include "WorldSession.h"
 #include <shared_mutex>
 
 using namespace Trinity::ChatCommands;
@@ -47,6 +61,178 @@ using namespace Playerbots::Bg;
 
 namespace
 {
+// ---- automated tests (BG_PLAN.md §5): .bot bg test (a match with no real player) and .bot bg vehicle test (phase 5.0) ----
+
+// One vehicle test at a time: a bot boards a temporary vehicle, drives it on the mesh, fires its first spell and leaves. Every
+// step is written to the log (and kept for .bot bg vehicle test). World thread: the command and the world script's update
+struct VehicleTest
+{
+    enum class Step : uint8 { Idle, Board, Seated, Drive, Driving, Fire, Leave, Done };
+    Step Now = Step::Idle;
+    ObjectGuid Bot;
+    ObjectGuid Vehicle;
+    uint32 StartedMs = 0;
+    uint32 StepMs = 0;
+    Position BotStart;
+    Position VehicleStart;
+    Position Goal;
+    std::vector<std::string> Lines;
+};
+
+VehicleTest& TheVehicleTest()
+{
+    static VehicleTest test;
+    return test;
+}
+
+constexpr uint32 BgTestMinutes = 45;                // .bot bg test: the longest a test match may run
+constexpr uint32 VehicleTestTimeoutMs = 90 * IN_MILLISECONDS;
+constexpr uint32 VehicleBoardMs = 5 * IN_MILLISECONDS;
+constexpr uint32 VehicleDriveMs = 25 * IN_MILLISECONDS;
+constexpr uint32 VehicleFireWaitMs = 4 * IN_MILLISECONDS;
+constexpr float VehicleDriveYards = 25.0f;
+constexpr float VehicleAimYards = 20.0f;
+
+void VehicleNote(std::string line)
+{
+    TC_LOG_INFO("server.playerbots", "Playerbots: vehicle test: {}", line);
+    TheVehicleTest().Lines.push_back(std::move(line));
+}
+
+/// Ends the test whatever state it is in: the bot leaves, the vehicle goes, and both are checked
+void VehicleFinish(Player* bot, Creature* vehicle, std::string const& why)
+{
+    VehicleTest& test = TheVehicleTest();
+    if (bot && bot->GetVehicle())
+        bot->ExitVehicle();
+    if (bot)
+        VehicleNote(Trinity::StringFormat("end ({}): bot moved {:.1f} yd from its start, rooted {}, in a vehicle {}", why,
+            bot->GetExactDist2d(test.BotStart), bot->HasUnitState(UNIT_STATE_ROOT) ? "yes" : "no", bot->GetVehicle() ? "yes" : "no"));
+    if (vehicle)
+    {
+        VehicleNote(Trinity::StringFormat("vehicle moved {:.1f} yd from its start, charmed by {}", vehicle->GetExactDist2d(test.VehicleStart),
+            vehicle->GetCharmerGUID().IsEmpty() ? "nobody" : vehicle->GetCharmerGUID().ToString()));
+        vehicle->DespawnOrUnsummon();
+    }
+    test.Now = VehicleTest::Step::Done;
+}
+
+void UpdateVehicleTest()
+{
+    VehicleTest& test = TheVehicleTest();
+    if (test.Now == VehicleTest::Step::Idle || test.Now == VehicleTest::Step::Done)
+        return;
+
+    uint32 now = GameTime::GetGameTimeMS();
+    Player* bot = ObjectAccessor::FindPlayer(test.Bot);
+    Creature* vehicle = bot ? ObjectAccessor::GetCreature(*bot, test.Vehicle) : nullptr;
+    if (!bot || !bot->IsInWorld())
+        return VehicleFinish(nullptr, nullptr, "the bot is gone");
+    if (!vehicle || !vehicle->IsAlive() || !vehicle->GetVehicleKit())
+        return VehicleFinish(bot, vehicle, "the vehicle is gone");
+    if (now - test.StartedMs > VehicleTestTimeoutMs)
+        return VehicleFinish(bot, vehicle, "FAILED: the test ran out of time");
+
+    switch (test.Now)
+    {
+        case VehicleTest::Step::Board:
+        {
+            int8 seat = -1;
+            for (auto const& [id, vehicleSeat] : vehicle->GetVehicleKit()->Seats)
+                if (vehicleSeat.SeatInfo && vehicleSeat.SeatInfo->HasFlag(VEHICLE_SEAT_FLAG_CAN_CONTROL) && vehicleSeat.IsEmpty())
+                {
+                    seat = id;
+                    break;
+                }
+            if (seat < 0)
+                return VehicleFinish(bot, vehicle, "FAILED: no free seat that drives");
+            bot->EnterVehicle(vehicle, seat);
+            VehicleNote(Trinity::StringFormat("board: EnterVehicle seat {}", int32(seat)));
+            test.Now = VehicleTest::Step::Seated;
+            test.StepMs = now;
+            break;
+        }
+        case VehicleTest::Step::Seated:
+            if (bot->GetVehicleBase() == vehicle)
+            {
+                VehicleNote(Trinity::StringFormat("seated after {} ms; the vehicle's charmer is {}, faction {} (the bot's {})", now - test.StepMs,
+                    vehicle->GetCharmerGUID() == bot->GetGUID() ? "the bot" : vehicle->GetCharmerGUID().IsEmpty() ? "nobody" : "someone else",
+                    vehicle->GetFaction(), bot->GetFaction()));
+                test.Now = VehicleTest::Step::Drive;
+                test.StepMs = now;
+            }
+            else if (now - test.StepMs > VehicleBoardMs)
+                return VehicleFinish(bot, vehicle, "FAILED: not seated after 5 s");
+            break;
+        case VehicleTest::Step::Drive:
+        {
+            // the first direction with a full mesh path for the vehicle itself; no path, no move
+            static float const Angles[] = { 0.0f, 0.785f, -0.785f, 1.571f, -1.571f, 3.142f };
+            for (float angle : Angles)
+            {
+                Position goal = vehicle->GetNearPosition(VehicleDriveYards, angle);
+                vehicle->UpdateAllowedPositionZ(goal.m_positionX, goal.m_positionY, goal.m_positionZ);
+                PathGenerator path(vehicle);
+                if (!path.CalculatePath(goal.GetPositionX(), goal.GetPositionY(), goal.GetPositionZ()) || (path.GetPathType() & ~PATHFIND_NORMAL)
+                    || path.GetPath().size() < 2)
+                    continue;
+                Movement::MoveSplineInit init(vehicle);
+                init.MovebyPath(path.GetPath());
+                init.SetWalk(false);
+                init.Launch();
+                test.Goal = goal;
+                VehicleNote(Trinity::StringFormat("drive: a mesh path of {} points to {:.1f} {:.1f} {:.1f} ({:.0f} yd at angle {:.2f}), spline launched on the vehicle",
+                    path.GetPath().size(), goal.GetPositionX(), goal.GetPositionY(), goal.GetPositionZ(), VehicleDriveYards, angle));
+                test.Now = VehicleTest::Step::Driving;
+                test.StepMs = now;
+                return;
+            }
+            return VehicleFinish(bot, vehicle, "FAILED: no mesh path for the vehicle in any direction");
+        }
+        case VehicleTest::Step::Driving:
+            if ((now - test.StepMs > 500 && vehicle->movespline->Finalized()) || now - test.StepMs > VehicleDriveMs)
+            {
+                VehicleNote(Trinity::StringFormat("drove {} ms: the vehicle is {:.1f} yd from its start and {:.1f} yd from the goal; the bot {:.1f} yd from its start and {:.1f} yd from the vehicle",
+                    now - test.StepMs, vehicle->GetExactDist2d(test.VehicleStart), vehicle->GetExactDist2d(test.Goal), bot->GetExactDist2d(test.BotStart),
+                    bot->GetExactDist2d(vehicle)));
+                test.Now = VehicleTest::Step::Fire;
+                test.StepMs = now;
+            }
+            break;
+        case VehicleTest::Step::Fire:
+        {
+            Position aim = vehicle->GetNearPosition(VehicleAimYards, 0.0f);
+            vehicle->UpdateAllowedPositionZ(aim.m_positionX, aim.m_positionY, aim.m_positionZ);
+            uint32 tried = 0;
+            for (uint32 spellId : vehicle->m_spells)
+            {
+                SpellInfo const* info = spellId ? sSpellMgr->GetSpellInfo(spellId, DIFFICULTY_NONE) : nullptr;
+                if (!info || info->IsPassive())
+                    continue;
+                ++tried;
+                CastSpellExtraArgs args(TRIGGERED_NONE);
+                args.SetOriginalCaster(bot->GetGUID());
+                SpellCastResult result = vehicle->CastSpell(aim, spellId, args);
+                VehicleNote(Trinity::StringFormat("fire: {} ({}) at the ground {:.0f} yd ahead: result {}", spellId, info->SpellName->Str[DEFAULT_LOCALE],
+                    VehicleAimYards, uint32(result)));
+                if (result == SPELL_CAST_OK)
+                    break;
+            }
+            if (!tried)
+                VehicleNote("fire: the vehicle has no spell to cast");
+            test.Now = VehicleTest::Step::Leave;
+            test.StepMs = now;
+            break;
+        }
+        case VehicleTest::Step::Leave:
+            if (now - test.StepMs > VehicleFireWaitMs)
+                return VehicleFinish(bot, vehicle, "done");
+            break;
+        default:
+            break;
+    }
+}
+
 class playerbots_bg_world : public WorldScript
 {
 public:
@@ -71,6 +257,7 @@ public:
     void OnUpdate(uint32 /*diff*/) override
     {
         sBgPlanner.Update();
+        UpdateVehicleTest();
     }
 };
 
@@ -188,14 +375,29 @@ public:
             { "set", HandleBgRallySetCommand, rbac::RBAC_PERM_COMMAND_DEBUG, Console::No },
         };
 
+        static ChatCommandTable testCommandTable =
+        {
+            { "start", HandleBgTestStartCommand, rbac::RBAC_PERM_COMMAND_DEBUG, Console::Yes },
+            { "stop",  HandleBgTestStopCommand,  rbac::RBAC_PERM_COMMAND_DEBUG, Console::Yes },
+            { "say",   HandleBgTestSayCommand,   rbac::RBAC_PERM_COMMAND_DEBUG, Console::Yes },
+            { "",      HandleBgTestCommand,      rbac::RBAC_PERM_COMMAND_DEBUG, Console::Yes },
+        };
+
+        static ChatCommandTable vehicleCommandTable =
+        {
+            { "test", HandleBgVehicleTestCommand, rbac::RBAC_PERM_COMMAND_DEBUG, Console::Yes },
+        };
+
         static ChatCommandTable bgCommandTable =
         {
-            { "list",   HandleBgListCommand,   rbac::RBAC_PERM_COMMAND_DEBUG, Console::Yes },
-            { "roles",  HandleBgRolesCommand,  rbac::RBAC_PERM_COMMAND_DEBUG, Console::Yes },
-            { "rally",  rallyCommandTable },
-            { "show",   HandleBgShowCommand,   rbac::RBAC_PERM_COMMAND_DEBUG, Console::No },
-            { "reload", HandleBgReloadCommand, rbac::RBAC_PERM_COMMAND_DEBUG, Console::Yes },
-            { "",       HandleBgCommand,       rbac::RBAC_PERM_COMMAND_DEBUG, Console::Yes },
+            { "list",    HandleBgListCommand,   rbac::RBAC_PERM_COMMAND_DEBUG, Console::Yes },
+            { "roles",   HandleBgRolesCommand,  rbac::RBAC_PERM_COMMAND_DEBUG, Console::Yes },
+            { "rally",   rallyCommandTable },
+            { "show",    HandleBgShowCommand,   rbac::RBAC_PERM_COMMAND_DEBUG, Console::No },
+            { "reload",  HandleBgReloadCommand, rbac::RBAC_PERM_COMMAND_DEBUG, Console::Yes },
+            { "test",    testCommandTable },
+            { "vehicle", vehicleCommandTable },
+            { "",        HandleBgCommand,       rbac::RBAC_PERM_COMMAND_DEBUG, Console::Yes },
         };
 
         // "bot bg" lands in the .bot table of PlayerbotCommandScript (ChatCommandNode::LoadCommandsIntoMap splits the name)
@@ -515,6 +717,173 @@ public:
         return true;
     }
 
+    // .bot bg test start <map> [level]: the random bots fill and play one normal battleground match with no real player in it
+    static bool HandleBgTestStartCommand(ChatHandler* handler, uint32 mapId, Optional<uint32> level)
+    {
+        // the normal (not rated, not arena) battleground whose only map is this one
+        BattlegroundTemplate const* bgTemplate = nullptr;
+        for (uint32 id = 1; id < MAX_BATTLEGROUND_TYPE_ID && !bgTemplate; ++id)
+            if (BattlegroundTemplate const* candidate = sBattlegroundMgr->GetBattlegroundTemplateByTypeId(BattlegroundTypeId(id)))
+                if (candidate->MapIDs.size() == 1 && uint32(candidate->MapIDs.front()) == mapId && !candidate->IsArena())
+                    bgTemplate = candidate;
+        if (!bgTemplate || bgTemplate->MapIDs.empty())
+        {
+            handler->PSendSysMessage("No normal battleground on map %u.", mapId);
+            return true;
+        }
+
+        // the bracket of the given level, else the one where the smaller team has the most random bots online
+        std::map<uint8, std::array<uint32, 2>> online;
+        sPlayerbotMgr->ForEachRandomBot([&](Player* bot, Playerbots::PlayerbotAI* /*ai*/)
+        {
+            if (bot->GetLevel() < bgTemplate->GetMinLevel() || bot->GetLevel() > bgTemplate->GetMaxLevel())
+                return;
+            if (PVPDifficultyEntry const* bracket = DB2Manager::GetBattlegroundBracketByLevel(mapId, bot->GetLevel()))
+                ++online[uint8(bracket->GetBracketId())][bot->GetTeamId() == TEAM_ALLIANCE ? 0 : 1];
+        });
+        PVPDifficultyEntry const* bracket = level ? DB2Manager::GetBattlegroundBracketByLevel(mapId, *level) : nullptr;
+        uint8 bracketId = bracket ? uint8(bracket->GetBracketId()) : 0;
+        if (!bracket)
+        {
+            uint32 best = 0;
+            for (auto const& [id, teams] : online)
+                if (std::min(teams[0], teams[1]) > best)
+                {
+                    best = std::min(teams[0], teams[1]);
+                    bracketId = id;
+                }
+            if (!best)
+            {
+                handler->SendSysMessage("No bracket of this battleground has random bots of both teams online (Playerbots.Random.OnlyWithPlayers = 1 keeps them offline while nobody plays).");
+                return true;
+            }
+        }
+
+        uint64 queue = BattlegroundMgr::BGQueueTypeId(uint16(bgTemplate->Id), BattlegroundQueueIdType::Battleground, false, 0).GetPacked();
+        if (!sActivityMgr->StartBgTest(queue, bracketId, BgTestMinutes))
+        {
+            handler->SendSysMessage("That battleground queue cannot be tested.");
+            return true;
+        }
+        handler->PSendSysMessage("Test match started: %s (map %u), bracket %u, %u Alliance and %u Horde random bots online in it, for at most %u minutes. "
+            "The bots queue on the next scans (every 5 s); .bot bg test shows it, .bot bg test stop ends it.", bgTemplate->BattlemasterEntry->Name[DEFAULT_LOCALE],
+            mapId, uint32(bracketId), online[bracketId][0], online[bracketId][1], BgTestMinutes);
+        if (!sPlayerbotsConfig.RandomBattlegrounds)
+            handler->SendSysMessage("Warning: Playerbots.Random.Battlegrounds is off, no bot will queue.");
+        if (!sBgConfig.Plans(mapId))
+            handler->SendSysMessage("Warning: the planner does not play this map (Playerbots.Bg.Planner, Playerbots.Bg.Planner.Maps).");
+        return true;
+    }
+
+    static bool HandleBgTestStopCommand(ChatHandler* handler)
+    {
+        if (!sActivityMgr->GetBgTest().Active())
+        {
+            handler->SendSysMessage("No test match is running.");
+            return true;
+        }
+        sActivityMgr->StopBgTest("stopped by command");
+        handler->SendSysMessage("Test match stopped: the bots leave it on the next scan.");
+        return true;
+    }
+
+    static bool HandleBgTestCommand(ChatHandler* handler)
+    {
+        Playerbots::ActivityMgr::BgTest const& test = sActivityMgr->GetBgTest();
+        if (!test.Active())
+        {
+            handler->SendSysMessage("No test match is running (.bot bg test start <map> [level]).");
+            return true;
+        }
+        uint32 now = GameTime::GetGameTimeMS();
+        handler->PSendSysMessage("Test match: queue %llu bracket %u, instance %u, %u bots sent, running %u s, %u s left.", (unsigned long long)test.Queue,
+            uint32(test.Bracket), test.InstanceId, test.Joined, (now - test.StartedMs) / IN_MILLISECONDS,
+            int32(test.UntilMs - now) > 0 ? (test.UntilMs - now) / IN_MILLISECONDS : 0);
+        for (BgPlan const* plan : sBgPlanner.List())
+            if (test.InstanceId && plan->InstanceId == test.InstanceId)
+                handler->PSendSysMessage("The planner plans it: .bot bg %u shows it.", plan->InstanceId);
+        return true;
+    }
+
+    // .bot bg test say <text>: a bot of the test match says text in instance chat through its own session, the client's path
+    // (the /bg check of reactive #10: Server.log shows `called "..."` when the hook fires and Playerbots.Bg.HumanCalls is on)
+    static bool HandleBgTestSayCommand(ChatHandler* handler, Tail text)
+    {
+        Playerbots::ActivityMgr::BgTest const& test = sActivityMgr->GetBgTest();
+        Battleground* bg = test.InstanceId ? sBattlegroundMgr->GetBattleground(test.InstanceId, BattlegroundQueueTypeId::FromPacked(test.Queue)) : nullptr;
+        if (!bg || text.empty())
+        {
+            handler->SendSysMessage("No test match is running yet, or no text.");
+            return true;
+        }
+        for (auto const& [guid, member] : bg->GetPlayers())
+        {
+            Player* bot = ObjectAccessor::FindConnectedPlayer(guid);
+            Playerbots::PlayerbotAI* ai = bot && Playerbots::IsBot(bot) ? sPlayerbotMgr->GetAI(bot) : nullptr;
+            if (!ai || ai->GetMaster() || !bot->IsInWorld() || !bot->GetGroup())
+                continue;
+            WorldPackets::Chat::ChatMessage packet{ WorldPacket(CMSG_CHAT_MESSAGE_INSTANCE_CHAT) };
+            packet.Text = std::string(text);
+            packet.Language = bot->GetTeam() == ALLIANCE ? LANG_COMMON : LANG_ORCISH;
+            bot->GetSession()->HandleChatMessageOpcode(packet);
+            handler->PSendSysMessage("%s (%s) said \"%s\" in instance chat.", bot->GetName().c_str(), TeamLabel(uint32(TeamOf(bot))),
+                std::string(text).c_str());
+            return true;
+        }
+        handler->SendSysMessage("No bot of the test match is in a battleground group yet.");
+        return true;
+    }
+
+    // .bot bg vehicle test <bot> [entry]: phase 5.0, one bot boards a temporary vehicle, drives it on the mesh, fires and leaves
+    static bool HandleBgVehicleTestCommand(ChatHandler* handler, Optional<std::string> botName, Optional<uint32> entry)
+    {
+        VehicleTest& test = TheVehicleTest();
+        if (!botName)
+        {
+            if (test.Lines.empty())
+                handler->SendSysMessage("No vehicle test has run (.bot bg vehicle test <bot> [entry, default 34775 Demolisher]).");
+            for (std::string const& line : test.Lines)
+                handler->PSendSysMessage("  %s", line.c_str());
+            return true;
+        }
+        if (test.Now != VehicleTest::Step::Idle && test.Now != VehicleTest::Step::Done)
+        {
+            handler->SendSysMessage("A vehicle test is running.");
+            return true;
+        }
+        Player* bot = ObjectAccessor::FindPlayerByName(*botName);
+        if (!bot || !Playerbots::IsBot(bot) || !bot->IsInWorld() || !bot->IsAlive() || bot->GetVehicle() || bot->IsInCombat())
+        {
+            handler->SendSysMessage("No such bot online, alive, out of combat and out of a vehicle.");
+            return true;
+        }
+        uint32 vehicleEntry = entry.value_or(34775);
+        Position at = bot->GetNearPosition(6.0f, 0.0f);
+        TempSummon* vehicle = bot->SummonCreature(vehicleEntry, at, TEMPSUMMON_TIMED_DESPAWN, 5min);
+        if (!vehicle || !vehicle->GetVehicleKit())
+        {
+            handler->PSendSysMessage("Creature %u was not summoned as a vehicle.", vehicleEntry);
+            if (vehicle)
+                vehicle->DespawnOrUnsummon();
+            return true;
+        }
+        vehicle->SetFaction(bot->GetFaction());
+        test = VehicleTest();
+        test.Now = VehicleTest::Step::Board;
+        test.Bot = bot->GetGUID();
+        test.Vehicle = vehicle->GetGUID();
+        test.StartedMs = GameTime::GetGameTimeMS();
+        test.StepMs = test.StartedMs;
+        test.BotStart = bot->GetPosition();
+        test.VehicleStart = vehicle->GetPosition();
+        bool active = bot->InBattleground() || bot->GetMap()->IsDungeon() || bot->GetMap()->IsRaid();
+        VehicleNote(Trinity::StringFormat("start: {} on map {} at {:.1f} {:.1f} {:.1f}, vehicle {} {} summoned 6 yd ahead{}", bot->GetName(), bot->GetMapId(),
+            at.GetPositionX(), at.GetPositionY(), at.GetPositionZ(), vehicleEntry, vehicle->GetName(),
+            active ? "" : " (open world: a bot far from players is dormant and may never finish boarding)"));
+        handler->SendSysMessage("Vehicle test started; .bot bg vehicle test shows the steps (about 40 s).");
+        return true;
+    }
+
     static bool HandleBgRolesCommand(ChatHandler* handler, Optional<uint32> instanceId)
     {
         BgPlan const* plan = Pick(handler, instanceId);
@@ -547,6 +916,15 @@ public:
         return true;
     }
 };
+}
+
+namespace Playerbots::Bg
+{
+bool VehicleTestHolds(Player const* bot)
+{
+    VehicleTest const& test = TheVehicleTest();
+    return test.Now != VehicleTest::Step::Idle && test.Now != VehicleTest::Step::Done && test.Bot == bot->GetGUID();
+}
 }
 
 void AddSC_playerbots_bg()

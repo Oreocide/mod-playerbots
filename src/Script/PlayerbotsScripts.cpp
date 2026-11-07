@@ -185,10 +185,11 @@ public:
     // also a call for the team planner (Playerbots.Bg.HumanCalls, Battleground/BgTalk.cpp)
     void OnChat(Player* player, uint32 type, uint32 /*lang*/, std::string& msg, Group* group) override
     {
+        // first, for bots too: a test bot's /bg line is heard in the .bot bg test match (BgTalk.cpp HearCall checks who speaks)
+        Playerbots::Bg::HearCall(player, type, msg);
+
         if (IsBot(player))
             return;
-
-        Playerbots::Bg::HearCall(player, type, msg);
 
         std::vector<ObjectGuid> leaving;
         for (GroupReference const& ref : group->GetMembers())

@@ -38,6 +38,8 @@ bool Play(Player* bot, PlayerbotAI& ai);
 /// The "bg leash" trigger and action (Alterac Valley boss pushes: nobody chases past the boss's leash, a wipe walks back to the
 /// rally point together); the "pvp" strategy offers them in combat above the attack action
 void Register(AiRegistry& registry);
+/// .bot bg vehicle test (phase 5.0) owns this bot now: its battleground job waits (BgScripts.cpp)
+bool VehicleTestHolds(Player const* bot);
 }
 }
 

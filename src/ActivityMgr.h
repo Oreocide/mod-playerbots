@@ -61,6 +61,26 @@ public:
     };
     InviteCounters const& GetInviteCounters() const { return _invites; }
 
+    /// .bot bg test (docs/design/BG_PLAN.md §5, automated test): one normal battleground match the random bots fill and play
+    /// with no real player in it. Until the match exists its queue and bracket count as watched, then only its instance. It
+    /// ends with the match, with StopBgTest, or at UntilMs (world time, GameTime ms)
+    struct BgTest
+    {
+        uint64 Queue = 0;           // BattlegroundQueueTypeId::GetPacked of the test queue; 0 = no test
+        uint8 Bracket = 0;          // BattlegroundBracketId
+        uint32 InstanceId = 0;
+        uint32 StartedMs = 0;
+        uint32 UntilMs = 0;
+        uint32 Joined = 0;          // bots sent into its queue
+        bool Active() const { return Queue != 0; }
+    };
+    /// False when the queue is not a valid normal battleground queue
+    bool StartBgTest(uint64 packedQueue, uint8 bracket, uint32 minutes);
+    void StopBgTest(char const* why);
+    BgTest const& GetBgTest() const { return _bgTest; }
+    /// The test match: its instance, or (not pinned yet) an instance of the test queue and bracket
+    bool IsBgTest(uint32 instanceId) const;
+
 private:
     struct Proposal
     {
@@ -102,6 +122,7 @@ private:
     void FillArenas(std::vector<Player*> const& humans, std::vector<BotRef> const& bots);
     void CleanArenaGroups();
     bool FinishTrip(Player* bot, Battleground const* bg, uint32 now);
+    void UpdateBgTest();
 
     std::atomic<uint32> _clock = 0;
     uint32 _scanTimer = 0;
@@ -117,6 +138,7 @@ private:
     std::map<ObjectGuid, uint32> _queueSince;                     // bot -> when it joined a battleground queue
     std::map<ObjectGuid, Trip> _trips;                            // bot -> its accepted battleground port that did not land
     InviteCounters _invites;
+    BgTest _bgTest;
 };
 }
 

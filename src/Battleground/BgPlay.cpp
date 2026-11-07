@@ -1214,6 +1214,9 @@ bool Play(Player* bot, PlayerbotAI& ai)
     Battleground* bg = bot->GetBattleground();
     if (!bg)
         return false;
+    // a vehicle test drives this bot: nothing else moves it
+    if (VehicleTestHolds(bot))
+        return true;
     // the gates are still closed: wait at our gate on a map that has a gate row, else where the bot stands like the pilot does
     if (bg->GetStatus() != STATUS_IN_PROGRESS)
     {

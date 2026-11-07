@@ -25,6 +25,7 @@
 #include "BattlegroundQueue.h"
 #include "ByteBuffer.h"
 #include "DB2Stores.h"
+#include "GameTime.h"
 #include "Group.h"
 #include "GroupMgr.h"
 #include "LFGMgr.h"
@@ -116,11 +117,14 @@ uint32 InviteInstance(Player* bot, BattlegroundQueueTypeId queueId)
     return itr->second.GroupInfo->IsInvitedToBGInstanceGUID;
 }
 
-// A real player is inside this battleground, or still on the accept dialog for it.
+// A real player is inside this battleground, or still on the accept dialog for it (or it is the .bot bg test match)
 bool HumanPresent(uint32 instanceId, BattlegroundQueueTypeId queueId)
 {
     if (!instanceId)
         return false;
+
+    if (sActivityMgr->IsBgTest(instanceId))
+        return true;
 
     if (Battleground* bg = sBattlegroundMgr->GetBattleground(instanceId, queueId))
         for (auto const& entry : bg->GetPlayers())
@@ -176,6 +180,9 @@ bool TakesLateJoiners(Battleground const* bg)
 
 bool HasHumanInside(Battleground const* bg)
 {
+    if (sActivityMgr->IsBgTest(bg->GetInstanceID()))
+        return true;
+
     for (auto const& entry : bg->GetPlayers())
         if (IsHuman(ObjectAccessor::FindConnectedPlayer(entry.first)))
             return true;
@@ -308,6 +315,7 @@ void ActivityMgr::Scan()
     if (bots.empty())
         return;
 
+    UpdateBgTest();
     ServeBots(bots);
 
     std::vector<Player*> humans;
@@ -429,7 +437,7 @@ void ActivityMgr::ServeBots(std::vector<BotRef> const& bots)
 
             uint32 since = _queueSince.try_emplace(guid, now).first->second;
             if (now - since > EmptyQueueGrace && !QueueHasHuman(sBattlegroundMgr->GetBattlegroundQueue(queueId))
-                && !(sBgConfig.FillToMax && RunningMatchWaitsFor(bot, queueId)))
+                && !(sBgConfig.FillToMax && RunningMatchWaitsFor(bot, queueId)) && !(_bgTest.Active() && queueId.GetPacked() == _bgTest.Queue))
             {
                 AnswerBattlefieldPort(bot, slot, false);
                 _queueSince.erase(guid);
@@ -622,9 +630,14 @@ void ActivityMgr::FillBattlegrounds(std::vector<Player*> const& humans, std::vec
     if (sBgConfig.FillToMax)
     {
         std::set<uint32> served;
+        std::vector<Battleground*> running;
         for (Player* human : humans)
+            running.push_back(human->GetBattleground());
+        // .bot bg test: the test match is filled as if a player were inside
+        if (_bgTest.InstanceId)
+            running.push_back(sBattlegroundMgr->GetBattleground(_bgTest.InstanceId, BattlegroundQueueTypeId::FromPacked(_bgTest.Queue)));
+        for (Battleground* bg : running)
         {
-            Battleground* bg = human->GetBattleground();
             if (!TakesLateJoiners(bg) || !served.insert(bg->GetInstanceID()).second)
                 continue;
 
@@ -678,10 +691,56 @@ void ActivityMgr::FillBattlegrounds(std::vector<Player*> const& humans, std::vec
                 sBattlegroundMgr->ScheduleQueueUpdate(0, queueId, bg->GetBracketId());
 
             if (added)
-                TC_LOG_DEBUG("server.playerbots", "Playerbots: {} bots joined battleground queue {} for the running match {} of {}",
-                    added, queueId.BattlemasterListId, bg->GetInstanceID(), human->GetName());
+                TC_LOG_DEBUG("server.playerbots", "Playerbots: {} bots joined battleground queue {} for the running match {}",
+                    added, queueId.BattlemasterListId, bg->GetInstanceID());
+            if (bg->GetInstanceID() == _bgTest.InstanceId)
+                _bgTest.Joined += added;
         }
     }
+
+    // bots of the bracket join the queue until each team has a full team waiting
+    auto queueBots = [&](BattlegroundQueueTypeId queueId, BattlegroundTemplate const* bgTemplate, BattlegroundBracketId bracketId)
+    {
+        BattlegroundQueue& queue = sBattlegroundMgr->GetBattlegroundQueue(queueId);
+        uint32 counts[PVP_TEAMS_COUNT] = { };
+        uint32 groups = 0;
+        CountQueued(queue, bracketId, counts[TEAM_ALLIANCE], counts[TEAM_HORDE], groups);
+
+        uint32 cap = std::max<uint32>(bgTemplate->GetMaxPlayersPerTeam(), 1);
+        if (sBgConfig.FillToMax)
+            cap = FillCap(bgTemplate->GetMaxPlayersPerTeam(), bgTemplate->GetMinPlayersPerTeam());
+        uint32 added = 0;
+        for (TeamId team : { TEAM_ALLIANCE, TEAM_HORDE })
+        {
+            for (BotRef const& ref : bots)
+            {
+                if (counts[team] >= cap || added >= MaxBgBotsPerScan)
+                    break;
+
+                Player* bot = ref.Bot;
+                if (bot->GetTeamId() != team || !IsIdle(bot) || bot->GetLevel() < bgTemplate->GetMinLevel() || bot->GetLevel() > bgTemplate->GetMaxLevel())
+                    continue;
+
+                if (auto backoff = _backoff.find(bot->GetGUID()); backoff != _backoff.end() && backoff->second > now)
+                    continue;
+
+                PVPDifficultyEntry const* botBracket = DB2Manager::GetBattlegroundBracketByLevel(bgTemplate->MapIDs.front(), bot->GetLevel());
+                if (!botBracket || botBracket->GetBracketId() != bracketId)
+                    continue;
+
+                JoinBattlegroundQueue(bot, queueId);
+                if (bot->InBattlegroundQueueForBattlegroundQueueType(queueId))
+                {
+                    ++counts[team];
+                    ++added;
+                    _queueSince[bot->GetGUID()] = now;
+                }
+                else
+                    _backoff[bot->GetGUID()] = now + FailedJoinBackoff;
+            }
+        }
+        return added;
+    };
 
     for (Player* human : humans)
     {
@@ -699,49 +758,81 @@ void ActivityMgr::FillBattlegrounds(std::vector<Player*> const& humans, std::vec
             if (!bracket)
                 continue;
 
-            BattlegroundQueue& queue = sBattlegroundMgr->GetBattlegroundQueue(queueId);
-            uint32 counts[PVP_TEAMS_COUNT] = { };
-            uint32 groups = 0;
-            CountQueued(queue, bracket->GetBracketId(), counts[TEAM_ALLIANCE], counts[TEAM_HORDE], groups);
-
-            uint32 cap = std::max<uint32>(bgTemplate->GetMaxPlayersPerTeam(), 1);
-            if (sBgConfig.FillToMax)
-                cap = FillCap(bgTemplate->GetMaxPlayersPerTeam(), bgTemplate->GetMinPlayersPerTeam());
-            uint32 added = 0;
-            for (TeamId team : { TEAM_ALLIANCE, TEAM_HORDE })
-            {
-                for (BotRef const& ref : bots)
-                {
-                    if (counts[team] >= cap || added >= MaxBgBotsPerScan)
-                        break;
-
-                    Player* bot = ref.Bot;
-                    if (bot->GetTeamId() != team || !IsIdle(bot) || bot->GetLevel() < bgTemplate->GetMinLevel() || bot->GetLevel() > bgTemplate->GetMaxLevel())
-                        continue;
-
-                    if (auto backoff = _backoff.find(bot->GetGUID()); backoff != _backoff.end() && backoff->second > now)
-                        continue;
-
-                    PVPDifficultyEntry const* botBracket = DB2Manager::GetBattlegroundBracketByLevel(bgTemplate->MapIDs.front(), bot->GetLevel());
-                    if (!botBracket || botBracket->GetBracketId() != bracket->GetBracketId())
-                        continue;
-
-                    JoinBattlegroundQueue(bot, queueId);
-                    if (bot->InBattlegroundQueueForBattlegroundQueueType(queueId))
-                    {
-                        ++counts[team];
-                        ++added;
-                        _queueSince[bot->GetGUID()] = now;
-                    }
-                    else
-                        _backoff[bot->GetGUID()] = now + FailedJoinBackoff;
-                }
-            }
-
-            if (added)
+            if (uint32 added = queueBots(queueId, bgTemplate, bracket->GetBracketId()))
                 TC_LOG_DEBUG("server.playerbots", "Playerbots: {} bots joined battleground queue {} for {}", added, queueId.BattlemasterListId, human->GetName());
         }
     }
+
+    // .bot bg test: until the test match exists its queue is filled as if a player waited in it
+    if (_bgTest.Active() && !_bgTest.InstanceId)
+    {
+        BattlegroundQueueTypeId queueId = BattlegroundQueueTypeId::FromPacked(_bgTest.Queue);
+        BattlegroundTemplate const* bgTemplate = sBattlegroundMgr->GetBattlegroundTemplateByTypeId(BattlegroundTypeId(queueId.BattlemasterListId));
+        if (bgTemplate && !bgTemplate->MapIDs.empty())
+            _bgTest.Joined += queueBots(queueId, bgTemplate, BattlegroundBracketId(_bgTest.Bracket));
+    }
+}
+
+bool ActivityMgr::StartBgTest(uint64 packedQueue, uint8 bracket, uint32 minutes)
+{
+    BattlegroundQueueTypeId queueId = BattlegroundQueueTypeId::FromPacked(packedQueue);
+    if (!BattlegroundMgr::IsValidQueueId(queueId) || queueId.TeamSize || queueId.Rated)
+        return false;
+    _bgTest = BgTest();
+    _bgTest.Queue = packedQueue;
+    _bgTest.Bracket = bracket;
+    _bgTest.StartedMs = GameTime::GetGameTimeMS();
+    _bgTest.UntilMs = _bgTest.StartedMs + minutes * MINUTE * IN_MILLISECONDS;
+    TC_LOG_INFO("server.playerbots", "Playerbots: battleground test started: queue {} bracket {} for {} minutes", queueId.BattlemasterListId,
+        uint32(bracket), minutes);
+    return true;
+}
+
+void ActivityMgr::StopBgTest(char const* why)
+{
+    if (!_bgTest.Active())
+        return;
+    TC_LOG_INFO("server.playerbots", "Playerbots: battleground test stopped ({}): instance {}, {} bots sent, {} s", why, _bgTest.InstanceId,
+        _bgTest.Joined, (GameTime::GetGameTimeMS() - _bgTest.StartedMs) / IN_MILLISECONDS);
+    _bgTest = BgTest();
+}
+
+bool ActivityMgr::IsBgTest(uint32 instanceId) const
+{
+    if (!_bgTest.Active() || !instanceId)
+        return false;
+    if (_bgTest.InstanceId)
+        return instanceId == _bgTest.InstanceId;
+    // the first invites come before the match is pinned: any instance of the test queue and bracket
+    Battleground* bg = sBattlegroundMgr->GetBattleground(instanceId, BattlegroundQueueTypeId::FromPacked(_bgTest.Queue));
+    return bg && uint8(bg->GetBracketId()) == _bgTest.Bracket;
+}
+
+// Pins the test match once the queue made it, and ends the test with the match or at its time
+void ActivityMgr::UpdateBgTest()
+{
+    if (!_bgTest.Active())
+        return;
+    if (int32(_bgTest.UntilMs - GameTime::GetGameTimeMS()) <= 0)
+    {
+        StopBgTest("time is up");
+        return;
+    }
+    BattlegroundQueueTypeId queueId = BattlegroundQueueTypeId::FromPacked(_bgTest.Queue);
+    if (!_bgTest.InstanceId)
+    {
+        for (Battleground* bg : sBattlegroundMgr->GetBGFreeSlotQueueStore(queueId))
+            if (bg && uint8(bg->GetBracketId()) == _bgTest.Bracket && bg->GetStatus() < STATUS_WAIT_LEAVE)
+            {
+                _bgTest.InstanceId = bg->GetInstanceID();
+                TC_LOG_INFO("server.playerbots", "Playerbots: battleground test match is instance {} ({})", _bgTest.InstanceId, bg->GetName());
+                break;
+            }
+        return;
+    }
+    Battleground* bg = sBattlegroundMgr->GetBattleground(_bgTest.InstanceId, queueId);
+    if (!bg || bg->GetStatus() == STATUS_WAIT_LEAVE)
+        StopBgTest("the match ended");
 }
 
 // A player group waiting for an arena match gets a group of bots as opponents

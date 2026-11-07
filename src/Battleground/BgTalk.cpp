@@ -16,6 +16,7 @@
  */
 
 #include "Battleground/BgTalk.h"
+#include "ActivityMgr.h"
 #include "Battleground/BgConfig.h"
 #include "BotSession.h"
 #include "ChatPackets.h"
@@ -190,7 +191,10 @@ std::vector<BgRules::Alias> AliasesOf(BgPlan const& plan, uint32 team)
 
 bool HearCall(Player* player, uint32 type, std::string const& msg)
 {
-    if (!sBgConfig.HumanCalls || !player || IsBot(player))
+    if (!sBgConfig.HumanCalls || !player)
+        return false;
+    // a bot is heard only in the test match (.bot bg test say, the /bg check of reactive #10)
+    if (IsBot(player) && !(sActivityMgr->GetBgTest().InstanceId && sActivityMgr->GetBgTest().InstanceId == player->GetBattlegroundId()))
         return false;
     if (type != CHAT_MSG_INSTANCE_CHAT && type != CHAT_MSG_INSTANCE_CHAT_LEADER)
         return false;
