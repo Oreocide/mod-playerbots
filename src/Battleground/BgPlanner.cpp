@@ -17,6 +17,8 @@
 
 #include "Battleground/BgPlanner.h"
 #include "Battleground/BgConfig.h"
+#include "Battleground/BgReact.h"
+#include "Battleground/BgTalk.h"
 #include "BotSession.h"
 #include "Engine/PerfMonitor.h"
 #include "PlayerbotAI.h"
@@ -47,6 +49,8 @@ constexpr uint32 DiscoverEveryMs = 5000;    // a missing objective is searched f
 constexpr uint32 RetargetEveryMs = 60000;   // attack targets are picked again at least this often
 constexpr uint32 NoPathMs = 60000;          // an objective without a mesh path is avoided by that bot this long
 constexpr uint32 EscortCount = 2;
+constexpr uint32 CarrierHealers = 2;        // #14: healers that stay with our carrier
+constexpr float CarrierHealRange = 100.0f;  // #14: only healers this close to it
 constexpr uint32 FlagRunnerCount = 2;
 constexpr uint32 AbandonMs = 120000;        // Valley: a push given up is not the team's target again for this long
 constexpr uint32 TwoTargetsFrom = 24;       // Valley: this many attackers split over two node targets (never over a boss)
@@ -63,7 +67,9 @@ char const* TeamName(TeamId team)
 
 bool Blocked(Assignment const& job, int8 objective, uint32 now)
 {
-    return job.NoPathObjective == objective && int32(job.NoPathUntilMs - now) > 0;
+    // no mesh path there for a while, or (#19) three deaths there
+    return (job.NoPathObjective == objective && int32(job.NoPathUntilMs - now) > 0)
+        || (job.AvoidObjective == objective && int32(job.AvoidUntilMs - now) > 0);
 }
 
 float DistTo(BgPlan const& plan, Player const* player, int8 objective)
@@ -93,6 +99,18 @@ uint32 SplitTeam(BgPlan& plan, TeamPlan const& teamPlan, std::vector<Player*> co
             seat.DefendCost = std::numeric_limits<float>::max();
             for (int8 target : teamPlan.DefendTargets)
                 seat.DefendCost = std::min(seat.DefendCost, DistTo(plan, bot, target));
+        }
+        // #12: a turtle is the first to defend and the last to go back; a brawler or road fighter the other way round
+        if (job.Style == BgRules::Archetype::Turtle)
+        {
+            seat.Key >>= 8;
+            seat.DefendCost = 0.0f;
+        }
+        else if (job.Style == BgRules::Archetype::Brawler || job.Style == BgRules::Archetype::RoadFighter)
+        {
+            seat.Key |= 0xFF00000000000000ull;
+            if (!teamPlan.DefendTargets.empty())
+                seat.DefendCost = std::numeric_limits<float>::max();
         }
         seats.push_back(seat);
     }
@@ -179,6 +197,44 @@ bool Pushing(BgRules::RallyState state)
 {
     return state == BgRules::RallyState::Gathering || state == BgRules::RallyState::Charging || state == BgRules::RallyState::Fighting
         || state == BgRules::RallyState::Regroup;
+}
+
+/// #9: a bot on the push says what the push does now ("galv next", "pulling galv", "galv down")
+void RallyCall(BgPlan& plan, uint32 team, std::vector<Player*> const& bots, int8 boss, BgRules::RallyState state, uint32 now)
+{
+    if (!sBgConfig.CallOuts)
+        return;
+    TeamPlan const& teamPlan = plan.Teams[team];
+    // a bot on the push (the puller when it is one), else any attacker: once the boss is dead the push has its next target
+    Player* speaker = nullptr;
+    Player* anyone = nullptr;
+    for (Player* bot : bots)
+    {
+        Assignment const& job = plan.Jobs[bot->GetGUID()];
+        if (!bot->IsAlive() || job.Base != Job::Attack)
+            continue;
+        if (!anyone)
+            anyone = bot;
+        if (job.Objective != boss)
+            continue;
+        speaker = bot;
+        if (bot->GetGUID() == teamPlan.Puller)
+            break;
+    }
+    if (!speaker)
+        speaker = anyone;
+    if (!speaker)
+        return;
+    std::string name = CallName(plan, boss);
+    switch (state)
+    {
+        case BgRules::RallyState::Gathering: Say(plan, team, speaker, name + " next, gather at the rally point", "gather:" + name, now); break;
+        case BgRules::RallyState::Charging: Say(plan, team, speaker, "pulling " + name, "pull:" + name, now); break;
+        case BgRules::RallyState::Regroup: Say(plan, team, speaker, "wipe, back to the rally point", "wipe:" + name, now); break;
+        case BgRules::RallyState::Done: Say(plan, team, speaker, name + " down", "down:" + name, now); break;
+        case BgRules::RallyState::Abandoned: Say(plan, team, speaker, "not enough people for " + name, "abandon:" + name, now); break;
+        default: break;
+    }
 }
 }
 
@@ -313,6 +369,12 @@ BgPlan const* Planner::Find(uint32 mapId, uint32 instanceId) const
     return it != _plans.end() ? &it->second : nullptr;
 }
 
+BgPlan* Planner::FindForEdit(uint32 mapId, uint32 instanceId)
+{
+    auto it = _plans.find({ mapId, instanceId });
+    return it != _plans.end() ? &it->second : nullptr;
+}
+
 void Planner::Reset()
 {
     _plans.clear();
@@ -341,6 +403,20 @@ void Planner::Update()
         Battleground* bg = bgMap ? bgMap->GetBG() : nullptr;
         if (!bg || !plan.Def || bg->GetStatus() == STATUS_WAIT_LEAVE || now - plan.LastTouchMs > DropAfterMs || !sBgConfig.Plans(plan.MapId))
         {
+            // #20: the result of the side a real player was on moves the streak (players on both sides, or none: no change)
+            if (bg && plan.Def && bg->GetStatus() == STATUS_WAIT_LEAVE && !plan.ResultSeen && plan.Teams[0].HadHuman != plan.Teams[1].HadHuman)
+            {
+                plan.ResultSeen = true;
+                PvPTeamId winner = bg->GetWinner();
+                if (winner == PVP_TEAM_ALLIANCE || winner == PVP_TEAM_HORDE)
+                {
+                    TeamId won = winner == PVP_TEAM_ALLIANCE ? TEAM_ALLIANCE : TEAM_HORDE;
+                    TeamId human = plan.Teams[TEAM_ALLIANCE].HadHuman ? TEAM_ALLIANCE : TEAM_HORDE;
+                    _streak = BgRules::NextStreak(_streak, won == human);
+                    TC_LOG_DEBUG("server.playerbots", "Playerbots: {} instance {} won by the {}; the side of the real player has a streak of {}",
+                        plan.Def->Name, plan.InstanceId, TeamName(won), _streak);
+                }
+            }
             TC_LOG_DEBUG("server.playerbots", "Playerbots: battleground planner closed map {} instance {} after {} plans", plan.MapId, plan.InstanceId, plan.Ticks);
             it = _plans.erase(it);
             continue;
@@ -429,6 +505,9 @@ void Planner::ReadState(BgPlan& plan, Map* map)
                     case CaptureState::ContestedHorde: objective.Owner = value->CapturePoint.LastTeamCapture; objective.Assaulting = TEAM_HORDE; break;
                     default: objective.Owner = TEAM_NEUTRAL; break;
                 }
+                // the retake timers (#2): the object counts the assault down itself
+                objective.AssaultTotalMs = go->GetGOInfo()->capturePoint.CaptureTime;
+                objective.AssaultLeftMs = objective.Assaulting != TEAM_NEUTRAL ? value->CapturePoint.AssaultTimer : 0;
                 break;
             }
             case MapKind::Eye:
@@ -504,6 +583,12 @@ void Planner::Plan(BgPlan& plan, Battleground* bg, Map* map, uint32 now)
             members[team].push_back(player);
     }
 
+    // the reactive behaviours read one picture of the match per plan (phase 4); with all of them off nothing is gathered
+    if (sBgConfig.Reacts())
+        BuildPicture(plan, map, now);
+    else
+        plan.Picture.clear();
+
     // what changed since the last plan: objectives, rosters, the lead; and the periodic retarget
     std::string reason;
     if (plan.LastOwners.size() != plan.Objectives.size() * 2)
@@ -512,7 +597,10 @@ void Planner::Plan(BgPlan& plan, Battleground* bg, Map* map, uint32 now)
     {
         Objective const& objective = plan.Objectives[i];
         if (plan.LastOwners[i * 2] != objective.Owner)
+        {
             reason = Trinity::StringFormat("{} {} by {}", objective.Name, objective.Destroyed ? "destroyed" : "taken", TeamName(objective.Owner));
+            plan.LastNodeChangeMs = now;
+        }
         else if (plan.LastOwners[i * 2 + 1] != objective.Assaulting && objective.Assaulting != TEAM_NEUTRAL)
             reason = Trinity::StringFormat("{} assaulted by {}", objective.Name, TeamName(objective.Assaulting));
         plan.LastOwners[i * 2] = objective.Owner;
@@ -564,6 +652,9 @@ void Planner::Plan(BgPlan& plan, Battleground* bg, Map* map, uint32 now)
         plan.LastEventMs = now;
     }
 
+    // #4/#15: the score outlook and each team's stance (Normal while both keys are off)
+    UpdateStances(plan, bg, map, now);
+
     for (uint32 team = 0; team < 2; ++team)
     {
         bool retarget = !reason.empty() || now - plan.Teams[team].LastRetargetMs >= RetargetEveryMs;
@@ -603,6 +694,7 @@ void Planner::PlanTeam(BgPlan& plan, Map* map, uint32 team, std::vector<Player*>
             ++teamPlan.Others;
     }
     teamPlan.Assignable = bots.size();
+    PrepareTeam(plan, team, members, bots, _streak);
 
     // what we defend: our flag room; on node maps the nodes we hold, the ones our assault is taking, and ours under assault
     teamPlan.DefendTargets.clear();
@@ -615,7 +707,15 @@ void Planner::PlanTeam(BgPlan& plan, Map* map, uint32 team, std::vector<Player*>
         if (defend)
             teamPlan.DefendTargets.push_back(int8(i));
     }
-    teamPlan.WantDefenders = teamPlan.DefendTargets.empty() ? 0 : std::min<uint32>(bots.size(), BgRules::ShareOf(bots.size(), teamPlan.DefendPct));
+    // the stance moves the share (#4: more at home when ahead, nearly nobody when behind late); turtling on a majority of the
+    // nodes, the attackers beyond the harass share defend too
+    teamPlan.WantDefenders = teamPlan.DefendTargets.empty() ? 0 : std::min<uint32>(bots.size(), BgRules::ShareOf(bots.size(), StanceDefendPct(teamPlan)));
+    if (!teamPlan.DefendTargets.empty())
+        teamPlan.WantDefenders = std::max<uint32>(teamPlan.WantDefenders, uint32(bots.size()) - TurtleCap(plan, team, uint32(bots.size())));
+    // #10: a player's "everyone to ..." takes the defenders along while it holds
+    CallOrder const* order = AttackOrder(plan, team, now);
+    if (order && order->Kind == BgRules::CallKind::Everyone)
+        teamPlan.WantDefenders = 0;
 
     auto distTo = [&](Player const* player, int8 objective) { return DistTo(plan, player, objective); };
 
@@ -669,7 +769,8 @@ void Planner::PlanTeam(BgPlan& plan, Map* map, uint32 team, std::vector<Player*>
         if (counted)
             centre.Relocate(x / counted, y / counted, 0.0f);
 
-        // ours under assault first, then the nearest to where the attackers are
+        // ours under assault first, then the nearest to where the attackers are; all in (#4), the one with the fewest enemies at it
+        bool allIn = teamPlan.Stance == BgRules::Stance::AllIn && !plan.Picture.empty();
         std::sort(candidates.begin(), candidates.end(), [&](int8 a, int8 b)
         {
             Objective const& oa = plan.Objectives[a];
@@ -677,6 +778,8 @@ void Planner::PlanTeam(BgPlan& plan, Map* map, uint32 team, std::vector<Player*>
             bool retakeA = oa.Owner == us && oa.Assaulting == them, retakeB = ob.Owner == us && ob.Assaulting == them;
             if (retakeA != retakeB)
                 return retakeA;
+            if (allIn && oa.Near[them] != ob.Near[them])
+                return oa.Near[them] < ob.Near[them];
             return centre.GetExactDist2d(oa.Pos) < centre.GetExactDist2d(ob.Pos);
         });
         uint32 wanted = kind == MapKind::Flag ? 1 : std::clamp<uint32>(uint32(attackers.size() + 5) / 6, 1, 2);
@@ -685,6 +788,12 @@ void Planner::PlanTeam(BgPlan& plan, Map* map, uint32 team, std::vector<Player*>
             ++changed;
         teamPlan.AttackTargets = std::move(picked);
         teamPlan.LastRetargetMs = now;
+    }
+    // #10: a player's "go farm" is the team's target while it holds, when it is one to attack
+    if (order && Contains(candidates, order->Objective) && (teamPlan.AttackTargets.size() != 1 || teamPlan.AttackTargets[0] != order->Objective))
+    {
+        teamPlan.AttackTargets = { order->Objective };
+        ++changed;
     }
 
     // Eye of the Storm: the free flag is worth two attackers while we hold a tower to bring it to
@@ -763,6 +872,26 @@ void Planner::PlanTeam(BgPlan& plan, Map* map, uint32 team, std::vector<Player*>
                 job.Now = Job::Escort;
                 job.Follow = carrierGuid;
             }
+
+            // #14: the healers nearest our carrier stay with it (Playerbots.Bg.CarrierPlay)
+            if (sBgConfig.CarrierPlay)
+            {
+                std::vector<Player*> healers;
+                for (Player* bot : bots)
+                {
+                    if (bot == carrier || !bot->IsAlive() || plan.Jobs[bot->GetGUID()].Now == Job::Escort || bot->GetExactDist2d(carrier) > CarrierHealRange)
+                        continue;
+                    if (PlayerbotAI* ai = sPlayerbotMgr->GetAI(bot); ai && ai->GetRole() == BotRole::Healer)
+                        healers.push_back(bot);
+                }
+                std::sort(healers.begin(), healers.end(), [carrier](Player* a, Player* b) { return a->GetExactDist2d(carrier) < b->GetExactDist2d(carrier); });
+                for (size_t i = 0; i < healers.size() && i < CarrierHealers; ++i)
+                {
+                    Assignment& job = plan.Jobs[healers[i]->GetGUID()];
+                    job.Now = Job::Escort;
+                    job.Follow = carrierGuid;
+                }
+            }
         }
 
         // the runners that already go for the free flag keep going; the nearest attackers fill up to FlagRunnerCount
@@ -787,11 +916,15 @@ void Planner::PlanTeam(BgPlan& plan, Map* map, uint32 team, std::vector<Player*>
         }
     }
 
-    if (changed)
+    // the reactive behaviours over the jobs above (phase 4, BgReact.cpp)
+    std::string reactReason;
+    uint32 reacted = ReactTeam(plan, team, bots, reactReason, now);
+
+    if (changed || reacted)
     {
-        teamPlan.LastReason = reason.empty() ? "hold time over" : reason;
+        teamPlan.LastReason = !changed ? reactReason : reason.empty() ? "hold time over" : reason;
         teamPlan.LastReasonMs = now;
-        teamPlan.LastChanged = changed;
+        teamPlan.LastChanged = changed + reacted;
         ++teamPlan.Reassigns;
     }
 }
@@ -825,6 +958,10 @@ void Planner::ReadValley(BgPlan& plan, Map* map, uint32 now)
         {
             BgRules::NodeRead read = BgRules::ReadNode(row.Kind == NodeKind::Burn, BgRules::TeamOfSide(row.Side), uint8(objective.Owner),
                 set(row.WsAllianceControl), set(row.WsAllianceAssault), set(row.WsHordeControl), set(row.WsHordeAssault));
+            // the retake timers (#2): an assault takes the node 4 minutes after it began, which no world state says, so it runs from
+            // the first plan that saw it (an assault already running when the plan was made looks younger than it is)
+            if (TeamId(read.Assaulting) != TEAM_NEUTRAL && TeamId(read.Assaulting) != objective.Assaulting)
+                objective.AssaultSinceMs = now;
             objective.Owner = TeamId(read.Owner);
             objective.Assaulting = TeamId(read.Assaulting);
             objective.Destroyed = read.Destroyed;
@@ -833,6 +970,15 @@ void Planner::ReadValley(BgPlan& plan, Map* map, uint32 now)
         {
             objective.Alive = !row.WsAlive || set(row.WsAlive);
             lookup |= objective.Alive && (objective.Boss.IsEmpty() || !map->GetCreature(objective.Boss));
+        }
+        else if (row.IsMine())
+        {
+            // #13: the owner from its control world states; its boss is the owner's (the mine's own while neutral)
+            objective.Owner = set(row.WsAllianceControl) ? TEAM_ALLIANCE : set(row.WsHordeControl) ? TEAM_HORDE : TEAM_NEUTRAL;
+            Creature* boss = objective.Boss.IsEmpty() ? nullptr : map->GetCreature(objective.Boss);
+            bool current = boss && boss->IsAlive() && boss->GetEntry() == MineBossEntry(row, uint8(objective.Owner));
+            objective.Alive = current;
+            lookup |= sBgConfig.Mines && !current;
         }
     }
 
@@ -845,9 +991,17 @@ void Planner::ReadValley(BgPlan& plan, Map* map, uint32 now)
         if (!creature || !creature->IsInWorld())
             continue;
         for (size_t i = 0; i < rows.size(); ++i)
+        {
             if (rows[i].IsBoss() && rows[i].CreatureEntry == creature->GetEntry()
                 && (plan.Objectives[i].Boss.IsEmpty() || !map->GetCreature(plan.Objectives[i].Boss)))
                 plan.Objectives[i].Boss = guid;
+            else if (rows[i].IsMine() && sBgConfig.Mines && creature->IsAlive()
+                && creature->GetEntry() == MineBossEntry(rows[i], uint8(plan.Objectives[i].Owner)))
+            {
+                plan.Objectives[i].Boss = guid;
+                plan.Objectives[i].Alive = true;
+            }
+        }
     }
 }
 
@@ -876,6 +1030,7 @@ void Planner::PlanValleyTeam(BgPlan& plan, Battleground* bg, Map* map, uint32 te
         }
     }
     teamPlan.Assignable = bots.size();
+    PrepareTeam(plan, team, members, bots, _streak);
 
     // what we defend: our graveyards and standing towers, and our own running assaults (they go back to the enemy after 4 minutes
     // unless held); ours under assault weigh triple: retaking it is the defenders' job, the attackers never turn back for it
@@ -894,10 +1049,13 @@ void Planner::PlanValleyTeam(BgPlan& plan, Battleground* bg, Map* map, uint32 te
         }
     }
 
-    // a gather started again at its timeout takes the defenders along (Bg.Rally.PullDefenders)
-    bool pulled = teamPlan.Rally.DefendersPulled && Pushing(teamPlan.Rally.State);
+    // a gather started again at its timeout takes the defenders along (Bg.Rally.PullDefenders); a certain win (#15) and a player's
+    // "everyone to ..." (#10) send everyone
+    CallOrder const* order = AttackOrder(plan, team, now);
+    bool pulled = (teamPlan.Rally.DefendersPulled && Pushing(teamPlan.Rally.State)) || teamPlan.Stance == BgRules::Stance::Finish
+        || (order && order->Kind == BgRules::CallKind::Everyone);
     teamPlan.WantDefenders = teamPlan.DefendTargets.empty() || pulled ? 0
-        : std::min<uint32>(bots.size(), BgRules::ShareOf(bots.size(), teamPlan.DefendPct));
+        : std::min<uint32>(bots.size(), BgRules::ShareOf(bots.size(), StanceDefendPct(teamPlan)));
     if (pulled)
         for (Player* bot : bots)
             if (Assignment& job = plan.Jobs[bot->GetGUID()]; job.Base == Job::Defend)
@@ -914,8 +1072,10 @@ void Planner::PlanValleyTeam(BgPlan& plan, Battleground* bg, Map* map, uint32 te
     // what we attack: the highest weight first, ties to the nearest. A boss needs its rally row, MinGroup players and its "requires"
     // done, unless the soft gate is open (match time, or the enemy score low)
     uint32 startScore = plan.Def->ScoreMaxWs ? uint32(std::max(0, map->GetWorldStateValue(int32(plan.Def->ScoreMaxWs)))) : 0;
+    // #4/#15: a team all in or about to win goes for the general without waiting for the towers
     bool softGate = (sBgConfig.SoftGateMinutes && bg->GetElapsedTime() >= sBgConfig.SoftGateMinutes * 60000u)
-        || (sBgConfig.SoftGateScorePct && startScore && TeamScore(plan, bg, map, them) * 100 <= startScore * sBgConfig.SoftGateScorePct);
+        || (sBgConfig.SoftGateScorePct && startScore && TeamScore(plan, bg, map, them) * 100 <= startScore * sBgConfig.SoftGateScorePct)
+        || teamPlan.Stance == BgRules::Stance::AllIn || teamPlan.Stance == BgRules::Stance::Finish;
     uint32 force = uint32(attackers.size()) + humans;
     std::vector<int8> candidates;
     for (size_t i = 0; i < rows.size(); ++i)
@@ -941,7 +1101,8 @@ void Planner::PlanValleyTeam(BgPlan& plan, Battleground* bg, Map* map, uint32 te
                 uint32 done = 0;
                 for (std::string const& key : row.Requires.Keys)
                     done += DoneBy(plan, key, us) ? 1 : 0;
-                attack = softGate || BgRules::RequirementMet(row.Requires, done);
+                // a player who calls the boss leads: the towers need not be down first (#10)
+                attack = softGate || BgRules::RequirementMet(row.Requires, done) || (order && order->Objective == int8(i));
                 break;
             }
             default:
@@ -998,6 +1159,13 @@ void Planner::PlanValleyTeam(BgPlan& plan, Battleground* bg, Map* map, uint32 te
         teamPlan.AttackTargets = std::move(picked);
         teamPlan.LastRetargetMs = now;
     }
+    // #10: a player's "go ..." or "everyone to ..." is the team's target while it holds (a push that charged keeps its boss)
+    if (!locked && order && Contains(candidates, order->Objective)
+        && (teamPlan.AttackTargets.size() != 1 || teamPlan.AttackTargets[0] != order->Objective))
+    {
+        teamPlan.AttackTargets = { order->Objective };
+        ++changed;
+    }
 
     for (Player* bot : attackers)
     {
@@ -1039,11 +1207,15 @@ void Planner::PlanValleyTeam(BgPlan& plan, Battleground* bg, Map* map, uint32 te
     std::string rallyEvent;
     StepRally(plan, map, team, members, bots, changed, rallyEvent, now);
 
-    if (changed)
+    // the reactive behaviours over the jobs above and the push (phase 4, BgReact.cpp)
+    std::string reactReason;
+    uint32 reacted = ReactTeam(plan, team, bots, reactReason, now);
+
+    if (changed || reacted)
     {
-        teamPlan.LastReason = !rallyEvent.empty() ? rallyEvent : reason.empty() ? "hold time over" : reason;
+        teamPlan.LastReason = !rallyEvent.empty() ? rallyEvent : !changed ? reactReason : reason.empty() ? "hold time over" : reason;
         teamPlan.LastReasonMs = now;
-        teamPlan.LastChanged = changed;
+        teamPlan.LastChanged = changed + reacted;
         ++teamPlan.Reassigns;
     }
 }
@@ -1059,6 +1231,10 @@ void Planner::StepRally(BgPlan& plan, Map* map, uint32 team, std::vector<Player*
 
     if (boss != teamPlan.RallyObjective)
     {
+        // the boss of the last push died (its target moved on before the rally saw Done)
+        if (teamPlan.RallyObjective != NoObjective && size_t(teamPlan.RallyObjective) < plan.Objectives.size()
+            && !plan.Objectives[teamPlan.RallyObjective].Alive && teamPlan.Rally.State != BgRules::RallyState::Done)
+            RallyCall(plan, team, bots, teamPlan.RallyObjective, BgRules::RallyState::Done, now);
         teamPlan.RallyObjective = boss;
         teamPlan.Puller.Clear();
         teamPlan.RallyOnPush = 0;
@@ -1070,6 +1246,7 @@ void Planner::StepRally(BgPlan& plan, Map* map, uint32 team, std::vector<Player*
         }
         BgRules::RallyStart(teamPlan.Rally, now);
         rallyEvent = Trinity::StringFormat("{}: gathering", plan.Objectives[boss].Name);
+        RallyCall(plan, team, bots, boss, BgRules::RallyState::Gathering, now);
     }
     if (boss == NoObjective)
         return;
@@ -1165,6 +1342,8 @@ void Planner::StepRally(BgPlan& plan, Map* map, uint32 team, std::vector<Player*
             restarted ? (teamPlan.Rally.DefendersPulled ? " again, defenders called in" : " again") : "");
         if (state == BgRules::RallyState::Abandoned)
             objective.BlockedUntilMs[team] = now + AbandonMs;
+        if (state != before)
+            RallyCall(plan, team, bots, boss, state, now);
         TC_LOG_DEBUG("server.playerbots", "Playerbots: {} instance {} {}: {} (present {}, on the push {}, need {})", plan.Def->Name, plan.InstanceId,
             TeamName(TeamId(team)), rallyEvent, view.Present, view.OnPush, teamPlan.Rally.Need);
     }

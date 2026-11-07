@@ -1734,9 +1734,14 @@ void RegisterGenericAi()
     AddTriggerStrategy(r, "wander", { { "idle alone", { { "wander", Priority::Idle } }, StrategyStates::NonCombat } });
     AddTriggerStrategy(r, "travel", { { "traveling", { { "travel", Priority::Travel } }, StrategyStates::NonCombat } });
     AddTriggerStrategy(r, "buff", { { "needs buff", { { "buff", Priority::Buff } }, StrategyStates::NonCombat } });
-    // "bg leash": a bot on an Alterac Valley boss push never chases past the boss's leash (above the attack action, in combat only)
+    // "bg leash": a bot on an Alterac Valley boss push never chases past the boss's leash (above the attack action, in combat only);
+    // the battleground planner's carrier runs home, an outnumbered bot falls back, focus fire picks the target (each behind its
+    // Playerbots.Bg.* key, Battleground/BgPlay.cpp)
     AddTriggerStrategy(r, "pvp", { { "pvp zone", { { "pvp", Priority::Pvp } } },
-        { "bg leash", { { "bg leash", Priority::Attack + 3.0f } }, StrategyStates::Combat } });
+        { "bg leash", { { "bg leash", Priority::Attack + 3.0f } }, StrategyStates::Combat },
+        { "bg carrier", { { "bg carrier", Priority::Attack + 5.0f } }, StrategyStates::Combat },
+        { "bg fall back", { { "bg fall back", Priority::Attack + 4.0f } }, StrategyStates::Combat },
+        { "bg focus", { { "bg focus", Priority::Attack + 2.0f } }, StrategyStates::Combat } });
     AddTriggerStrategy(r, "world", { { "world react", { { "world react", Priority::World } }, StrategyStates::NonCombat } });
     r.AddStrategy("rpg", [](std::string const&) { return CreateRpgStrategy(); });
     r.AddStrategy("quest", [](std::string const&) { return CreateQuestStrategy(); });

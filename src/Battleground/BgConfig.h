@@ -51,7 +51,32 @@ struct Config
     uint32 SoftGateMinutes = 20;                            // a boss's "requires" stops counting this far into the match
     uint32 SoftGateScorePct = 40;                           // or once the enemy score is down to this share of its start
 
+    // the reactive behaviours (phase 4, BG_PLAN.md §4), each off by default
+    bool ThreatResponse = false;                            // #1 a node of ours under attack pulls the nearest defenders and 2 attackers
+    bool RetakeTimers = false;                              // #2 ours under assault is clicked back before its capture time runs out
+    bool FallBack = false;                                  // #8 outnumbered 3 to 1: back to friends, and a call for help
+    bool ScoreClock = false;                                // #4 turtle when ahead, all in when behind late
+    bool Endgame = false;                                   // #15 a certain result: the losers brawl, Alterac Valley winners push the general
+    bool FocusFire = false;                                 // #7 carriers, healers, low health, marks, a player's target
+    bool CarrierPlay = false;                               // #14 peel for our carrier, healers on it, it kites in our flag room
+    bool CallOuts = false;                                  // #9 short /bg lines while a player is on the team
+    bool HumanCalls = false;                                // #10 a player's /bg calls send the nearest bots
+    bool Mines = false;                                     // #13 spare bots take an Alterac Valley mine while the front stalls
+    bool Archetypes = false;                                // #12 a play style per bot and match
+    bool TeamSkill = false;                                 // #20 a skill per team and match, moved against the player's streak
+    uint32 TeamSkillMin = 60;
+    uint32 TeamSkillMax = 100;
+    uint32 TeamSkillStreakStep = 10;
+    bool NinjaCaps = false;                                 // #17 a stealth class sneaks to an empty enemy node
+    bool LaneChange = false;                                // #19 three deaths at one spot: another objective for a while
+
     void Load();
+    /// Any reactive behaviour is on: the planner builds its picture of the match every plan
+    bool Reacts() const
+    {
+        return ThreatResponse || RetakeTimers || FallBack || ScoreClock || Endgame || FocusFire || CarrierPlay || CallOuts || HumanCalls
+            || Mines || Archetypes || TeamSkill || NinjaCaps || LaneChange;
+    }
     /// Planner on, Playerbots.Bg.Objectives on, and the map in the list
     bool Plans(uint32 mapId) const;
 };

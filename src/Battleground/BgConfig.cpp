@@ -66,6 +66,30 @@ void Config::Load()
     SoftGateMinutes = sConfigMgr->GetIntDefault("Playerbots.Bg.SoftGateMinutes", 20);
     SoftGateScorePct = std::min<uint32>(100, sConfigMgr->GetIntDefault("Playerbots.Bg.SoftGateScorePct", 40));
 
+    ThreatResponse = sConfigMgr->GetBoolDefault("Playerbots.Bg.ThreatResponse", false);
+    RetakeTimers = sConfigMgr->GetBoolDefault("Playerbots.Bg.RetakeTimers", false);
+    FallBack = sConfigMgr->GetBoolDefault("Playerbots.Bg.FallBack", false);
+    ScoreClock = sConfigMgr->GetBoolDefault("Playerbots.Bg.ScoreClock", false);
+    Endgame = sConfigMgr->GetBoolDefault("Playerbots.Bg.Endgame", false);
+    FocusFire = sConfigMgr->GetBoolDefault("Playerbots.Bg.FocusFire", false);
+    CarrierPlay = sConfigMgr->GetBoolDefault("Playerbots.Bg.CarrierPlay", false);
+    CallOuts = sConfigMgr->GetBoolDefault("Playerbots.Bg.CallOuts", false);
+    HumanCalls = sConfigMgr->GetBoolDefault("Playerbots.Bg.HumanCalls", false);
+    Mines = sConfigMgr->GetBoolDefault("Playerbots.Bg.Mines", false);
+    Archetypes = sConfigMgr->GetBoolDefault("Playerbots.Bg.Archetypes", false);
+    TeamSkill = sConfigMgr->GetBoolDefault("Playerbots.Bg.TeamSkill", false);
+    TeamSkillMin = std::min<uint32>(100, sConfigMgr->GetIntDefault("Playerbots.Bg.TeamSkillMin", 60));
+    TeamSkillMax = std::min<uint32>(100, sConfigMgr->GetIntDefault("Playerbots.Bg.TeamSkillMax", 100));
+    if (TeamSkillMin > TeamSkillMax)
+    {
+        TC_LOG_ERROR("server.playerbots", "Playerbots: Playerbots.Bg.TeamSkillMin ({}) is above Playerbots.Bg.TeamSkillMax ({}), swapped",
+            TeamSkillMin, TeamSkillMax);
+        std::swap(TeamSkillMin, TeamSkillMax);
+    }
+    TeamSkillStreakStep = std::min<uint32>(50, sConfigMgr->GetIntDefault("Playerbots.Bg.TeamSkillStreakStep", 10));
+    NinjaCaps = sConfigMgr->GetBoolDefault("Playerbots.Bg.NinjaCaps", false);
+    LaneChange = sConfigMgr->GetBoolDefault("Playerbots.Bg.LaneChange", false);
+
     if (Planner && !sPlayerbotsConfig.BgObjectives)
         TC_LOG_WARN("server.playerbots", "Playerbots: Playerbots.Bg.Planner = 1 does nothing while Playerbots.Bg.Objectives = 0");
 }

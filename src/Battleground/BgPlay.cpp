@@ -35,6 +35,7 @@
 #include "ObjectMgr.h"
 #include "Player.h"
 #include "Spell.h"
+#include "SpellHistory.h"
 #include "SpellInfo.h"
 #include "SpellMgr.h"
 #include "StringFormat.h"
@@ -55,7 +56,13 @@ constexpr float RallyGuard = 20.0f;         // Valley: a gathering push fights o
 constexpr float WalkInFrom = 45.0f;         // Valley: farther from the boss than this, a bot on the push walks in first (IsValidEnemy: 60 yd)
 constexpr float HealerStandOff = 25.0f;     // Valley: healers on a push stay this far from the boss's target
 constexpr float LeashReach = 40.0f;         // Valley: the leash rule holds bots this far outside the leash circle; farther out they fight
-
+constexpr float BrawlerRange = 50.0f;       // #12: a brawler fights enemies this close to it on the way
+constexpr float RoadFighterRange = 55.0f;   // #12: a road fighter a little farther (PlayerbotAI::IsValidEnemy: 60 yd)
+constexpr float StickyGroupRadius = 20.0f;  // #12: a sticky healer counts allies this close together as a group
+constexpr float NinjaSneakFrom = 60.0f;     // #17: the ninja stealths this far from its node and walks the rest
+constexpr uint32 NinjaStealth = 1784;       // #17: rogue Stealth
+constexpr uint32 NinjaProwl = 5215;         // #17: druid Prowl, in Cat Form
+constexpr uint32 NinjaCatForm = 768;
 bool IsOpening(Unit const* unit)
 {
     Spell const* spell = unit->GetCurrentSpell(CURRENT_GENERIC_SPELL);
@@ -233,6 +240,10 @@ Player* PlayerOf(Map* map, ObjectGuid const& guid)
     return guid.IsEmpty() ? nullptr : ObjectAccessor::GetPlayer(map, guid);
 }
 
+// #14, further down: where our carrier goes, and a kite spot without a mesh path
+bool CarrierGoal(Player* bot, BgPlan const& plan, Position& out, float& arrive, int& kite);
+void MarkBadSpot(Player* bot, int index);
+
 /// Healers walk with the team: the carrier of their team, else the nearest teammate on the same objective, else the objective
 bool PlayHealer(Player* bot, BgPlan const& plan, Assignment const& job, Position const& objective)
 {
@@ -258,6 +269,29 @@ bool PlayHealer(Player* bot, BgPlan const& plan, Assignment const& job, Position
             }
         }
     }
+    // #12: a sticky healer stays with our carrier, else with the biggest group of the team
+    if (job.Style == BgRules::Archetype::StickyHealer && job.Follow.IsEmpty() && !plan.Picture.empty())
+    {
+        TeamId team = TeamOf(bot);
+        ObjectGuid best;
+        uint32 most = 0;
+        for (Seen const& seen : plan.Picture)
+        {
+            if (!seen.Alive || seen.Team != team || seen.Guid == bot->GetGUID())
+                continue;
+            uint32 around = seen.Carrier ? 1000 : 0;
+            for (Seen const& other : plan.Picture)
+                if (other.Alive && other.Team == team && other.Guid != seen.Guid && other.Pos.GetExactDist2d(seen.Pos) <= StickyGroupRadius)
+                    ++around;
+            if (around > most)
+            {
+                most = around;
+                best = seen.Guid;
+            }
+        }
+        if (Player* group = PlayerOf(map, best))
+            follow = group;
+    }
     if (follow)
         return Go(bot, follow->GetPosition(), 10.0f, NoObjective);
     return Go(bot, objective, 12.0f, job.Objective);
@@ -281,9 +315,15 @@ bool PlayFlagMap(Player* bot, PlayerbotAI& ai, BgPlan const& plan, Assignment co
 
     if (job.Now == Job::Carrier)
     {
-        // home to our flag; the capture counts once our own flag is back in its base, so the carrier waits there
+        // home to our flag; the capture counts once our own flag is back in its base, so the carrier waits there (with
+        // Playerbots.Bg.CarrierPlay it kites in the room while our flag is out)
         ai.ClearForcedTarget();
-        Go(bot, ourBase, 3.0f, int8(us));
+        Position goal = ourBase;
+        float arrive = 3.0f;
+        int kite = -1;
+        CarrierGoal(bot, plan, goal, arrive, kite);
+        if (!Go(bot, goal, arrive, kite < 0 ? int8(us) : NoObjective))
+            MarkBadSpot(bot, kite);
         return true;
     }
 
@@ -594,7 +634,8 @@ bool PlayValley(Player* bot, PlayerbotAI& ai, BgPlan const& plan, Assignment con
     // something to click: theirs or neutral that none of ours is taking (an assault), ours that they are taking (a defence)
     bool clickable = !objective.Destroyed
         && ((objective.Owner != us && objective.Assaulting != us) || (objective.Owner == us && objective.Assaulting == them));
-    if (!healer && clickable && bot->GetExactDist2d(pos) < CapRange)
+    // a road fighter (#12) fights at the node and leaves the banner to the others
+    if (!healer && clickable && job.Style != BgRules::Archetype::RoadFighter && bot->GetExactDist2d(pos) < CapRange)
     {
         // fight first: the 8 s "Opening" breaks on any hit
         if (EnemyNear(bot, pos, EnemyNearCap) && Engage(bot, ai, pos, EnemyNearCap))
@@ -726,12 +767,441 @@ public:
         return true;
     }
 };
+
+/// The planner's job of a bot in combat on a planned map (none outside one, or for a bot with an owner)
+Assignment const* CombatJob(PlayerbotAI& ai)
+{
+    Player* bot = ai.GetBot();
+    if (!bot->IsAlive() || !bot->IsInCombat() || ai.GetMaster() || !Plays(bot))
+        return nullptr;
+    BgPlan const* plan = sBgPlanner.Find(bot->GetMapId(), bot->GetInstanceId());
+    if (!plan)
+        return nullptr;
+    auto it = plan->Jobs.find(bot->GetGUID());
+    return it != plan->Jobs.end() ? &it->second : nullptr;
+}
+
+/// #8 in combat: an outnumbered bot runs to friends instead of fighting on (the planner picked the place and the time)
+bool FallBackTrigger(PlayerbotAI& ai)
+{
+    if (!sBgConfig.FallBack)
+        return false;
+    Assignment const* job = CombatJob(ai);
+    return job && job->Over == BgRules::Overlay::FallBack && int32(job->FallBackUntilMs - GameTime::GetGameTimeMS()) > 0
+        && ai.GetBot()->GetExactDist2d(job->FallBackTo) > 6.0f;
+}
+
+class FallBackAction : public Action
+{
+public:
+    char const* GetName() const override { return "bg fall back"; }
+
+    bool Execute(PlayerbotAI& ai) override
+    {
+        Assignment const* job = CombatJob(ai);
+        if (!job || job->Over != BgRules::Overlay::FallBack)
+            return false;
+        Player* bot = ai.GetBot();
+        Position to = job->FallBackTo;
+        ai.ClearForcedTarget();
+        bot->AttackStop();
+        return Go(bot, to, 5.0f, NoObjective);
+    }
+};
+
+// ---- #7 focus fire and #14 peel: in combat, a better target than the one the bot has ----
+
+constexpr float FocusRange = 40.0f;
+constexpr float CarrierNearRange = 20.0f;
+constexpr float HealerReachMelee = 15.0f;
+constexpr float HealerReachRanged = 30.0f;
+constexpr float FinishRange = 30.0f;
+constexpr float FinishHealthPct = 35.0f;
+constexpr float AssistRange = 30.0f;
+constexpr uint32 FocusSwitchMs = 4000;      // a bot changes its focus target no more often than this
+
+/// What focus fire decided for one bot: the unit it set as the forced target, and the decision of the last check
+struct FocusState
+{
+    ObjectGuid Target;          // the forced target focus set (and may clear again)
+    uint32 SwitchMs = 0;
+    ObjectGuid Pending;         // the check found a better unit
+    bool ClearPending = false;  // the check found that Target is gone or out of reach
+    uint32 CheckedMs = 0;
+};
+
+std::unordered_map<ObjectGuid, FocusState>& FocusStates()
+{
+    static std::unordered_map<ObjectGuid, FocusState> states;   // world thread only (battleground bots tick there)
+    if (states.size() > 4096)
+        states.clear();
+    return states;
+}
+
+/// The units the focus rules see for one bot: the carriers, the marks, our real players' targets
+struct FocusView
+{
+    TeamId Us = TEAM_NEUTRAL;
+    Player* OurCarrier = nullptr;           // ours carries their flag (Eye: the flag)
+    ObjectGuid TheirCarrier;                // theirs carries our flag (Eye: the flag)
+    ObjectGuid Marks[2];
+    std::vector<ObjectGuid> Assist;         // what the real players of the team near the bot fight
+    float HealerReach = HealerReachRanged;
+    bool Focus = false;                     // Playerbots.Bg.FocusFire
+    bool Peel = false;                      // Playerbots.Bg.CarrierPlay
+};
+
+FocusView FocusViewOf(Player* bot, PlayerbotAI& ai, BgPlan const& plan)
+{
+    FocusView view;
+    view.Us = TeamOf(bot);
+    view.Focus = sBgConfig.FocusFire;
+    view.Peel = sBgConfig.CarrierPlay;
+    BotRole role = ai.GetRole();
+    view.HealerReach = role == BotRole::Tank || role == BotRole::MeleeDps ? HealerReachMelee : HealerReachRanged;
+    Map* map = bot->GetMap();
+    TeamId them = view.Us == TEAM_ALLIANCE ? TEAM_HORDE : TEAM_ALLIANCE;
+    if (plan.Def->Kind == MapKind::Flag)
+    {
+        view.OurCarrier = PlayerOf(map, plan.Flags[them].Carrier);
+        view.TheirCarrier = plan.Flags[view.Us].Carrier;
+    }
+    else if (plan.Def->Kind == MapKind::Eye && !plan.Flags[0].Carrier.IsEmpty())
+    {
+        Player* carrier = PlayerOf(map, plan.Flags[0].Carrier);
+        if (carrier && TeamOf(carrier) == view.Us)
+            view.OurCarrier = carrier;
+        else if (carrier)
+            view.TheirCarrier = carrier->GetGUID();
+    }
+    if (view.OurCarrier && !view.OurCarrier->IsAlive())
+        view.OurCarrier = nullptr;
+    if (view.Us == TEAM_ALLIANCE || view.Us == TEAM_HORDE)
+    {
+        view.Marks[0] = plan.Teams[view.Us].Marks[0];
+        view.Marks[1] = plan.Teams[view.Us].Marks[1];
+    }
+    for (Seen const& seen : plan.Picture)
+        if (!seen.Bot && seen.Alive && seen.Team == view.Us && bot->GetExactDist2d(seen.Pos) <= AssistRange)
+            if (Player* human = PlayerOf(map, seen.Guid))
+            {
+                if (Unit* victim = human->GetVictim())
+                    view.Assist.push_back(victim->GetGUID());
+                if (human->IsInCombat() && !human->GetTarget().IsEmpty())
+                    view.Assist.push_back(human->GetTarget());
+            }
+    return view;
+}
+
+/// Why this unit is worth a switch for this bot (BgRules::Focus, None when it is not)
+BgRules::Focus FocusOf(Player* bot, FocusView const& view, Unit* unit, bool healer)
+{
+    using BgRules::Focus;
+    if (!unit || !unit->IsAlive() || !bot->IsValidAttackTarget(unit) || !bot->CanSeeOrDetect(unit))
+        return Focus::None;
+    float dist = bot->GetExactDist(unit);
+    if (dist > FocusRange)
+        return Focus::None;
+    if (view.Focus && unit->GetGUID() == view.TheirCarrier)
+        return dist <= CarrierNearRange ? Focus::CarrierNear : Focus::CarrierFar;
+    if (view.Peel && view.OurCarrier && (unit->GetVictim() == view.OurCarrier || unit->GetTarget() == view.OurCarrier->GetGUID()))
+        return Focus::Peel;
+    if (!view.Focus)
+        return Focus::None;
+    if (unit->GetGUID() == view.Marks[0] || unit->GetGUID() == view.Marks[1])
+        return Focus::Marked;
+    if (healer && dist <= view.HealerReach)
+        return Focus::Healer;
+    if (dist <= FinishRange && unit->GetHealthPct() < FinishHealthPct)
+        for (Unit* attacker : unit->getAttackers())
+            if (attacker != bot && attacker->GetTypeId() == TYPEID_PLAYER && TeamOf(attacker->ToPlayer()) == view.Us)
+                return Focus::Finish;
+    if (std::find(view.Assist.begin(), view.Assist.end(), unit->GetGUID()) != view.Assist.end())
+        return Focus::Assist;
+    return Focus::None;
+}
+
+/// One check for one bot in combat: a better target to switch to, or the forced target focus set has gone. Fills the state
+bool CheckFocus(PlayerbotAI& ai, FocusState& state)
+{
+    Player* bot = ai.GetBot();
+    uint32 now = GameTime::GetGameTimeMS();
+    state.Pending.Clear();
+    state.ClearPending = false;
+    state.CheckedMs = now;
+    if ((!sBgConfig.FocusFire && !sBgConfig.CarrierPlay) || ai.GetRole() == BotRole::Healer)
+        return false;
+    Assignment const* job = CombatJob(ai);
+    // a push fights its boss, a carrier runs, a bot falling back runs: none of them is focus fire's to turn
+    if (!job || job->Over == BgRules::Overlay::Push || job->Over == BgRules::Overlay::Carrier || job->Over == BgRules::Overlay::FallBack)
+        return false;
+    BgPlan const* plan = sBgPlanner.Find(bot->GetMapId(), bot->GetInstanceId());
+    if (!plan || !plan->Def)
+        return false;
+
+    FocusView view = FocusViewOf(bot, ai, *plan);
+    Map* map = bot->GetMap();
+    auto healerOf = [plan](ObjectGuid const& guid)
+    {
+        for (Seen const& seen : plan->Picture)
+            if (seen.Guid == guid)
+                return seen.Healer;
+        return false;
+    };
+
+    Unit* victim = bot->GetVictim();
+    BgRules::Focus current = victim ? FocusOf(bot, view, victim, victim->GetTypeId() == TYPEID_PLAYER && healerOf(victim->GetGUID()))
+        : BgRules::Focus::None;
+    Unit* best = nullptr;
+    BgRules::Focus bestFocus = BgRules::Focus::None;
+    float bestDist = 0.0f;
+    TeamId them = view.Us == TEAM_ALLIANCE ? TEAM_HORDE : TEAM_ALLIANCE;
+    for (Seen const& seen : plan->Picture)
+    {
+        if (!seen.Alive || seen.Team != them || bot->GetExactDist2d(seen.Pos) > FocusRange + 10.0f)
+            continue;
+        Player* enemy = PlayerOf(map, seen.Guid);
+        BgRules::Focus focus = FocusOf(bot, view, enemy, seen.Healer);
+        if (focus == BgRules::Focus::None)
+            continue;
+        float dist = bot->GetExactDist(enemy);
+        if (focus > bestFocus || (focus == bestFocus && dist < bestDist))
+        {
+            best = enemy;
+            bestFocus = focus;
+            bestDist = dist;
+        }
+    }
+    // #20: a team plays as well as its skill: this bot takes this switch or it does not (one roll per target)
+    bool willing = true;
+    if (best && sBgConfig.TeamSkill && (view.Us == TEAM_ALLIANCE || view.Us == TEAM_HORDE))
+        willing = BgRules::EventRoll(plan->Teams[view.Us].Seed, bot->GetGUID().GetCounter(), best->GetGUID().GetCounter(), plan->Teams[view.Us].Skill);
+    if (best && willing && best != victim && BgRules::ShouldSwitch(current, bestFocus, now - state.SwitchMs, FocusSwitchMs))
+    {
+        state.Pending = best->GetGUID();
+        return true;
+    }
+
+    // the unit focus set is dead, gone or out of reach: drop it, so the bot does not run after it
+    if (!state.Target.IsEmpty())
+    {
+        Unit* target = ObjectAccessor::GetUnit(*bot, state.Target);
+        if (!target || !target->IsAlive() || bot->GetExactDist(target) > FocusRange + 5.0f)
+        {
+            state.ClearPending = true;
+            return true;
+        }
+    }
+    return false;
+}
+
+bool FocusTrigger(PlayerbotAI& ai)
+{
+    Player* bot = ai.GetBot();
+    if ((!sBgConfig.FocusFire && !sBgConfig.CarrierPlay) || !bot->IsInCombat() || !Plays(bot))
+        return false;
+    return CheckFocus(ai, FocusStates()[bot->GetGUID()]);
+}
+
+class FocusAction : public Action
+{
+public:
+    char const* GetName() const override { return "bg focus"; }
+
+    bool Execute(PlayerbotAI& ai) override
+    {
+        Player* bot = ai.GetBot();
+        FocusState& state = FocusStates()[bot->GetGUID()];
+        uint32 now = GameTime::GetGameTimeMS();
+        if (now - state.CheckedMs > 1000 && !CheckFocus(ai, state))
+            return false;
+        if (!state.Pending.IsEmpty())
+        {
+            // the attack action takes the forced target first (Playerbots.Combat.RoleTargeting = 1)
+            ai.SetForcedTarget(state.Pending);
+            state.Target = state.Pending;
+            state.SwitchMs = now;
+            state.Pending.Clear();
+            return true;
+        }
+        if (state.ClearPending)
+        {
+            ai.ClearForcedTarget();
+            state.Target.Clear();
+            state.ClearPending = false;
+            return true;
+        }
+        return false;
+    }
+};
+
+// ---- #14 carrier play: our carrier runs home in combat too, and kites in our flag room while it cannot capture ----
+
+constexpr float KiteRadius = 10.0f;         // the kite spots: a ring this far around our flag
+constexpr uint32 KiteSpots = 8;
+constexpr uint32 KiteRepickMs = 5000;
+constexpr float KiteDanger = 10.0f;         // an enemy this close picks a new spot at once
+constexpr float KiteFrom = 40.0f;           // a carrier this close to our flag kites instead of standing on it
+constexpr uint32 BadSpotMs = 60000;
+
+struct KiteState
+{
+    int Spot = -1;
+    uint32 PickedMs = 0;
+    uint32 Bad = 0;                         // spots without a mesh path (bit per spot)
+    uint32 BadUntilMs = 0;
+};
+
+std::unordered_map<ObjectGuid, KiteState>& KiteStates()
+{
+    static std::unordered_map<ObjectGuid, KiteState> states;    // world thread only
+    if (states.size() > 1024)
+        states.clear();
+    return states;
+}
+
+/// A spot in our flag room away from the enemies there (BgRules::PickKiteSpot over a ring around the flag)
+Position KiteSpot(Player* bot, BgPlan const& plan, Position const& base, int& index)
+{
+    KiteState& state = KiteStates()[bot->GetGUID()];
+    uint32 now = GameTime::GetGameTimeMS();
+    if (state.Bad && int32(state.BadUntilMs - now) <= 0)
+        state.Bad = 0;
+    std::vector<BgRules::Point2> ring = BgRules::RingPoints({ base.GetPositionX(), base.GetPositionY() }, KiteRadius, KiteSpots, 0.0f);
+    TeamId us = TeamOf(bot);
+    bool danger = false;
+    std::vector<BgRules::Point2> enemies;
+    for (Seen const& seen : plan.Picture)
+        if (seen.Alive && seen.Team != us && seen.Pos.GetExactDist2d(base) <= KiteFrom)
+        {
+            enemies.push_back({ seen.Pos.GetPositionX(), seen.Pos.GetPositionY() });
+            danger |= bot->GetExactDist2d(seen.Pos) <= KiteDanger;
+        }
+    if (state.Spot < 0 || now - state.PickedMs >= KiteRepickMs || danger || (state.Bad & (1u << state.Spot)))
+    {
+        std::vector<BgRules::Point2> open;
+        std::vector<int> map;
+        for (uint32 i = 0; i < ring.size(); ++i)
+            if (!(state.Bad & (1u << i)))
+            {
+                open.push_back(ring[i]);
+                map.push_back(int(i));
+            }
+        int pick = BgRules::PickKiteSpot(open, enemies);
+        state.Spot = pick >= 0 ? map[pick] : -1;
+        state.PickedMs = now;
+    }
+    index = state.Spot;
+    if (state.Spot < 0)
+        return base;
+    return Position(ring[state.Spot].X, ring[state.Spot].Y, base.GetPositionZ());
+}
+
+void MarkBadSpot(Player* bot, int index)
+{
+    if (index < 0)
+        return;
+    KiteState& state = KiteStates()[bot->GetGUID()];
+    state.Bad |= 1u << index;
+    state.BadUntilMs = GameTime::GetGameTimeMS() + BadSpotMs;
+}
+
+/// Where our carrier goes now: our flag to capture (flag maps), a kite spot while our flag is out, the nearest tower we hold
+/// (Eye). False when there is nowhere to go
+bool CarrierGoal(Player* bot, BgPlan const& plan, Position& out, float& arrive, int& kite)
+{
+    kite = -1;
+    TeamId us = TeamOf(bot);
+    if (plan.Def->Kind == MapKind::Flag)
+    {
+        Position base;
+        if (!ObjectivePosition(plan, int8(us), base))
+            return false;
+        FlagInfo const& ourFlag = plan.Flags[us];
+        if (sBgConfig.CarrierPlay && ourFlag.State != uint8(FlagState::InBase) && bot->GetExactDist2d(base) < KiteFrom)
+        {
+            out = KiteSpot(bot, plan, base, kite);
+            arrive = 1.5f;
+            return true;
+        }
+        out = base;
+        arrive = 3.0f;
+        return true;
+    }
+    if (plan.Def->Kind == MapKind::Eye)
+    {
+        int8 best = NoObjective;
+        float bestDist = 0.0f;
+        for (size_t i = 0; i < plan.Objectives.size(); ++i)
+        {
+            Objective const& tower = plan.Objectives[i];
+            if (!tower.Known || tower.Owner != us)
+                continue;
+            float dist = bot->GetExactDist2d(tower.Pos);
+            if (best == NoObjective || dist < bestDist)
+            {
+                best = int8(i);
+                bestDist = dist;
+            }
+        }
+        if (best == NoObjective)
+            return false;
+        out = plan.Objectives[best].Pos;
+        arrive = 3.0f;
+        return true;
+    }
+    return false;
+}
+
+bool CarrierTrigger(PlayerbotAI& ai)
+{
+    if (!sBgConfig.CarrierPlay)
+        return false;
+    Assignment const* job = CombatJob(ai);
+    if (!job || job->Over != BgRules::Overlay::Carrier)
+        return false;
+    Player* bot = ai.GetBot();
+    BgPlan const* plan = sBgPlanner.Find(bot->GetMapId(), bot->GetInstanceId());
+    Position goal;
+    float arrive = 0.0f;
+    int kite = -1;
+    return plan && plan->Def && CarrierGoal(bot, *plan, goal, arrive, kite) && bot->GetExactDist2d(goal) > arrive + 1.0f;
+}
+
+class CarrierAction : public Action
+{
+public:
+    char const* GetName() const override { return "bg carrier"; }
+
+    bool Execute(PlayerbotAI& ai) override
+    {
+        Player* bot = ai.GetBot();
+        BgPlan const* plan = sBgPlanner.Find(bot->GetMapId(), bot->GetInstanceId());
+        Position goal;
+        float arrive = 0.0f;
+        int kite = -1;
+        if (!plan || !plan->Def || !CarrierGoal(bot, *plan, goal, arrive, kite))
+            return false;
+        // a carrier does not stop to fight: it keeps going (what hits it is the escorts' job)
+        ai.ClearForcedTarget();
+        if (Go(bot, goal, arrive, NoObjective))
+            return true;
+        MarkBadSpot(bot, kite);
+        return false;
+    }
+};
 }
 
 void Register(AiRegistry& registry)
 {
     registry.AddTrigger("bg leash", 0, LeashTrigger);
     registry.AddAction<LeashAction>("bg leash");
+    registry.AddTrigger("bg fall back", 0, FallBackTrigger);
+    registry.AddAction<FallBackAction>("bg fall back");
+    registry.AddTrigger("bg focus", 1000, FocusTrigger);
+    registry.AddAction<FocusAction>("bg focus");
+    registry.AddTrigger("bg carrier", 0, CarrierTrigger);
+    registry.AddAction<CarrierAction>("bg carrier");
 }
 
 bool Plays(Player const* bot)
@@ -761,6 +1231,93 @@ bool Play(Player* bot, PlayerbotAI& ai)
         return true;
     // a capture cast is running: stand still, set no target
     if (IsOpening(bot))
+        return true;
+
+    // the reactive behaviours (phase 4): an outnumbered bot runs to friends; a helper plays a defender of the node it was sent to
+    uint32 now = GameTime::GetGameTimeMS();
+    if (job.Over == BgRules::Overlay::FallBack && int32(job.FallBackUntilMs - now) > 0)
+    {
+        ai.ClearForcedTarget();
+        if (bot->GetExactDist2d(job.FallBackTo) > 6.0f)
+            Go(bot, job.FallBackTo, 5.0f, NoObjective);
+        return true;
+    }
+    if (job.Over == BgRules::Overlay::Respond && job.Respond != NoObjective && int32(job.RespondUntilMs - now) > 0)
+    {
+        job.Base = Job::Defend;
+        job.Now = Job::Defend;
+        job.Objective = job.Respond;
+        job.Follow.Clear();
+    }
+    // #13: the mine group goes for the boss of its mine (the creatures on the way are fought as they come)
+    if (job.Over == BgRules::Overlay::Mine && job.ErrandObjective != NoObjective && size_t(job.ErrandObjective) < plan->Objectives.size())
+    {
+        Creature* boss = BossOf(*plan, bot->GetMap(), job.ErrandObjective);
+        Position at = boss && boss->IsAlive() ? boss->GetPosition() : plan->Objectives[job.ErrandObjective].Pos;
+        if (ai.GetRole() == BotRole::Healer)
+        {
+            if (bot->GetExactDist2d(at) > HealerStandOff)
+                Go(bot, at, HealerStandOff - 5.0f, NoObjective);
+            return true;
+        }
+        if (boss && boss->IsAlive() && bot->GetExactDist(boss) <= WalkInFrom)
+            ai.SetForcedTarget(boss->GetGUID());
+        Go(bot, at, boss ? 4.0f : 6.0f, NoObjective);
+        return true;
+    }
+    // #17: the ninja travels as anyone does, then sneaks the last stretch in stealth (no mount, no fight) and takes the node
+    if (job.Over == BgRules::Overlay::Ninja && job.ErrandObjective != NoObjective && size_t(job.ErrandObjective) < plan->Objectives.size())
+    {
+        Position const& at = plan->Objectives[job.ErrandObjective].Pos;
+        float dist = bot->GetExactDist2d(at);
+        if (dist > NinjaSneakFrom)
+        {
+            Go(bot, at, NinjaSneakFrom - 10.0f, job.ErrandObjective);
+            return true;
+        }
+        if (bot->IsMounted())
+            bot->CancelMountAura();
+        if (!bot->HasStealthAura() && !bot->IsInCombat())
+        {
+            if (bot->GetClass() == CLASS_DRUID && !bot->HasAura(NinjaCatForm) && bot->HasSpell(NinjaCatForm))
+            {
+                bot->CastSpell(bot, NinjaCatForm, CastSpellExtraArgs(TRIGGERED_NONE));
+                return true;
+            }
+            uint32 stealth = bot->GetClass() == CLASS_ROGUE ? NinjaStealth : NinjaProwl;
+            if (bot->HasSpell(stealth) && !bot->GetSpellHistory()->HasCooldown(stealth))
+            {
+                bot->CastSpell(bot, stealth, CastSpellExtraArgs(TRIGGERED_NONE));
+                return true;
+            }
+        }
+        if (dist > CapRange)
+        {
+            ai.ClearForcedTarget();
+            if (MoveAlongMesh(bot, at, CapRange - 5.0f) == MoveResult::NoPath)
+                sBgPlanner.NoteNoPath(bot, job.ErrandObjective);
+            return true;
+        }
+        // there: take it as an attacker would (the cast breaks stealth)
+        job.Base = Job::Attack;
+        job.Now = Job::Attack;
+        job.Objective = job.ErrandObjective;
+        job.Follow.Clear();
+    }
+    // a certain loss (#15): the attackers fight where most of the enemies are
+    if (TeamId team = TeamOf(bot); job.Over == BgRules::Overlay::Brawl && (team == TEAM_ALLIANCE || team == TEAM_HORDE) && plan->Teams[team].BrawlKnown)
+    {
+        Position const& at = plan->Teams[team].BrawlAt;
+        if (ai.GetRole() == BotRole::Healer)
+            return PlayHealer(bot, *plan, job, at);
+        Engage(bot, ai, at, GuardRange);
+        Go(bot, at, 10.0f, NoObjective);
+        return true;
+    }
+    // #12: a brawler (in Alterac Valley a road fighter) fights whoever comes near on the way instead of walking past
+    if (job.Over == BgRules::Overlay::None && job.Now == Job::Attack
+        && (job.Style == BgRules::Archetype::Brawler || job.Style == BgRules::Archetype::RoadFighter)
+        && Engage(bot, ai, bot->GetPosition(), job.Style == BgRules::Archetype::RoadFighter ? RoadFighterRange : BrawlerRange))
         return true;
 
     switch (plan->Def->Kind)

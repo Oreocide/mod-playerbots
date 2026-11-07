@@ -19,6 +19,7 @@
 #include "DatabaseEnv.h"
 #include "Log.h"
 #include <algorithm>
+#include <array>
 
 namespace Playerbots::Bg
 {
@@ -69,7 +70,7 @@ bool ParseKind(std::string const& text, NodeKind& kind)
     static std::pair<char const*, NodeKind> const Kinds[] =
     {
         { "capture", NodeKind::Capture }, { "burn", NodeKind::Burn }, { "kill_captain", NodeKind::KillCaptain },
-        { "kill_general", NodeKind::KillGeneral }, { "rally", NodeKind::Rally }, { "gate", NodeKind::Gate },
+        { "kill_general", NodeKind::KillGeneral }, { "rally", NodeKind::Rally }, { "gate", NodeKind::Gate }, { "mine", NodeKind::Mine },
     };
     for (auto const& [name, value] : Kinds)
         if (text == name)
@@ -91,8 +92,23 @@ char const* NodeKindName(NodeKind kind)
         case NodeKind::KillGeneral: return "kill_general";
         case NodeKind::Rally: return "rally";
         case NodeKind::Gate: return "gate";
+        case NodeKind::Mine: return "mine";
     }
     return "?";
+}
+
+uint32 MineBossEntry(NodeDef const& row, uint8 owner)
+{
+    // neutral boss -> the boss of the Alliance and of the Horde when they hold the mine
+    static std::array<uint32, 3> const Mines[] =
+    {
+        { 11657, 13078, 13079 },    // Irondeep Mine: Morloch, Umi Thorson, Keetar
+        { 11677, 13086, 13088 },    // Coldtooth Mine: Taskmaster Snivvle, Aggi Rumblestomp, Masha Swiftcut
+    };
+    for (std::array<uint32, 3> const& mine : Mines)
+        if (mine[0] == row.CreatureEntry)
+            return owner == BgRules::Alliance ? mine[1] : owner == BgRules::Horde ? mine[2] : mine[0];
+    return row.CreatureEntry;
 }
 
 MapDef const* FindMap(uint32 mapId)

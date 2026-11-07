@@ -5,7 +5,8 @@
 --
 -- kind: capture (a graveyard: owned while held), burn (a tower: gone once the other side's assault runs out), kill_captain,
 --       kill_general (a boss, pushed through its rally row), rally (where the attackers gather before a boss), gate (where the
---       team waits while the gates are closed)
+--       team waits while the gates are closed), mine (phase 4, Playerbots.Bg.Mines: killing its boss takes it; creature_entry is
+--       the boss while the mine is neutral, an owner's bosses are in BgMapData.cpp MineBossEntry; ws_a_ctrl / ws_h_ctrl: who owns it)
 -- side: 0 none, 1 Alliance, 2 Horde. Nodes: the owner at the start (a tower: who built it); bosses: their side; rally and gate:
 --       the team that stands there
 -- ws_*: the world states the battleground script writes for the node (battleground_alterac_valley.cpp BGAVNodeInfo, as written:
@@ -79,4 +80,8 @@ INSERT INTO `playerbots_bg_node` (`map`, `node`, `kind`, `side`, `name`, `x`, `y
 (30, 'rally_drekthar', 'rally', 1, 'Drek''Thar rally', -1346.880, -287.015, 91.066, 0, 0, 0, 0, 0, 0, 0, '', 0, 0, 0, '', 0, '', '71 yd, Frostwolf Keep courtyard (AC vPath_AV_HordeCrossroad1_To_HordeFortress)'),
 -- gates (radius: the farthest a bot stops from the door)
 (30, 'gate_alliance', 'gate', 1, 'Alliance gate', 794.6, -493.5, 99.8, 13, 0, 0, 0, 0, 0, 0, '', 0, 0, 0, '', 0, '', 'door 180424; the cave start 873 -491 is behind it'),
-(30, 'gate_horde', 'gate', 2, 'Horde gate', -1382.1, -545.9, 54.9, 13, 0, 0, 0, 0, 0, 0, '', 0, 0, 0, '', 0, '', 'door 180424; the start -1437 -610 is behind it');
+(30, 'gate_horde', 'gate', 2, 'Horde gate', -1382.1, -545.9, 54.9, 13, 0, 0, 0, 0, 0, 0, '', 0, 0, 0, '', 0, '', 'door 180424; the start -1437 -610 is behind it'),
+-- mines (phase 4, reactive #13): x, y, z is the neutral boss; a team sends a mine group while the front stalls, to the mine with
+-- its higher weight; the owner gets 1 reinforcement every 45 s (battleground_alterac_valley.cpp)
+(30, 'irondeep_mine', 'mine', 0, 'Irondeep Mine', 863.1, -441.3, 50.6, 30, 11657, 1358, 0, 1359, 0, 0, '', 2, 1, 4, '', 0, 'irondeep,id mine,north mine', 'Morloch 11657 neutral; Umi Thorson 13078 for the Alliance, Keetar 13079 for the Horde'),
+(30, 'coldtooth_mine', 'mine', 0, 'Coldtooth Mine', -851.6, -92.6, 68.5, 30, 11677, 1355, 0, 1356, 0, 0, '', 1, 2, 4, '', 0, 'coldtooth,ct mine,south mine', 'Taskmaster Snivvle 11677 neutral; Aggi Rumblestomp 13086 for the Alliance, Masha Swiftcut 13088 for the Horde');

@@ -16,6 +16,7 @@
  */
 
 #include "ActivityMgr.h"
+#include "Battleground/BgTalk.h"
 #include "BotSession.h"
 #include "Strategies/Rpg/Ambient.h"
 #include "Chat.h"
@@ -180,11 +181,14 @@ public:
             sPlayerbotMgr->RemoveBot(bot);
     }
 
-    // party chat of a player is a command for the bots of that group that follow this player
-    void OnChat(Player* player, uint32 /*type*/, uint32 /*lang*/, std::string& msg, Group* group) override
+    // party chat of a player is a command for the bots of that group that follow this player; a player's battleground chat is
+    // also a call for the team planner (Playerbots.Bg.HumanCalls, Battleground/BgTalk.cpp)
+    void OnChat(Player* player, uint32 type, uint32 /*lang*/, std::string& msg, Group* group) override
     {
         if (IsBot(player))
             return;
+
+        Playerbots::Bg::HearCall(player, type, msg);
 
         std::vector<ObjectGuid> leaving;
         for (GroupReference const& ref : group->GetMembers())

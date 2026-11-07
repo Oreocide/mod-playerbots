@@ -27,6 +27,7 @@
 // map thread, this API needs a lock first.
 
 #include "Battleground/BgMapData.h"
+#include "Battleground/BgReactRules.h"
 #include "Battleground/BgRules.h"
 #include "ObjectGuid.h"
 #include "Position.h"
@@ -59,6 +60,60 @@ struct Assignment
     uint32 SinceMs = 0;                 // when Base was given
     int8 NoPathObjective = NoObjective; // the bot found no mesh path to this one: the planner gives it another for a while
     uint32 NoPathUntilMs = 0;
+
+    // the reactive behaviours (phase 4): what overrides the job above for now. Base and Objective stay the split's, so the split,
+    // the defender spread and the rally count never see an overlay; Over is the one that won (BgRules::Overlay, highest first)
+    BgRules::Overlay Over = BgRules::Overlay::None;
+    int8 Respond = NoObjective;         // Respond: the node of ours it goes to (a threat, a retake, a call)
+    uint32 RespondUntilMs = 0;
+    uint32 FallBackUntilMs = 0;         // FallBack: outnumbered, it goes to FallBackTo until then
+    uint32 FallBackReadyMs = 0;         // no new fall back before this (no running back and forth)
+    Position FallBackTo;
+    BgRules::Overlay Errand = BgRules::Overlay::None;   // Mine (#13) or Ninja (#17): a team errand to ErrandObjective
+    int8 ErrandObjective = NoObjective;
+    uint32 ErrandUntilMs = 0;
+    BgRules::Archetype Style = BgRules::Archetype::Objective;  // #12: how it plays this match (Objective while Archetypes is off)
+    bool Styled = false;
+    int8 AvoidObjective = NoObjective;  // #19: it died three times there: another objective for a while
+    uint32 AvoidUntilMs = 0;
+    bool WasAlive = true;               // #19: alive on the last plan (a death is the change to dead)
+};
+
+/// One player of the match as the last plan saw it (the reactive behaviours read this instead of searching the map)
+struct Seen
+{
+    ObjectGuid Guid;
+    TeamId Team = TEAM_NEUTRAL;
+    Position Pos;
+    bool Alive = false;
+    bool Bot = false;
+    bool Healer = false;
+    bool Carrier = false;               // carries a flag
+    float HealthPct = 100.0f;
+    uint8 Class = 0;
+};
+
+/// #10: what a real player of the team called in instance chat, while it holds (BgTalk.cpp HearCall)
+struct CallOrder
+{
+    BgRules::CallKind Kind = BgRules::CallKind::None;
+    int8 Objective = NoObjective;
+    uint32 Count = 0;                   // "inc lm 3": how many are coming
+    uint32 UntilMs = 0;
+    ObjectGuid From;
+};
+
+/// A node of ours that more enemies than allies stand at, or that the enemy assaults (#1, #2); kept for .bot bg
+struct Threat
+{
+    int8 Objective = NoObjective;
+    uint32 Enemies = 0;
+    uint32 Allies = 0;
+    uint32 Need = 0;                    // more allies wanted
+    uint32 Sent = 0;                    // bots on their way (sent now or before)
+    BgRules::Urgency Urgency = BgRules::Urgency::None;
+    uint32 LeftMs = 0;                  // what is left of their assault
+    bool GaveUp = false;                // too many: nobody is sent
 };
 
 struct Objective
@@ -78,6 +133,13 @@ struct Objective
     bool WasAlive = true;               // the plan before
     ObjectGuid Boss;                    // the boss creature, looked up when needed
     uint32 BlockedUntilMs[2] = { 0, 0 };    // a team gave up its push here: not its target again before this
+
+    // the reactive behaviours (phase 4)
+    uint32 AssaultSinceMs = 0;          // when the running assault was first seen (Valley: the 4 minutes run from here)
+    uint32 AssaultLeftMs = 0;           // capture points: what the object says is left of the assault
+    uint32 AssaultTotalMs = 0;          // capture points: the object's capture time
+    uint32 Near[2] = { 0, 0 };          // living players of each team within the threat range (the picture)
+    uint32 ThreatSinceMs[2] = { 0, 0 }; // when each team's current threat here began (the event a skill roll is made for, #20)
 };
 
 struct FlagInfo
@@ -113,6 +175,35 @@ struct TeamPlan
     ObjectGuid Puller;                  // the bot that pulls when the push charges
     uint32 RallyOnPush = 0;             // what the last plan saw
     uint32 RallyPresent = 0;
+
+    // the reactive behaviours (phase 4), what the last plan saw
+    std::vector<Threat> Threats;
+    uint32 FallBacks = 0;               // fall backs started since the match began
+    uint32 Responses = 0;               // bots sent to a threat since the match began
+    BgRules::Outlook Outlook;           // #4/#15: the score outlook of this team
+    BgRules::Stance Stance = BgRules::Stance::Normal;
+    BgRules::Stance PendingStance = BgRules::Stance::Normal;    // a new stance is taken once it held StanceHoldMs
+    uint32 PendingSinceMs = 0;
+    uint32 StanceSinceMs = 0;
+    Position BrawlAt;                   // Brawl: the biggest group of enemies, where the attackers fight
+    bool BrawlKnown = false;
+    ObjectGuid Marks[2];                // #7: what the team's bot leader marked: [0] Skull (their carrier), [1] Cross (a healer)
+    uint32 LastMarkMs = 0;
+    uint32 MarksSet = 0;
+    std::vector<CallOrder> Calls;       // #10: the calls of the team's real players that still hold
+    uint32 CallsHeard = 0;
+    uint32 TalkNextMs = 0;              // #9: the team says nothing before this
+    std::map<std::string, uint32> TalkSaid; // #9: when each call was last made
+    uint32 Lines = 0;                   // #9: lines said since the match began
+    int8 MineObjective = NoObjective;   // #13: the mine the team's mine group goes for
+    uint32 MineUntilMs = 0;
+    uint32 MinesTaken = 0;
+    uint32 Skill = 100;                 // #20: the team's skill this match (100 while TeamSkill is off)
+    bool SkillRolled = false;
+    bool HadHuman = false;              // #20: a real player played on this team (its result moves the streak)
+    uint32 Ninjas = 0;                  // #17: ninja errands started since the match began
+    uint32 NinjaCaps = 0;               // #17: of them, nodes the ninja took
+    uint32 LaneChanges = 0;             // #19: bots that took another lane after three deaths at one spot
 };
 
 struct BgPlan
@@ -143,6 +234,10 @@ struct BgPlan
     uint32 CaptureGiveUps = 0;          // a bot stopped trying after interruptions in a row (it moves or fights, then tries again)
     uint32 LastGiveUpResult = 0;        // SpellCastResult of the last give-up
     uint32 LastBossLookupMs = 0;        // Valley: bosses missing a creature are looked up at most this often
+    std::vector<Seen> Picture;          // every player of the match on the last plan (only while a reactive behaviour is on)
+    uint32 LastNodeChangeMs = 0;        // #13: a node last changed hands (the front stalls when this is old)
+    bool ResultSeen = false;            // #20: the end of the match was counted into the streak
+    std::unordered_map<ObjectGuid, std::vector<BgRules::Death>> Deaths;    // #19: the last deaths of each bot
 };
 
 class Planner
@@ -163,9 +258,13 @@ public:
     void NoteCaptureGiveUp(Player* bot, uint32 result);
 
     BgPlan const* Find(uint32 mapId, uint32 instanceId) const;
+    /// The same plan to change (the chat hook adds a player's call to it); world thread only
+    BgPlan* FindForEdit(uint32 mapId, uint32 instanceId);
     std::vector<BgPlan const*> List() const;
     /// Drops every plan (the objective rows were read again: plans index them); the next touch makes new ones
     void Reset();
+    /// #20: the matches in a row the side of a real player won (> 0) or lost (< 0) since boot
+    int32 Streak() const { return _streak; }
 
 private:
     void Plan(BgPlan& plan, Battleground* bg, Map* map, uint32 now);
@@ -179,6 +278,7 @@ private:
         std::string& rallyEvent, uint32 now);
 
     std::map<std::pair<uint32, uint32>, BgPlan> _plans;
+    int32 _streak = 0;
 };
 
 /// Objective position of a job: the node, the flag, or for flag maps our or their flag base

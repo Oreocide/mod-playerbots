@@ -18,6 +18,7 @@
 // Standalone test of the battleground planner rules (Battleground/BgRules.h), see tests/run_engine_test.sh
 
 #include "Battleground/BgRules.h"
+#include "Battleground/BgReactRules.h"
 #include <cstdio>
 #include <set>
 
@@ -418,6 +419,235 @@ void TestRallyWipe()
     view.BossEvading = false;
     CHECK(RallyStep(rally, view, params, 21000) == RallyState::Gathering);
 }
+
+// ---- phase 4 (BgReactRules.h) ----
+
+void TestEventRoll()
+{
+    CHECK(EventRoll(1, 2, 3, 50) == EventRoll(1, 2, 3, 50));   // one event, one answer
+    CHECK(EventRoll(1, 2, 3, 100));
+    CHECK(!EventRoll(1, 2, 3, 0));
+    uint32 yes = 0, flips = 0;
+    for (uint32 e = 0; e < 2000; ++e)
+    {
+        bool a = EventRoll(77, 1234, e, 70);
+        yes += a;
+        flips += a != EventRoll(77, 1234, e + 1, 70);
+    }
+    CHECK(yes > 1240 && yes < 1560);                            // about 70%
+    CHECK(flips > 300);                                         // a new event can answer differently
+}
+
+void TestThreat()
+{
+    CHECK(ThreatNeed(0, 2, 6) == 0);
+    CHECK(ThreatNeed(3, 0, 6) == 4);
+    CHECK(ThreatNeed(3, 2, 6) == 2);
+    CHECK(ThreatNeed(3, 3, 6) == 1);                            // level: one more
+    CHECK(ThreatNeed(3, 4, 6) == 0);
+    CHECK(ThreatNeed(10, 0, 6) == 6);                           // capped
+    CHECK(Hopeless(8, 0, 2, 2, 4));                             // 2 into 8 is not sent
+    CHECK(!Hopeless(5, 1, 2, 2, 4));
+    CHECK(!Hopeless(3, 0, 0, 2, 4));                            // too few enemies to give a node up
+}
+
+void TestUrgency()
+{
+    CHECK(TimeLeft(1000, 31000, 60000) == 30000);
+    CHECK(TimeLeft(1000, 61000, 60000) == 0);
+    CHECK(TimeLeft(1000, 90000, 60000) == 0);
+    CHECK(RetakeUrgency(240000, 240000, 20000) == Urgency::Normal);
+    CHECK(RetakeUrgency(120000, 240000, 20000) == Urgency::Half);
+    CHECK(RetakeUrgency(15000, 240000, 20000) == Urgency::Last);
+    CHECK(RetakeUrgency(5000, 0, 20000) == Urgency::None);
+    CHECK(InTime(70.0f, 7.0f, 15000));                          // 10 s of running for 15 s left
+    CHECK(!InTime(140.0f, 7.0f, 15000));
+    CHECK(!InTime(10.0f, 0.0f, 15000));
+}
+
+void TestOutnumbered()
+{
+    CHECK(Outnumbered(9, 3, 3, 3));
+    CHECK(!Outnumbered(8, 3, 3, 3));
+    CHECK(Outnumbered(3, 1, 3, 3));
+    CHECK(Outnumbered(3, 0, 3, 3));                             // allies count the bot itself
+    CHECK(!Outnumbered(2, 0, 3, 3));                            // too few to run from
+}
+
+void TestOutlook()
+{
+    // Arathi Basin with three bases: 4 points every 2 s
+    CHECK(SecondsToWin(1000, 1500, 4, 2000) == 250);
+    CHECK(SecondsToWin(1500, 1500, 4, 2000) == 0);
+    CHECK(SecondsToWin(100, 1500, 0, 2000) == Never);
+
+    OutlookParams params;
+    Outlook o = ProjectRace(100, 400, params);
+    CHECK(o.Ahead == 1 && !o.Certain && o.Late);
+    o = ProjectRace(80, 200, params);
+    CHECK(o.Ahead == 1 && o.Certain);
+    o = ProjectRace(80, 150, params);
+    CHECK(o.Ahead == 1 && !o.Certain);                          // not twice as long
+    o = ProjectRace(300, 310, params);
+    CHECK(o.Ahead == 0 && !o.Certain && !o.Late);              // too close to call
+    o = ProjectRace(Never, 500, params);
+    CHECK(o.Ahead == -1 && !o.Certain);
+    o = ProjectRace(Never, 60, params);
+    CHECK(o.Ahead == -1 && o.Certain && o.Late);
+    o = ProjectRace(Never, Never, params);
+    CHECK(o.Ahead == 0);
+
+    // Warsong Gulch: 17 minutes of elapsed time
+    uint32 limit = 17 * 60000;
+    o = ProjectCaptures(2, 0, limit - 170000, limit, params);
+    CHECK(o.Ahead == 1 && o.Certain);
+    o = ProjectCaptures(1, 0, limit - 200000, limit, params);
+    CHECK(o.Ahead == 1 && !o.Certain && !o.Late);
+    o = ProjectCaptures(0, 1, limit - 170000, limit, params);
+    CHECK(o.Ahead == -1 && o.Late && !o.Certain);
+    o = ProjectCaptures(1, 0, limit - 50000, limit, params);
+    CHECK(o.Certain);
+    o = ProjectCaptures(1, 1, limit - 50000, limit, params);
+    CHECK(o.Ahead == 0 && !o.Certain);
+
+    // Alterac Valley, 700 reinforcements
+    o = ProjectReinforcements(500, 200, 700, params);
+    CHECK(o.Ahead == 1 && !o.Certain && o.Late);
+    o = ProjectReinforcements(400, 60, 700, params);
+    CHECK(o.Ahead == 1 && o.Certain);
+    o = ProjectReinforcements(400, 380, 700, params);
+    CHECK(o.Ahead == 0);
+    o = ProjectReinforcements(100, 600, 700, params);
+    CHECK(o.Ahead == -1 && o.Late);
+}
+
+void TestStance()
+{
+    Outlook o;
+    o.Ahead = 1;
+    o.Certain = true;
+    CHECK(PickStance(o, true, true) == Stance::Finish);
+    CHECK(PickStance(o, true, false) == Stance::Turtle);
+    CHECK(PickStance(o, false, false) == Stance::Normal);
+    o.Ahead = -1;
+    CHECK(PickStance(o, false, true) == Stance::Brawl);
+    CHECK(PickStance(o, true, false) == Stance::AllIn);
+    o.Certain = false;
+    o.Late = false;
+    CHECK(PickStance(o, true, true) == Stance::Normal);         // behind but with time
+    o.Late = true;
+    CHECK(PickStance(o, true, true) == Stance::AllIn);
+
+    CHECK(StanceDefendPct(Stance::Turtle, 30, 20, 10) == 50);
+    CHECK(StanceDefendPct(Stance::Turtle, 60, 20, 10) == 70);
+    CHECK(StanceDefendPct(Stance::AllIn, 30, 20, 10) == 10);
+    CHECK(StanceDefendPct(Stance::Brawl, 5, 20, 10) == 5);
+    CHECK(StanceDefendPct(Stance::Normal, 30, 20, 10) == 30);
+
+    CHECK(TurtleAttackers(20, 3, 5, 30, true) == 6);            // Arathi Basin: hold three, harass
+    CHECK(TurtleAttackers(20, 4, 5, 30, true) == 0);            // never chase the 5-cap
+    CHECK(TurtleAttackers(20, 2, 5, 30, true) == 20);           // no majority: no cap
+    CHECK(TurtleAttackers(20, 2, 3, 30, true) == 0);            // Battle for Gilneas: two of three
+    CHECK(TurtleAttackers(20, 3, 4, 30, false) == 6);           // Eye of the Storm: its flag still pays
+}
+
+void TestFocus()
+{
+    CHECK(ShouldSwitch(Focus::None, Focus::Healer, 0, 4000));
+    CHECK(!ShouldSwitch(Focus::Healer, Focus::Healer, 9000, 4000));
+    CHECK(!ShouldSwitch(Focus::Healer, Focus::Peel, 1000, 4000));
+    CHECK(ShouldSwitch(Focus::Healer, Focus::Peel, 5000, 4000));
+    CHECK(!ShouldSwitch(Focus::Peel, Focus::Healer, 9000, 4000));
+    CHECK(!ShouldSwitch(Focus::None, Focus::None, 9000, 4000));
+
+    std::vector<Point2> ring = RingPoints({ 0.0f, 0.0f }, 15.0f, 8, 0.0f);
+    CHECK(ring.size() == 8);
+    CHECK(std::abs(ring[0].X - 15.0f) < 0.01f && std::abs(ring[0].Y) < 0.01f);
+    int pick = PickKiteSpot(ring, { { 20.0f, 0.0f } });
+    CHECK(pick == 4);                                           // the far side of the room
+    CHECK(PickKiteSpot(ring, {}) == 0);
+    CHECK(PickKiteSpot({}, { { 1.0f, 1.0f } }) == -1);
+}
+
+void TestParseCall()
+{
+    std::vector<Alias> ab = { { "st", 0 }, { "stables", 0 }, { "bs", 1 }, { "blacksmith", 1 }, { "farm", 2 }, { "gm", 3 },
+        { "gold mine", 3 }, { "mine", 5 }, { "lm", 4 }, { "lumber mill", 4 }, { "drek", 9 } };
+    Call c = ParseCall("inc LM 3", ab);
+    CHECK(c.Kind == CallKind::Incoming && c.Node == 4 && c.Count == 3);
+    c = ParseCall("3 inc lumber mill!!", ab);
+    CHECK(c.Kind == CallKind::Incoming && c.Node == 4 && c.Count == 3);
+    c = ParseCall("help BS", ab);
+    CHECK(c.Kind == CallKind::Help && c.Node == 1);
+    c = ParseCall("def stables pls", ab);
+    CHECK(c.Kind == CallKind::Defend && c.Node == 0);
+    c = ParseCall("everyone to Drek", ab);
+    CHECK(c.Kind == CallKind::Everyone && c.Node == 9);
+    c = ParseCall("go farm", ab);
+    CHECK(c.Kind == CallKind::Attack && c.Node == 2);
+    c = ParseCall("lm 2", ab);
+    CHECK(c.Kind == CallKind::Incoming && c.Node == 4 && c.Count == 2);
+    c = ParseCall("inc gold mine", ab);
+    CHECK(c.Kind == CallKind::Incoming && c.Node == 3);         // two words beat "mine"
+    c = ParseCall("farm clear", ab);
+    CHECK(c.Kind == CallKind::None && c.Node == -1);
+    c = ParseCall("hello everyone", ab);
+    CHECK(c.Kind == CallKind::None);
+    c = ParseCall("inc", ab);
+    CHECK(c.Kind == CallKind::None);
+    c = ParseCall("lm needs help 5", ab);
+    CHECK(c.Kind == CallKind::Help && c.Node == 4 && c.Count == 5);
+    c = ParseCall("inc 100 st", ab);
+    CHECK(c.Kind == CallKind::Incoming && c.Node == 0 && c.Count == 0);  // not a head count
+    c = ParseCall("", ab);
+    CHECK(c.Kind == CallKind::None);
+}
+
+void TestArchetypes()
+{
+    std::set<Archetype> healers, top, bottom, valley, plain;
+    for (uint64 guid = 1; guid <= 400; ++guid)
+    {
+        healers.insert(PickArchetype(9, guid, true, false, false, 80));
+        top.insert(PickArchetype(9, guid, false, true, false, 100));
+        bottom.insert(PickArchetype(9, guid, false, false, false, 0));
+        valley.insert(PickArchetype(9, guid, false, false, true, 0));
+        plain.insert(PickArchetype(9, guid, false, false, false, 100));
+    }
+    CHECK(healers.size() == 2 && healers.contains(Archetype::StickyHealer) && healers.contains(Archetype::Objective));
+    CHECK(!top.contains(Archetype::Brawler) && !top.contains(Archetype::RoadFighter) && top.contains(Archetype::Ninja));
+    CHECK(bottom.size() == 1 && bottom.contains(Archetype::Brawler));
+    CHECK(valley.contains(Archetype::RoadFighter) && valley.contains(Archetype::Brawler) && valley.size() == 2);
+    CHECK(!plain.contains(Archetype::Ninja));                   // only stealth classes sneak
+    CHECK(PickArchetype(9, 17, false, true, true, 70) == PickArchetype(9, 17, false, true, true, 70));
+
+    for (uint64 seed = 1; seed < 200; ++seed)
+    {
+        uint32 skill = RollSkill(seed, 60, 100);
+        CHECK(skill >= 60 && skill <= 100);
+    }
+    CHECK(SkillAfterStreak(80, 2, 10, 60, 100) == 60);
+    CHECK(SkillAfterStreak(80, 3, 10, 60, 100) == 60);          // clamped
+    CHECK(SkillAfterStreak(80, -3, 10, 60, 100) == 100);
+    CHECK(SkillAfterStreak(80, 0, 10, 60, 100) == 80);
+    CHECK(NextStreak(2, true) == 3);
+    CHECK(NextStreak(2, false) == -1);
+    CHECK(NextStreak(-1, false) == -2);
+    CHECK(NextStreak(-2, true) == 1);
+    CHECK(NextStreak(0, true) == 1);
+}
+
+void TestDeaths()
+{
+    std::vector<Death> deaths = { { { 500.0f, 500.0f }, 1000 }, { { 0.0f, 0.0f }, 100000 }, { { 20.0f, 10.0f }, 200000 },
+        { { 5.0f, 25.0f }, 300000 } };
+    CHECK(DiesAtOneSpot(deaths, 400000, 600000, 40.0f, 3));     // the old far death does not count
+    CHECK(!DiesAtOneSpot(deaths, 750000, 600000, 40.0f, 3));    // the first of the three is too old by then
+    deaths.back().Where = { 60.0f, 0.0f };
+    CHECK(!DiesAtOneSpot(deaths, 400000, 600000, 40.0f, 3));    // not one spot
+    std::vector<Death> two = { { { 0.0f, 0.0f }, 1000 }, { { 1.0f, 1.0f }, 2000 } };
+    CHECK(!DiesAtOneSpot(two, 3000, 600000, 40.0f, 3));
+}
 }
 
 int main()
@@ -439,6 +669,16 @@ int main()
     TestRallyCharge();
     TestRallyTimeout();
     TestRallyWipe();
+    TestEventRoll();
+    TestThreat();
+    TestUrgency();
+    TestOutnumbered();
+    TestOutlook();
+    TestStance();
+    TestFocus();
+    TestParseCall();
+    TestArchetypes();
+    TestDeaths();
 
     if (Failures)
     {

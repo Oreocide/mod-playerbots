@@ -308,6 +308,82 @@ public:
             handler->PSendSysMessage("    last change: %s, %u jobs or objectives, %s (%u changes in all)",
                 teamPlan.LastReason.c_str(), teamPlan.LastChanged, Ago(now, teamPlan.LastReasonMs).c_str(), teamPlan.Reassigns);
 
+            // the reactive behaviours (phase 4): who follows an overlay now, the threats at our nodes
+            if (sBgConfig.Reacts())
+            {
+                uint32 overlays[8] = { 0, 0, 0, 0, 0, 0, 0, 0 };
+                for (auto const& [guid, job] : plan->Jobs)
+                    if (Player* player = map ? ObjectAccessor::GetPlayer(map, guid) : nullptr; player && uint32(TeamOf(player)) == team)
+                        ++overlays[std::min<uint32>(7, uint32(job.Over))];
+                std::string over;
+                for (uint32 i = 1; i < 8; ++i)
+                    if (overlays[i])
+                        over += Trinity::StringFormat("{}{} {}", over.empty() ? "" : ", ", Playerbots::BgRules::OverlayName(Playerbots::BgRules::Overlay(i)), overlays[i]);
+                handler->PSendSysMessage("    overlays: %s; %u sent to threats, %u fall backs since the start", over.empty() ? "-" : over.c_str(),
+                    teamPlan.Responses, teamPlan.FallBacks);
+                std::string threats;
+                for (Threat const& threat : teamPlan.Threats)
+                {
+                    threats += Trinity::StringFormat("{}{} {} against {}", threats.empty() ? "" : "; ", ObjectiveName(*plan, threat.Objective),
+                        threat.Allies, threat.Enemies);
+                    if (threat.GaveUp)
+                        threats += ", given up";
+                    else if (threat.Sent || threat.Need)
+                        threats += Trinity::StringFormat(", {} on the way, {} more wanted", threat.Sent, threat.Need);
+                    if (threat.Urgency != Playerbots::BgRules::Urgency::None)
+                        threats += Trinity::StringFormat(", their assault ends in {} s ({})", threat.LeftMs / 1000,
+                            Playerbots::BgRules::UrgencyName(threat.Urgency));
+                }
+                handler->PSendSysMessage("    threats: %s", threats.empty() ? "-" : threats.c_str());
+
+                if (sBgConfig.Archetypes || sBgConfig.TeamSkill || sBgConfig.NinjaCaps || sBgConfig.LaneChange)
+                {
+                    uint32 styles[6] = { 0, 0, 0, 0, 0, 0 };
+                    for (auto const& [guid, job] : plan->Jobs)
+                        if (Player* player = map ? ObjectAccessor::GetPlayer(map, guid) : nullptr; player && uint32(TeamOf(player)) == team)
+                            ++styles[std::min<uint32>(5, uint32(job.Style))];
+                    std::string mix;
+                    for (uint32 i = 0; i < 6; ++i)
+                        if (styles[i])
+                            mix += Trinity::StringFormat("{}{} {}", mix.empty() ? "" : ", ", Playerbots::BgRules::ArchetypeName(Playerbots::BgRules::Archetype(i)), styles[i]);
+                    handler->PSendSysMessage("    skill %u%s; styles: %s; ninjas %u (%u nodes taken), lane changes %u", teamPlan.Skill,
+                        teamPlan.HadHuman && sBgConfig.TeamSkill ? Trinity::StringFormat(" (your side's streak {:+})", sBgPlanner.Streak()).c_str() : "",
+                        mix.empty() ? "-" : mix.c_str(), teamPlan.Ninjas, teamPlan.NinjaCaps, teamPlan.LaneChanges);
+                }
+
+                if (sBgConfig.Mines && plan->Def && plan->Def->Kind == MapKind::Valley)
+                    handler->PSendSysMessage("    mines: %s%s; %u taken since the start",
+                        teamPlan.MineObjective != NoObjective ? ObjectiveName(*plan, teamPlan.MineObjective).c_str() : "no mine group",
+                        teamPlan.MineObjective != NoObjective ? Trinity::StringFormat(" ({} s left)", int32(teamPlan.MineUntilMs - now) > 0
+                            ? (teamPlan.MineUntilMs - now) / 1000 : 0).c_str() : "", teamPlan.MinesTaken);
+
+                if (sBgConfig.HumanCalls || sBgConfig.CallOuts)
+                {
+                    std::string holding;
+                    for (CallOrder const& order : teamPlan.Calls)
+                        if (int32(order.UntilMs - now) > 0)
+                            holding += Trinity::StringFormat("{}{} {}{} ({} s left)", holding.empty() ? "" : ", ", Playerbots::BgRules::CallKindName(order.Kind),
+                                ObjectiveName(*plan, order.Objective), order.Count ? Trinity::StringFormat(" {}", order.Count) : std::string(),
+                                (order.UntilMs - now) / 1000);
+                    handler->PSendSysMessage("    calls: %u heard, holding: %s; %u bot lines said, %u raid marks set", teamPlan.CallsHeard,
+                        holding.empty() ? "-" : holding.c_str(), teamPlan.Lines, teamPlan.MarksSet);
+                }
+
+                if (sBgConfig.ScoreClock || sBgConfig.Endgame)
+                {
+                    using Playerbots::BgRules::Never;
+                    Playerbots::BgRules::Outlook const& outlook = teamPlan.Outlook;
+                    std::string race;
+                    if (outlook.UsSeconds != Never || outlook.ThemSeconds != Never)
+                        race = Trinity::StringFormat("; to win: us {}, them {}", outlook.UsSeconds == Never ? "never" : Trinity::StringFormat("{} s", outlook.UsSeconds),
+                            outlook.ThemSeconds == Never ? "never" : Trinity::StringFormat("{} s", outlook.ThemSeconds));
+                    handler->PSendSysMessage("    outlook: %s%s%s%s; stance %s for %u s%s", outlook.Ahead > 0 ? "ahead" : outlook.Ahead < 0 ? "behind" : "level",
+                        outlook.Certain ? ", certain" : "", outlook.Late ? ", late" : "", race.c_str(), Playerbots::BgRules::StanceName(teamPlan.Stance),
+                        (now - (teamPlan.StanceSinceMs ? teamPlan.StanceSinceMs : plan->CreatedMs)) / 1000,
+                        teamPlan.PendingStance != teamPlan.Stance ? Trinity::StringFormat(" (going {})", Playerbots::BgRules::StanceName(teamPlan.PendingStance)).c_str() : "");
+                }
+            }
+
             // Valley maps: the push on a boss, e.g. "Captain Galvangar: gathering 9/12 at the rally point, 15 on the push, 74 s left"
             if (teamPlan.RallyObjective != NoObjective)
             {
@@ -336,7 +412,7 @@ public:
             for (size_t i = 0; i < plan->Objectives.size() && i < plan->Def->Nodes.size(); ++i)
             {
                 NodeDef const& row = plan->Def->Nodes[i];
-                if (!row.IsNode() && !row.IsBoss())
+                if (!row.IsNode() && !row.IsBoss() && !row.IsMine())
                     continue;
                 std::string& line = row.IsBoss() ? bosses : nodes;
                 line += Trinity::StringFormat("{}{}: {}", line.empty() ? "" : ", ", row.Name, ValleyState(*plan, i));
@@ -458,9 +534,14 @@ public:
                 if (!player || uint32(TeamOf(player)) != team)
                     continue;
                 Player* follow = job.Follow.IsEmpty() ? nullptr : ObjectAccessor::GetPlayer(map, job.Follow);
-                handler->PSendSysMessage("  %s: %s %s%s%s, job %u s%s", player->GetName().c_str(), Playerbots::BgRules::JobName(job.Now), ObjectiveName(*plan, job.Objective).c_str(),
+                std::string over;
+                if (job.Over == Playerbots::BgRules::Overlay::Respond)
+                    over = Trinity::StringFormat(" [helps at {}]", ObjectiveName(*plan, job.Respond));
+                else if (job.Over != Playerbots::BgRules::Overlay::None)
+                    over = Trinity::StringFormat(" [{}]", Playerbots::BgRules::OverlayName(job.Over));
+                handler->PSendSysMessage("  %s: %s %s%s%s, job %u s%s%s", player->GetName().c_str(), Playerbots::BgRules::JobName(job.Now), ObjectiveName(*plan, job.Objective).c_str(),
                     follow ? ", with " : "", follow ? follow->GetName().c_str() : "", (now - job.SinceMs) / 1000,
-                    player->IsAlive() ? "" : ", dead");
+                    player->IsAlive() ? "" : ", dead", over.c_str());
             }
         }
         return true;

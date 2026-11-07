@@ -45,7 +45,8 @@ enum class NodeKind : uint8
     KillCaptain,
     KillGeneral,
     Rally,          // where the attackers gather before a boss
-    Gate            // where the team waits while the gates are closed
+    Gate,           // where the team waits while the gates are closed
+    Mine            // Alterac Valley's mines: kill the boss of the mine to own it (#13); creature_entry is the neutral boss
 };
 
 char const* NodeKindName(NodeKind kind);
@@ -78,7 +79,12 @@ struct NodeDef
 
     bool IsBoss() const { return Kind == NodeKind::KillCaptain || Kind == NodeKind::KillGeneral; }
     bool IsNode() const { return Kind == NodeKind::Capture || Kind == NodeKind::Burn; }
+    bool IsMine() const { return Kind == NodeKind::Mine; }
 };
+
+/// The boss of a mine row while owner (0 Alliance, 1 Horde, 2 nobody) holds it: the mine's own boss while it is neutral, else
+/// the owner's (battleground_alterac_valley.cpp: Morloch, Umi Thorson, Keetar; Taskmaster Snivvle, Aggi Rumblestomp, Masha Swiftcut)
+uint32 MineBossEntry(NodeDef const& row, uint8 owner);
 
 struct MapDef
 {
