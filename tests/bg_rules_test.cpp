@@ -648,6 +648,61 @@ void TestDeaths()
     std::vector<Death> two = { { { 0.0f, 0.0f }, 1000 }, { { 1.0f, 1.0f }, 2000 } };
     CHECK(!DiesAtOneSpot(two, 3000, 600000, 40.0f, 3));
 }
+
+bool Near(float a, float b) { return std::fabs(a - b) < 0.01f; }
+
+void TestLegs()
+{
+    // corners 100 yd apart along x: a 180 yd leg ends at the farthest corner within it (100), which keeps its height
+    std::vector<Point3> route = { { 0, 0, 10 }, { 100, 0, 20 }, { 200, 0, 30 }, { 300, 0, 40 } };
+    LegGoal leg = PickLeg(route, 180.0f, 10.0f);
+    CHECK(leg.Use && leg.Grounded && Near(leg.At.X, 100.0f) && Near(leg.At.Z, 20.0f));
+    // a 250 yd leg reaches the corner at 200
+    leg = PickLeg(route, 250.0f, 10.0f);
+    CHECK(leg.Use && leg.Grounded && Near(leg.At.X, 200.0f));
+    // the route is measured along its corners, not in a straight line: a dog-leg of 2 x 100 yd ends the 150 yd leg at the bend
+    std::vector<Point3> bend = { { 0, 0, 0 }, { 100, 0, 0 }, { 100, 100, 0 } };
+    leg = PickLeg(bend, 150.0f, 10.0f);
+    CHECK(leg.Use && leg.Grounded && Near(leg.At.X, 100.0f) && Near(leg.At.Y, 0.0f));
+    // one long open segment: 180 yd along it, its height left to the caller
+    std::vector<Point3> open = { { 0, 0, 0 }, { 900, 0, 90 } };
+    leg = PickLeg(open, 180.0f, 10.0f);
+    CHECK(leg.Use && !leg.Grounded && Near(leg.At.X, 180.0f) && Near(leg.At.Z, 18.0f));
+    // a corner next to the walker and the next one far beyond: no leg to the near corner (that would re-plan in place), the leg goes
+    // on inside the next segment
+    std::vector<Point3> near = { { 0, 0, 0 }, { 2, 0, 0 }, { 802, 0, 0 } };
+    leg = PickLeg(near, 180.0f, 10.0f);
+    CHECK(leg.Use && !leg.Grounded && Near(leg.At.X, 180.0f));
+    // the whole route is shorter than a leg: its end
+    std::vector<Point3> shortRoute = { { 0, 0, 0 }, { 40, 0, 0 }, { 80, 30, 0 } };
+    leg = PickLeg(shortRoute, 180.0f, 10.0f);
+    CHECK(leg.Use && leg.Grounded && Near(leg.At.X, 80.0f) && Near(leg.At.Y, 30.0f));
+    // nothing worth a leg: the route ends within minGain, a single point, the key off
+    std::vector<Point3> tiny = { { 0, 0, 0 }, { 3, 0, 0 }, { 6, 0, 0 } };
+    CHECK(!PickLeg(tiny, 180.0f, 10.0f).Use);
+    CHECK(!PickLeg({ { 0, 0, 0 } }, 180.0f, 10.0f).Use);
+    CHECK(!PickLeg(route, 0.0f, 10.0f).Use);
+    // every leg makes progress: walking leg after leg along a winding route reaches its end
+    std::vector<Point3> wind = { { 0, 0, 0 } };
+    for (int i = 1; i <= 30; ++i)
+        wind.push_back({ float(i * 40), float((i % 2) * 35), 0.0f });
+    Point3 at = wind[0];
+    int legs = 0;
+    while (legs < 40)
+    {
+        std::vector<Point3> rest = { at };
+        for (Point3 const& corner : wind)
+            if (corner.X > at.X + 0.5f)
+                rest.push_back(corner);
+        LegGoal next = PickLeg(rest, 180.0f, 10.0f);
+        if (!next.Use)
+            break;
+        CHECK(next.At.X > at.X);
+        at = next.At;
+        ++legs;
+    }
+    CHECK(Near(at.X, wind.back().X) && legs >= 6 && legs < 40);
+}
 }
 
 int main()
@@ -679,6 +734,7 @@ int main()
     TestParseCall();
     TestArchetypes();
     TestDeaths();
+    TestLegs();
 
     if (Failures)
     {

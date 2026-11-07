@@ -1009,6 +1009,12 @@ Playerbots.Bg.Rally.MaxRestarts = 1
 Playerbots.Bg.SoftGateMinutes = 20
 Playerbots.Bg.SoftGateScorePct = 40
 
+# Long routes in legs (planner on). The core's smooth path fails outright once a route needs more than about 296 yd of walking
+# (74 points of 4 yd), so a bot sent from an Alterac Valley cave to Snowfall gets no path and stands. With LegYards set, a target
+# farther than that is reached along the navmesh route (its corners, found with the straight path) in ordinary mesh paths of at
+# most LegYards each. 0 turns it off; otherwise 60 to 240 (180 suits Alterac Valley).
+Playerbots.Bg.LegYards = 0
+
 # Battleground reactive behaviours (planner on; docs/design/BG_PLAN.md section 4). Each key is one behaviour, all off by default;
 # ".bot bg" shows what each one does in the match, ".bot bg roles" which bot follows which (threat, fall back, mine, ninja...).
 # ThreatResponse: a node of ours with more enemies than allies at it pulls the nearest defenders of other nodes and 2 attackers;

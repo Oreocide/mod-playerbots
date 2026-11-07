@@ -381,6 +381,72 @@ inline int PickKiteSpot(std::vector<Point2> const& candidates, std::vector<Point
     return best;
 }
 
+// ---- long routes in legs (Playerbots.Bg.LegYards) ----
+// The core's smooth path fails outright once it needs 74 points of 4 yd (PathGenerator::FindSmoothPath, about 296 yd of route),
+// so a battleground route out of a cave or across a valley gets no path at all. The route is found once with the straight path
+// (its corners only), and the bot walks it as ordinary smooth mesh paths of at most LegYards each, corner by corner
+
+struct Point3
+{
+    float X = 0.0f;
+    float Y = 0.0f;
+    float Z = 0.0f;
+};
+
+struct LegGoal
+{
+    bool Use = false;       // false: nothing ahead worth a leg (the route is too short, or makes too little ground)
+    bool Grounded = true;   // false: a point inside a long segment, its height is a guess for the caller to put on the ground
+    Point3 At;
+};
+
+/// Where the next leg ends along route (route[0] is where the walker stands): the farthest corner within legYards of route length,
+/// when it is at least minGain away; otherwise (the next corner lies beyond the leg) the point where legYards of route end, inside
+/// that next segment (Grounded false: its height is the segment's, the caller puts it on the ground). Nothing minGain away: no leg
+inline LegGoal PickLeg(std::vector<Point3> const& route, float legYards, float minGain)
+{
+    LegGoal leg;
+    if (route.size() < 2 || legYards <= 0.0f)
+        return leg;
+
+    auto flat = [](Point3 const& a, Point3 const& b) { return std::hypot(b.X - a.X, b.Y - a.Y); };
+    float walked = 0.0f;
+    size_t best = 0;
+    for (size_t i = 1; i < route.size(); ++i)
+    {
+        float next = walked + flat(route[i - 1], route[i]);
+        if (next > legYards)
+            break;
+        walked = next;
+        best = i;
+    }
+
+    if (best > 0 && flat(route[0], route[best]) >= minGain)
+    {
+        leg.At = route[best];
+        leg.Use = true;
+        return leg;
+    }
+    // the whole route is shorter than minGain
+    if (best + 1 >= route.size())
+        return leg;
+
+    // the rest of the leg inside the next segment
+    Point3 const& from = route[best];
+    Point3 const& to = route[best + 1];
+    float length = flat(from, to);
+    if (length <= 0.0f)
+        return leg;
+    float t = std::min(1.0f, (legYards - walked) / length);
+    Point3 at = { from.X + (to.X - from.X) * t, from.Y + (to.Y - from.Y) * t, from.Z + (to.Z - from.Z) * t };
+    if (flat(route[0], at) < minGain)
+        return leg;
+    leg.At = at;
+    leg.Grounded = false;
+    leg.Use = true;
+    return leg;
+}
+
 // ---- /bg calls of a real player (#10) ----
 
 enum class CallKind : uint8

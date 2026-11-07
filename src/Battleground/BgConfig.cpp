@@ -65,6 +65,10 @@ void Config::Load()
     RallyMaxRestarts = sConfigMgr->GetIntDefault("Playerbots.Bg.Rally.MaxRestarts", 1);
     SoftGateMinutes = sConfigMgr->GetIntDefault("Playerbots.Bg.SoftGateMinutes", 20);
     SoftGateScorePct = std::min<uint32>(100, sConfigMgr->GetIntDefault("Playerbots.Bg.SoftGateScorePct", 40));
+    // the core's smooth path fails past about 296 yd of route; a leg leaves room for the detours of the mesh
+    LegYards = uint32(std::max(0, sConfigMgr->GetIntDefault("Playerbots.Bg.LegYards", 0)));
+    if (LegYards)
+        LegYards = std::clamp<uint32>(LegYards, 60, 240);
 
     ThreatResponse = sConfigMgr->GetBoolDefault("Playerbots.Bg.ThreatResponse", false);
     RetakeTimers = sConfigMgr->GetBoolDefault("Playerbots.Bg.RetakeTimers", false);
