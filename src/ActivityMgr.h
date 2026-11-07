@@ -26,6 +26,7 @@
 #include <set>
 #include <vector>
 
+class Battleground;
 class Player;
 class WorldPacket;
 
@@ -49,6 +50,16 @@ public:
 
     /// Server packets sent to a random bot. Only dungeon finder proposals matter, they are answered later from Update
     void OnBotPacket(ObjectGuid bot, WorldPacket const& packet);
+
+    /// Accepted battleground invites since boot (#15): accepts held because the bot was being teleported, accepted ports sent
+    /// again because they did not land, seats given up (the core keeps those counted until the match closes). .bot bg list
+    struct InviteCounters
+    {
+        uint32 Held = 0;
+        uint32 Resent = 0;
+        uint32 Lost = 0;
+    };
+    InviteCounters const& GetInviteCounters() const { return _invites; }
 
 private:
     struct Proposal
@@ -77,6 +88,12 @@ private:
         PlayerbotAI* AI = nullptr;
     };
 
+    struct Trip
+    {
+        uint32 LastSendMs = 0;
+        uint8 Sends = 0;
+    };
+
     void AnswerProposals();
     void Scan();
     void ServeBots(std::vector<BotRef> const& bots);
@@ -84,6 +101,7 @@ private:
     void FillBattlegrounds(std::vector<Player*> const& humans, std::vector<BotRef> const& bots);
     void FillArenas(std::vector<Player*> const& humans, std::vector<BotRef> const& bots);
     void CleanArenaGroups();
+    bool FinishTrip(Player* bot, Battleground const* bg, uint32 now);
 
     std::atomic<uint32> _clock = 0;
     uint32 _scanTimer = 0;
@@ -97,6 +115,8 @@ private:
     std::vector<ArenaGroup> _arenaGroups;
     std::map<ObjectGuid, uint32> _backoff;                        // bot -> do not use before (after a failed join)
     std::map<ObjectGuid, uint32> _queueSince;                     // bot -> when it joined a battleground queue
+    std::map<ObjectGuid, Trip> _trips;                            // bot -> its accepted battleground port that did not land
+    InviteCounters _invites;
 };
 }
 

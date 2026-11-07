@@ -18,6 +18,7 @@
 // The battleground team planner's scripts: the world script that loads Playerbots.Bg.* and plans every match after the map updates,
 // and the ".bot bg" command (merged into the .bot table of PlayerbotCommandScript by the command loader)
 
+#include "ActivityMgr.h"
 #include "Battleground/BgConfig.h"
 #include "Battleground/BgMapData.h"
 #include "Battleground/BgPlanner.h"
@@ -39,6 +40,7 @@
 #include "ScriptMgr.h"
 #include "StringFormat.h"
 #include "TemporarySummon.h"
+#include <shared_mutex>
 
 using namespace Trinity::ChatCommands;
 using namespace Playerbots::Bg;
@@ -132,12 +134,29 @@ void SendTeamSizes(ChatHandler* handler, Battleground const* bg)
         if (Player* player = ObjectAccessor::FindConnectedPlayer(guid); player && !Playerbots::IsBot(player))
             ++humans[member.Team == ALLIANCE ? TEAM_ALLIANCE : TEAM_HORDE];
 
+    // waiting in its queue; invited to this match and still on the accept dialog
     uint32 queued[2] = { 0, 0 };
+    uint32 asked[2] = { 0, 0 };
     BattlegroundQueue& queue = sBattlegroundMgr->GetBattlegroundQueue(bg->GetQueueID());
     for (uint32 type = 0; type < BG_QUEUE_GROUP_TYPES_COUNT; ++type)
         for (GroupQueueInfo const* info : queue.m_QueuedGroups[bg->GetBracketId()][type])
+        {
+            uint32 side = type == BG_QUEUE_PREMADE_ALLIANCE || type == BG_QUEUE_NORMAL_ALLIANCE ? TEAM_ALLIANCE : TEAM_HORDE;
             if (!info->IsInvitedToBGInstanceGUID)
-                queued[type == BG_QUEUE_PREMADE_ALLIANCE || type == BG_QUEUE_NORMAL_ALLIANCE ? TEAM_ALLIANCE : TEAM_HORDE] += uint32(info->Players.size());
+                queued[side] += uint32(info->Players.size());
+            else if (info->IsInvitedToBGInstanceGUID == bg->GetInstanceID())
+                asked[side] += uint32(info->Players.size());
+        }
+
+    // accepted and travelling: players holding this match's id who are not inside yet. What the invited count holds beyond the
+    // players inside, the open invites and the travellers is a seat nobody comes for (#15): the match cannot close while one is left
+    uint32 travelling[2] = { 0, 0 };
+    {
+        std::shared_lock lock(*HashMapHolder<Player>::GetLock());
+        for (auto const& [guid, player] : ObjectAccessor::GetPlayers())
+            if (player->GetBattlegroundId() == bg->GetInstanceID() && player->GetBattleground() == bg && !bg->GetPlayers().contains(guid))
+                ++travelling[player->GetBGTeam() == ALLIANCE ? TEAM_ALLIANCE : TEAM_HORDE];
+    }
 
     std::string teams;
     for (uint32 team = 0; team < 2; ++team)
@@ -145,8 +164,10 @@ void SendTeamSizes(ChatHandler* handler, Battleground const* bg)
         Team side = team == TEAM_ALLIANCE ? ALLIANCE : HORDE;
         uint32 inside = bg->GetPlayersCountByTeam(side);
         uint32 invited = bg->GetInvitedCount(side);
-        teams += Trinity::StringFormat("{}{} {} in ({} human), {} on the way, {} queued", team ? "; " : "", TeamLabel(team), inside, humans[team],
-            invited > inside ? invited - inside : 0, queued[team]);
+        uint32 accounted = inside + asked[team] + travelling[team];
+        teams += Trinity::StringFormat("{}{} {} in ({} human), {} on the way, {} queued{}", team ? "; " : "", TeamLabel(team), inside, humans[team],
+            invited > inside ? invited - inside : 0, queued[team],
+            invited > accounted ? Trinity::StringFormat(", {} lost seats", invited - accounted) : std::string());
     }
 
     char const* status = bg->GetStatus() == STATUS_WAIT_JOIN ? "preparation" : bg->GetStatus() == STATUS_IN_PROGRESS ? "in progress"
@@ -220,6 +241,9 @@ public:
                 plan->Teams[0].Assignable, plan->Teams[0].Others, plan->Teams[0].DefendPct,
                 plan->Teams[1].Assignable, plan->Teams[1].Others, plan->Teams[1].DefendPct);
 
+        Playerbots::ActivityMgr::InviteCounters const& invites = sActivityMgr->GetInviteCounters();
+        handler->PSendSysMessage("Bot invites since boot: %u accepts held while the bot was being teleported, %u accepted ports sent again, %u seats given up",
+            invites.Held, invites.Resent, invites.Lost);
         handler->SendSysMessage("Running battlegrounds:");
         sMapMgr->DoForAllMaps([handler](Map* map)
         {

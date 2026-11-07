@@ -62,6 +62,8 @@ constexpr uint32 EmptyQueueGrace = 60 * 1000;    // bots leave a queue that has 
 constexpr uint32 DungeonTeleportRetry = 30 * 1000;
 constexpr uint32 MaxBgBotsPerScan = 6;
 constexpr uint32 RunningFillAhead = 2;          // bots per team waiting in the queue for a running match once its gates are open
+constexpr uint32 TripResendMs = 10 * 1000;      // an accepted battleground port that did not land is sent again this often
+constexpr uint8 TripResendMax = 5;              // then the bot gives up the seat
 constexpr uint32 MaxLfgBotsPerScan = 2;
 
 uint8 LfgRolesOf(PlayerbotAI const& ai)
@@ -377,6 +379,16 @@ void ActivityMgr::ServeBots(std::vector<BotRef> const& bots)
 
         // ---- battlegrounds and arenas. A match with no real player is not played.
         Battleground const* botBattleground = bot->GetBattleground();
+
+        // An accepted invite whose port has not landed. The core counts the seat as taken until the bot arrives, and leaving frees
+        // only the seats of players who were inside, so a bot on its way never leaves from here: it arrives first (#15)
+        if (botBattleground && (bot->GetMapId() != botBattleground->GetMapId() || bot->GetInstanceId() != botBattleground->GetInstanceID()))
+        {
+            FinishTrip(bot, botBattleground, now);
+            continue;
+        }
+        _trips.erase(guid);
+
         if (bot->InBattleground() && !HumanPresent(bot->GetBattlegroundId(), botBattleground ? botBattleground->GetQueueID() : BATTLEGROUND_QUEUE_NONE))
         {
             TC_LOG_DEBUG("server.playerbots", "Playerbots: {} leaves the battleground, no player is in it", bot->GetName());
@@ -395,6 +407,19 @@ void ActivityMgr::ServeBots(std::vector<BotRef> const& bots)
             if (bot->IsInWorld() && bot->IsInvitedForBattlegroundQueueType(queueId))
             {
                 bool accept = HumanPresent(InviteInstance(bot, queueId), queueId);
+                // the port has to start at once: Player::TeleportTo refuses while another teleport runs, and the bot would then hold
+                // a seat it never takes (its own teleport lands elsewhere and the core drops its battleground id there, #15). The
+                // invite stays open 90 s, the next scan accepts. A decline is safe at any time: the core frees the seat
+                if (accept && bot->IsBeingTeleported())
+                {
+                    ++_invites.Held;
+                    TC_LOG_INFO("server.playerbots", "Playerbots: {} accepts its battleground invite later: it is being teleported (state {})",
+                        bot->GetName(), uint32(bot->GetTeleportState()));
+                    break;
+                }
+                // a route still running would take the bot back out of the battleground ("travel" outranks "pvp")
+                if (accept && ref.AI)
+                    ref.AI->GetRoute().Cancel();
                 AnswerBattlefieldPort(bot, slot, accept);
                 if (!accept)
                     TC_LOG_DEBUG("server.playerbots", "Playerbots: {} declined a battleground with no player in it", bot->GetName());
@@ -415,6 +440,39 @@ void ActivityMgr::ServeBots(std::vector<BotRef> const& bots)
         if (!queued)
             _queueSince.erase(guid);
     }
+}
+
+// The bot accepted an invite to bg but stands somewhere else. While its port runs it is left alone; when the port was refused
+// (Player::TeleportTo turns any teleport down while another one runs) it is sent again with the core's own battleground port, the
+// one the accept handler uses. After TripResendMax tries, or once the match ends, it leaves: that clears its battleground id
+// (else it would hunt players on a world map as if it were in the match), but the core keeps the seat counted (#15)
+bool ActivityMgr::FinishTrip(Player* bot, Battleground const* bg, uint32 now)
+{
+    if (bot->IsBeingTeleported())
+        return true;
+
+    Trip& trip = _trips[bot->GetGUID()];
+    if (trip.Sends && now - trip.LastSendMs < TripResendMs)
+        return true;
+
+    Team team = bot->GetBGTeam();
+    if (trip.Sends >= TripResendMax || bg->GetStatus() == STATUS_WAIT_LEAVE || !bot->IsInWorld() || (team != ALLIANCE && team != HORDE))
+    {
+        ++_invites.Lost;
+        TC_LOG_WARN("server.playerbots", "Playerbots: {} accepted {} (instance {}) but never got there ({} tries, match {}); it gives the seat up, "
+            "the battleground keeps it counted as invited", bot->GetName(), bg->GetName(), bg->GetInstanceID(), trip.Sends, uint32(bg->GetStatus()));
+        _trips.erase(bot->GetGUID());
+        bot->LeaveBattleground(false, true);
+        return false;
+    }
+
+    ++trip.Sends;
+    trip.LastSendMs = now;
+    ++_invites.Resent;
+    TC_LOG_INFO("server.playerbots", "Playerbots: {} accepted {} (instance {}) but stands on map {}: its port is sent again ({} of {})",
+        bot->GetName(), bg->GetName(), bg->GetInstanceID(), bot->GetMapId(), trip.Sends, TripResendMax);
+    BattlegroundMgr::SendToBattleground(bot, bg);
+    return true;
 }
 
 void ActivityMgr::FillLfg(std::vector<Player*> const& humans, std::vector<BotRef> const& bots)
