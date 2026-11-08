@@ -69,6 +69,7 @@ void Config::Load()
     LegYards = uint32(std::max(0, sConfigMgr->GetIntDefault("Playerbots.Bg.LegYards", 0)));
     if (LegYards)
         LegYards = std::clamp<uint32>(LegYards, 60, 240);
+    Rebuff = sConfigMgr->GetBoolDefault("Playerbots.Bg.Rebuff", false);
 
     ThreatResponse = sConfigMgr->GetBoolDefault("Playerbots.Bg.ThreatResponse", false);
     RetakeTimers = sConfigMgr->GetBoolDefault("Playerbots.Bg.RetakeTimers", false);

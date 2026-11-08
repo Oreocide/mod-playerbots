@@ -67,6 +67,7 @@ constexpr float NinjaSneakFrom = 60.0f;     // #17: the ninja stealths this far 
 constexpr uint32 NinjaStealth = 1784;       // #17: rogue Stealth
 constexpr uint32 NinjaProwl = 5215;         // #17: druid Prowl, in Cat Form
 constexpr uint32 NinjaCatForm = 768;
+constexpr uint32 RebuffHoldMs = 6000;       // Bg.Rebuff: how long a bot back from a graveyard waits for its buffs
 constexpr float LegArrive = 3.0f;           // Bg.LegYards: a leg ends this close to its corner, the next one starts there
 constexpr float LegMinGain = 10.0f;         // a leg gets the bot at least this much farther along (no re-planning in place)
 constexpr float LegGroundProbe = 60.0f;     // a leg end inside a long segment is put on the ground found this far above and below
@@ -1308,8 +1309,19 @@ bool Play(Player* bot, PlayerbotAI& ai)
     if (IsOpening(bot))
         return true;
 
-    // the reactive behaviours (phase 4): an outnumbered bot runs to friends; a helper plays a defender of the node it was sent to
     uint32 now = GameTime::GetGameTimeMS();
+    // Bg.Rebuff: back from a graveyard (dead on the last plan, or seen alive again a moment ago), a bot with buffs to give stands for
+    // a few seconds out of a fight, so the buff action above this one casts the raid buffs the death took, as players rebuff before
+    // they run off. The buffs list only (standard buffs, forms, pets): no cooldown, no consumable
+    if (sBgConfig.Rebuff && !bot->IsInCombat() && (!job.WasAlive || (job.RezMs && now - job.RezMs < RebuffHoldMs))
+        && ai.GetRotation().HasList(ai, "buffs"))
+    {
+        if (bot->isMoving())
+            bot->StopMoving();
+        return true;
+    }
+
+    // the reactive behaviours (phase 4): an outnumbered bot runs to friends; a helper plays a defender of the node it was sent to
     if (job.Over == BgRules::Overlay::FallBack && int32(job.FallBackUntilMs - now) > 0)
     {
         ai.ClearForcedTarget();

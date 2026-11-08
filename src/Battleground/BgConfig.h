@@ -51,6 +51,7 @@ struct Config
     uint32 SoftGateMinutes = 20;                            // a boss's "requires" stops counting this far into the match
     uint32 SoftGateScorePct = 40;                           // or once the enemy score is down to this share of its start
     uint32 LegYards = 0;                                    // a route longer than this is walked in legs along the mesh (0: off)
+    bool Rebuff = false;                                    // back from a graveyard: a few seconds for the raid buffs before it runs
 
     // the reactive behaviours (phase 4, BG_PLAN.md §4), each off by default
     bool ThreatResponse = false;                            // #1 a node of ours under attack pulls the nearest defenders and 2 attackers

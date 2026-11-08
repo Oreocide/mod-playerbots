@@ -557,6 +557,8 @@ uint32 ReactTeam(BgPlan& plan, uint32 team, std::vector<Player*> const& bots, st
                 deaths.clear();
             }
         }
+        if (!job.WasAlive && alive)
+            job.RezMs = now;
         job.WasAlive = alive;
         if (!sBgConfig.LaneChange)
             job.AvoidUntilMs = 0;

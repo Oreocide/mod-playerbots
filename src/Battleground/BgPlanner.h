@@ -77,6 +77,7 @@ struct Assignment
     int8 AvoidObjective = NoObjective;  // #19: it died three times there: another objective for a while
     uint32 AvoidUntilMs = 0;
     bool WasAlive = true;               // #19: alive on the last plan (a death is the change to dead)
+    uint32 RezMs = 0;                   // Bg.Rebuff: the plan that saw it alive again after a death
 };
 
 /// One player of the match as the last plan saw it (the reactive behaviours read this instead of searching the map)

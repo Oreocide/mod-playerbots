@@ -1015,6 +1015,12 @@ Playerbots.Bg.SoftGateScorePct = 40
 # most LegYards each. 0 turns it off; otherwise 60 to 240 (180 suits Alterac Valley).
 Playerbots.Bg.LegYards = 0
 
+# Back from a graveyard (planner on), a bot whose rotation has a buffs list stands for about 6 seconds out of a fight, so it casts
+# the raid buffs the death took (Fortitude, Arcane Intellect, Mark of the Wild, Battle Shout and the like) before it runs off, as
+# players do. Before the gates open the bots already stand at their gate and buff then. Standard buffs only: no cooldown, no
+# consumable.
+Playerbots.Bg.Rebuff = 0
+
 # Battleground reactive behaviours (planner on; docs/design/BG_PLAN.md section 4). Each key is one behaviour, all off by default;
 # ".bot bg" shows what each one does in the match, ".bot bg roles" which bot follows which (threat, fall back, mine, ninja...).
 # ThreatResponse: a node of ours with more enemies than allies at it pulls the nearest defenders of other nodes and 2 attackers;
