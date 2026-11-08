@@ -1141,6 +1141,16 @@ Playerbots.CastSupervisor.Enable = 0
 Playerbots.Move.Fallbacks = 0
 
 #
+#    Playerbots.Move.LegYards
+#        Description: A target farther than the core's smooth path reaches (it fails outright past 74 points of 4 yd, about
+#                     296 yd of route: no path at all) is walked to in legs of at most this many yards along the navmesh route
+#                     (its corners, from the straight path), each leg an ordinary mesh path. Only when the one path to the target
+#                     failed that way; nothing leaves the mesh. .bot travel info counts the legs. 0 turns it off; otherwise 60 to 240.
+#        Default:     0
+
+Playerbots.Move.LegYards = 0
+
+#
 #    Playerbots.Combat.RoleTargeting
 #        Description: Bots in a group choose fights by role. A tank takes what nobody tanks (first what hits a
 #                     healer), damage dealers and healers follow the main tank's target, then what hits a healer,

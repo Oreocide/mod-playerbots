@@ -37,6 +37,9 @@ void Config::Load()
     DynamicTickIdleMaxMs = uint32(std::clamp(sConfigMgr->GetIntDefault("Playerbots.DynamicTick.IdleMaxMs", 2500), 100, 30000));
     DynamicTickDeadMs = uint32(std::clamp(sConfigMgr->GetIntDefault("Playerbots.DynamicTick.DeadMs", 2000), 100, 30000));
     MoveFallbacks = sConfigMgr->GetBoolDefault("Playerbots.Move.Fallbacks", false);
+    MoveLegYards = uint32(std::max(0, sConfigMgr->GetIntDefault("Playerbots.Move.LegYards", 0)));
+    if (MoveLegYards)
+        MoveLegYards = std::clamp<uint32>(MoveLegYards, 60, 240);
     CombatRoleTargeting = sConfigMgr->GetBoolDefault("Playerbots.Combat.RoleTargeting", false);
     CombatThreatLimitPct = uint32(std::clamp(sConfigMgr->GetIntDefault("Playerbots.Combat.ThreatLimit", 0), 0, 100));
     CombatWaitForAttackMs = uint32(std::clamp(sConfigMgr->GetIntDefault("Playerbots.Combat.WaitForAttackMs", 0), 0, 30000));

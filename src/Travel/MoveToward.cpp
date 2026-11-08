@@ -23,6 +23,7 @@
 #include "PathRepair.h"
 #include "PlayerJump.h"
 #include "StuckDiagnosis.h"
+#include "Travel/LegRules.h"
 #include "Random.h"
 #include "SpellAuras.h"
 #include "SpellInfo.h"
@@ -161,6 +162,8 @@ std::atomic<uint32> sPathsSteep{ 0 };
 std::atomic<uint32> sPathsRepaired{ 0 };
 std::atomic<uint32> sPathsRejected{ 0 };
 std::atomic<uint32> sHops{ 0 };
+std::atomic<uint32> sLegs{ 0 };
+std::atomic<uint32> sLegsFailed{ 0 };
 std::mutex sHopLock;
 std::unordered_map<ObjectGuid, uint32> sHopAt;   // game time ms: when a bot may hop again
 std::atomic<uint32> sNextBlockedLog{ 0 };   // game time ms: at most one blocked-path line a second
@@ -328,13 +331,85 @@ void UpdateMountForTravel(Player* bot, float distanceToDest, float mountAtOverri
     bot->CastSpell(bot, spell);
 }
 
+constexpr float LegArrive = 3.0f;            // Move.LegYards: a leg ends this close to its corner, the next one starts there
+constexpr float LegMinGain = 10.0f;          // a leg gets the walker at least this much farther along (no re-planning in place)
+constexpr float LegGroundProbe = 60.0f;      // a leg end inside a long segment is put on the ground found this far above and below
+
+Optional<Position> NextMeshLeg(WorldObject const* walker, Position const& where, float legYards)
+{
+    Map* map = walker ? walker->GetMap() : nullptr;
+    if (legYards <= 0.0f || !map)
+        return {};
+
+    auto ground = [&](float x, float y, float z) -> Optional<float>
+    {
+        if (!map->IsGridLoaded(x, y))
+            return {};
+        float found = map->GetHeight(walker->GetPhaseShift(), x, y, z + LegGroundProbe, true, LegGroundProbe * 3.0f);
+        if (found <= INVALID_HEIGHT)
+            return {};
+        return found;
+    };
+
+    Position target = where;
+    for (int attempt = 0; attempt < 2; ++attempt)
+    {
+        PathGenerator path(walker);
+        path.SetUseStraightPath(true);
+        bool calculated = path.CalculatePath(target.GetPositionX(), target.GetPositionY(), target.GetPositionZ(), false);
+        Movement::PointsArray const& points = path.GetPath();
+        if (calculated && PathIsWalkable(path.GetPathType()) && points.size() >= 2)
+        {
+            // the first point of a core path is where the walker stands
+            std::vector<LegRules::Point3> route;
+            route.reserve(points.size());
+            for (G3D::Vector3 const& point : points)
+                route.push_back({ point.x, point.y, point.z });
+            LegRules::LegGoal leg = LegRules::PickLeg(route, legYards, LegMinGain);
+            if (!leg.Use)
+                return {};
+            Position at(leg.At.X, leg.At.Y, leg.At.Z);
+            if (!leg.Grounded)
+            {
+                Optional<float> z = ground(at.GetPositionX(), at.GetPositionY(), at.GetPositionZ());
+                if (!z)
+                    return {};
+                at.Relocate(at.GetPositionX(), at.GetPositionY(), *z);
+            }
+            return at;
+        }
+
+        // halfway there, on the ground
+        float x = (walker->GetPositionX() + target.GetPositionX()) * 0.5f;
+        float y = (walker->GetPositionY() + target.GetPositionY()) * 0.5f;
+        Optional<float> z = ground(x, y, std::max(walker->GetPositionZ(), target.GetPositionZ()));
+        if (!z || walker->GetExactDist2d(x, y) < LegMinGain)
+            return {};
+        target.Relocate(x, y, *z);
+    }
+    return {};
+}
+
+namespace
+{
+MoveResult MoveAlongMeshImpl(Player* bot, Position const& dest, float arriveYards, float standoff, bool legs);
+}
+
 MoveResult MoveAlongMesh(Player* bot, Position const& dest, float arriveYards, float standoff)
+{
+    return MoveAlongMeshImpl(bot, dest, arriveYards, standoff, true);
+}
+
+namespace
+{
+MoveResult MoveAlongMeshImpl(Player* bot, Position const& dest, float arriveYards, float standoff, bool legs)
 {
     if (!bot)
         return MoveResult::NoPath;
 
     // a split sanctuary's other side is not a walk target (the area id, or the Northrend Dalaran street box)
-    if (SpawnPolicy::IsEnemyGroundAt(bot, bot->GetMapId(), dest))
+    // a leg's end (legs false) is looked up on loaded grids only: an area query elsewhere could load terrain on the map thread
+    if (SpawnPolicy::IsEnemyGroundAt(bot, bot->GetMapId(), dest, !legs))
         return MoveResult::NoPath;
 
     // in the air of a jump: nothing to plan until the bot has landed
@@ -392,7 +467,22 @@ MoveResult MoveAlongMesh(Player* bot, Position const& dest, float arriveYards, f
     };
 
     if (!calculated || !PathIsWalkable(type) || points.size() < 2 || path.GetPathLength() < 0.5f)
+    {
+        // Playerbots.Move.LegYards: the smooth path fails outright past 74 points (SHORTCUT|NOPATH, about 296 yd of route), a far target
+        // is walked to in legs along the straight path's corners. One level only; the stand-off belongs to the last leg, the target's
+        // own call, and a leg's end is not the end of the walk
+        if (legs && sPlayerbotsConfig.MoveLegYards && type == uint32(PATHFIND_NOPATH | PATHFIND_SHORTCUT))
+        {
+            if (Optional<Position> leg = NextMeshLeg(bot, dest, float(sPlayerbotsConfig.MoveLegYards)))
+                if (MoveAlongMeshImpl(bot, *leg, LegArrive, 0.0f, false) != MoveResult::NoPath)
+                {
+                    ++sLegs;
+                    return MoveResult::Moving;
+                }
+            ++sLegsFailed;
+        }
         return noPathOrNear();
+    }
 
     // The mesh decides where the walk ends (forceDest = false). That is the target when it lies on the mesh; if the path
     // ends short (a long route is cut at ~300 yards, or the target is off the mesh) it is accepted only as a segment that
@@ -536,6 +626,7 @@ MoveResult MoveAlongMesh(Player* bot, Position const& dest, float arriveYards, f
     ++sMeshLaunched;
     return MoveResult::Moving;
 }
+}
 
 bool MoveToward(Player* bot, Position const& dest, float arriveYards, float standoff)
 {
@@ -544,6 +635,6 @@ bool MoveToward(Player* bot, Position const& dest, float arriveYards, float stan
 
 MeshMoveStats GetMeshMoveStats()
 {
-    return { sMeshLaunched.load(), sMeshNoPath.load(), sPathsChecked.load(), sPathsBlocked.load(), sPathsKneeOnly.load(), sPathsSteep.load(), sPathsRepaired.load(), sPathsRejected.load(), sHops.load() };
+    return { sMeshLaunched.load(), sMeshNoPath.load(), sPathsChecked.load(), sPathsBlocked.load(), sPathsKneeOnly.load(), sPathsSteep.load(), sPathsRepaired.load(), sPathsRejected.load(), sHops.load(), sLegs.load(), sLegsFailed.load() };
 }
 }

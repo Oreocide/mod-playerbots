@@ -35,6 +35,7 @@ struct Config
     uint32 DynamicTickIdleMaxMs = 2500;
     uint32 DynamicTickDeadMs = 2000;
     bool MoveFallbacks = false;        // a destination with no mesh path is tried at other heights, then through cone-sampled stepping stones
+    uint32 MoveLegYards = 0;           // a target past the core's smooth path limit (~296 yd) is walked to in mesh legs of this length (0: off)
     bool CombatRoleTargeting = false;  // in a group: tanks take what nobody tanks, damage dealers follow the main tank's target
     uint32 CombatThreatLimitPct = 0;   // a bot that is not tanking stops attacking at this share of the tank's threat (0 = off)
     uint32 CombatWaitForAttackMs = 0;  // bots in a group a player leads do not attack for this long after a fight starts (0 = off)

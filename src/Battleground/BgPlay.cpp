@@ -36,7 +36,6 @@
 #include "ObjectAccessor.h"
 #include "ObjectMgr.h"
 #include "Optional.h"
-#include "PathGenerator.h"
 #include "Player.h"
 #include "Spell.h"
 #include "SpellHistory.h"
@@ -69,61 +68,6 @@ constexpr uint32 NinjaProwl = 5215;         // #17: druid Prowl, in Cat Form
 constexpr uint32 NinjaCatForm = 768;
 constexpr uint32 RebuffHoldMs = 6000;       // Bg.Rebuff: how long a bot back from a graveyard waits for its buffs
 constexpr float LegArrive = 3.0f;           // Bg.LegYards: a leg ends this close to its corner, the next one starts there
-constexpr float LegMinGain = 10.0f;         // a leg gets the bot at least this much farther along (no re-planning in place)
-constexpr float LegGroundProbe = 60.0f;     // a leg end inside a long segment is put on the ground found this far above and below
-
-/// Playerbots.Bg.LegYards: where the next leg toward where ends, along the mesh route, or nothing (the key off, a short route, no
-/// route). The route is the straight path (corners only: the smooth path fails past about 296 yd, PathGenerator::FindSmoothPath);
-/// a straight path that fails too (74 corners) is asked once more for a point halfway there. Takes any WorldObject: a driven
-/// vehicle base hits the same limit (phase 5.2)
-Optional<Position> NextLeg(WorldObject const* walker, Position const& where)
-{
-    uint32 const legYards = sBgConfig.LegYards;
-    Map* map = walker ? walker->GetMap() : nullptr;
-    if (!legYards || !map)
-        return {};
-
-    Position target = where;
-    for (int attempt = 0; attempt < 2; ++attempt)
-    {
-        PathGenerator path(walker);
-        path.SetUseStraightPath(true);
-        bool calculated = path.CalculatePath(target.GetPositionX(), target.GetPositionY(), target.GetPositionZ(), false);
-        Movement::PointsArray const& points = path.GetPath();
-        if (calculated && PathIsWalkable(path.GetPathType()) && points.size() >= 2)
-        {
-            // the first point of a core path is where the walker stands
-            std::vector<BgRules::Point3> route;
-            route.reserve(points.size());
-            for (G3D::Vector3 const& point : points)
-                route.push_back({ point.x, point.y, point.z });
-            BgRules::LegGoal leg = BgRules::PickLeg(route, float(legYards), LegMinGain);
-            if (!leg.Use)
-                return {};
-            Position at(leg.At.X, leg.At.Y, leg.At.Z);
-            if (!leg.Grounded)
-            {
-                float ground = map->GetHeight(walker->GetPhaseShift(), at.GetPositionX(), at.GetPositionY(), at.GetPositionZ() + LegGroundProbe,
-                    true, LegGroundProbe * 2.0f);
-                if (ground <= INVALID_HEIGHT)
-                    return {};
-                at.Relocate(at.GetPositionX(), at.GetPositionY(), ground);
-            }
-            return at;
-        }
-
-        // halfway there, on the ground
-        float x = (walker->GetPositionX() + target.GetPositionX()) * 0.5f;
-        float y = (walker->GetPositionY() + target.GetPositionY()) * 0.5f;
-        float z = std::max(walker->GetPositionZ(), target.GetPositionZ());
-        float ground = map->GetHeight(walker->GetPhaseShift(), x, y, z + LegGroundProbe, true, LegGroundProbe * 3.0f);
-        if (ground <= INVALID_HEIGHT || walker->GetExactDist2d(x, y) < LegMinGain)
-            return {};
-        target.Relocate(x, y, ground);
-    }
-    return {};
-}
-
 bool IsOpening(Unit const* unit)
 {
     Spell const* spell = unit->GetCurrentSpell(CURRENT_GENERIC_SPELL);
@@ -171,13 +115,13 @@ bool Go(Player* bot, Position const& where, float arrive, int8 objective)
     // in a straight line gets legs too once the one mesh path to it failed
     bool legs = sBgConfig.LegYards && !IsMovingOnFoot(bot);
     if (legs && bot->GetExactDist2d(where) > float(sBgConfig.LegYards))
-        if (Optional<Position> leg = NextLeg(bot, where))
+        if (Optional<Position> leg = NextMeshLeg(bot, where, float(sBgConfig.LegYards)))
             if (MoveAlongMesh(bot, *leg, LegArrive) != MoveResult::NoPath)
                 return true;
     if (MoveAlongMesh(bot, where, arrive) != MoveResult::NoPath)
         return true;
     if (legs && bot->GetExactDist2d(where) <= float(sBgConfig.LegYards))
-        if (Optional<Position> leg = NextLeg(bot, where))
+        if (Optional<Position> leg = NextMeshLeg(bot, where, float(sBgConfig.LegYards)))
             if (MoveAlongMesh(bot, *leg, LegArrive) != MoveResult::NoPath)
                 return true;
 

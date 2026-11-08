@@ -606,6 +606,8 @@ public:
             handler->PSendSysMessage("Paths checked (Move.LogBlockedPaths): %u; %u blocked at eye height, %u with a cliff segment, %u blocked at knee height only.", mesh.Checked, mesh.Blocked, mesh.Steep, mesh.KneeOnly);
         if (mesh.Hops)
             handler->PSendSysMessage("Move.HopLowObstacles: %u hops over low obstacles.", mesh.Hops);
+        if (mesh.Legs || mesh.LegsFailed)
+            handler->PSendSysMessage("Move.LegYards: %u far targets walked to in legs, %u with no leg either.", mesh.Legs, mesh.LegsFailed);
         if (mesh.Repaired || mesh.Rejected)
             handler->PSendSysMessage("Move.AvoidBlockedPaths: %u paths got a detour, %u refused for a cliff segment.", mesh.Repaired, mesh.Rejected);
 

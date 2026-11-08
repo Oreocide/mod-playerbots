@@ -2,9 +2,11 @@
 #define PlayerbotsTravelMove_h__
 
 #include "Define.h"
+#include "Optional.h"
 #include "Position.h"
 
 class Player;
+class WorldObject;
 
 namespace Playerbots
 {
@@ -35,6 +37,13 @@ MoveResult MoveAlongMesh(Player* bot, Position const& dest, float arriveYards = 
 /// Compatibility wrapper: true while moving; false when arrived or when there is no mesh path (use MoveAlongMesh to tell them apart)
 bool MoveToward(Player* bot, Position const& dest, float arriveYards = 5.0f, float standoff = 0.0f);
 
+/// A long route in legs (Playerbots.Move.LegYards, Playerbots.Bg.LegYards; Travel/LegRules.h): where the next leg of at most legYards
+/// toward where ends, along the navmesh route found with the straight path (corners only), or nothing (a short route, no route). A
+/// straight path that fails too is asked once more for a point halfway there. A leg end inside a long segment is put on the ground,
+/// only where the grid is loaded (a height query elsewhere could load terrain on the map thread). Any WorldObject: a driven vehicle
+/// base hits the same limit
+Optional<Position> NextMeshLeg(WorldObject const* walker, Position const& where, float legYards);
+
 struct MeshMoveStats
 {
     uint32 Launched = 0;
@@ -46,6 +55,8 @@ struct MeshMoveStats
     uint32 Repaired = 0;  // paths given a detour around geometry (Move.AvoidBlockedPaths)
     uint32 Rejected = 0;  // paths refused for a cliff segment
     uint32 Hops = 0;      // jumps over low obstacles (Move.HopLowObstacles)
+    uint32 Legs = 0;      // far targets walked to in legs (Move.LegYards)
+    uint32 LegsFailed = 0; // far targets with no leg either
 };
 MeshMoveStats GetMeshMoveStats();
 }
