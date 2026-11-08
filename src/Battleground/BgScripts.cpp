@@ -720,12 +720,18 @@ public:
     // .bot bg test start <map> [level]: the random bots fill and play one normal battleground match with no real player in it
     static bool HandleBgTestStartCommand(ChatHandler* handler, uint32 mapId, Optional<uint32> level)
     {
-        // the normal (not rated, not arena) battleground whose only map is this one
+        // the normal (not rated, not arena) battleground whose only map is this one. Every BattlemasterList row, not the type ids
+        // below MAX_BATTLEGROUND_TYPE_ID: today's Warsong Gulch (map 2106) and Arathi Basin (2107) are rows 1014 and 1018
         BattlegroundTemplate const* bgTemplate = nullptr;
-        for (uint32 id = 1; id < MAX_BATTLEGROUND_TYPE_ID && !bgTemplate; ++id)
-            if (BattlegroundTemplate const* candidate = sBattlegroundMgr->GetBattlegroundTemplateByTypeId(BattlegroundTypeId(id)))
-                if (candidate->MapIDs.size() == 1 && uint32(candidate->MapIDs.front()) == mapId && !candidate->IsArena())
-                    bgTemplate = candidate;
+        for (BattlemasterListEntry const* list : sBattlemasterListStore)
+        {
+            BattlegroundTemplate const* candidate = sBattlegroundMgr->GetBattlegroundTemplateByTypeId(BattlegroundTypeId(list->ID));
+            if (candidate && candidate->MapIDs.size() == 1 && uint32(candidate->MapIDs.front()) == mapId && !candidate->IsArena())
+            {
+                bgTemplate = candidate;
+                break;
+            }
+        }
         if (!bgTemplate || bgTemplate->MapIDs.empty())
         {
             handler->PSendSysMessage("No normal battleground on map %u.", mapId);

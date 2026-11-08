@@ -18,6 +18,7 @@
 #include "Battleground/BgPlay.h"
 #include "Battleground/BgConfig.h"
 #include "Battleground/BgPlanner.h"
+#include "Battleground/BgReact.h"
 #include "Battleground/BgReactRules.h"
 #include "Db/PlayerbotRepository.h"
 #include "Engine/AiRegistry.h"
@@ -326,7 +327,8 @@ bool PlayHealer(Player* bot, BgPlan const& plan, Assignment const& job, Position
         for (MapReference const& ref : map->GetPlayers())
         {
             Player* other = ref.GetSource();
-            if (!other || other == bot || !other->IsAlive() || TeamOf(other) != team)
+            // never another healer: two healers that pick each other once the fighters ran ahead stand together for the whole match
+            if (!other || other == bot || !other->IsAlive() || TeamOf(other) != team || IsHealer(other))
                 continue;
             auto it = plan.Jobs.find(other->GetGUID());
             if (it != plan.Jobs.end() && it->second.Objective != job.Objective)
