@@ -1145,7 +1145,8 @@ Playerbots.Move.Fallbacks = 0
 #        Description: A target farther than the core's smooth path reaches (it fails outright past 74 points of 4 yd, about
 #                     296 yd of route: no path at all) is walked to in legs of at most this many yards along the navmesh route
 #                     (its corners, from the straight path), each leg an ordinary mesh path. Only when the one path to the target
-#                     failed that way; nothing leaves the mesh. .bot travel info counts the legs. 0 turns it off; otherwise 60 to 240.
+#                     failed that way; nothing leaves the mesh. A leg ends only on a grid that is already loaded, so legs never load
+#                     terrain or navmesh of their own. .bot travel info counts the legs. 0 turns it off; otherwise 60 to 240.
 #        Default:     0
 
 Playerbots.Move.LegYards = 0

@@ -360,11 +360,17 @@ Optional<Position> NextMeshLeg(WorldObject const* walker, Position const& where,
         Movement::PointsArray const& points = path.GetPath();
         if (calculated && PathIsWalkable(path.GetPathType()) && points.size() >= 2)
         {
-            // the first point of a core path is where the walker stands
+            // the first point of a core path is where the walker stands. A leg ends only on a grid that is already loaded (owner
+            // 2026-11-08, mod-playerbots#18): the route stops at its first corner on an unloaded grid, so legs never load terrain or
+            // navmesh of their own. A battleground map has every grid loaded, so this never shortens a battleground route
             std::vector<LegRules::Point3> route;
             route.reserve(points.size());
             for (G3D::Vector3 const& point : points)
+            {
+                if (!route.empty() && !map->IsGridLoaded(point.x, point.y))
+                    break;
                 route.push_back({ point.x, point.y, point.z });
+            }
             LegRules::LegGoal leg = LegRules::PickLeg(route, legYards, LegMinGain);
             if (!leg.Use)
                 return {};
