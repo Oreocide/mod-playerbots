@@ -131,10 +131,18 @@ uint32 LoadNodes()
         if (def.Kind == MapKind::Valley)
             def.Nodes.clear();
 
+    // the coordinator's columns come with their own SQL file: a query naming a missing column aborts the server, so they are read only
+    // when the table has all seven (a binary may boot before or after that file is applied)
+    bool coordinatorColumns = false;
+    if (QueryResult columns = WorldDatabase.Query("SELECT COUNT(*) FROM information_schema.COLUMNS WHERE TABLE_SCHEMA = DATABASE() "
+        "AND TABLE_NAME = 'playerbots_bg_node' AND COLUMN_NAME IN ('attack_quota', 'guards', 'w_early', 'w_mid', 'w_late', 'ally_value', 'horde_value')"))
+        coordinatorColumns = columns->Fetch()[0].GetUInt64() == 7;
+
     //                                                 0    1     2     3     4     5  6  7  8       9               10         11
-    QueryResult result = WorldDatabase.Query("SELECT map, node, kind, side, name, x, y, z, radius, creature_entry, ws_a_ctrl, ws_a_assault, "
-    //   12         13            14        15        16           17            18         19     20       21
-        "ws_h_ctrl, ws_h_assault, ws_alive, requires, ally_weight, horde_weight, min_group, rally, leash_r, aliases FROM playerbots_bg_node ORDER BY map, node");
+    QueryResult result = WorldDatabase.Query(Trinity::StringFormat("SELECT map, node, kind, side, name, x, y, z, radius, creature_entry, ws_a_ctrl, ws_a_assault, "
+    //   12         13            14        15        16           17            18         19     20       21       22            23      24       25     26      27          28
+        "ws_h_ctrl, ws_h_assault, ws_alive, requires, ally_weight, horde_weight, min_group, rally, leash_r, aliases{} FROM playerbots_bg_node ORDER BY map, node",
+        coordinatorColumns ? ", attack_quota, guards, w_early, w_mid, w_late, ally_value, horde_value" : "").c_str());
     if (!result)
     {
         TC_LOG_INFO("server.playerbots", "Playerbots: playerbots_bg_node is empty, Alterac Valley is not planned");
@@ -180,6 +188,15 @@ uint32 LoadNodes()
         node.RallyKey = fields[19].GetString();
         node.LeashRadius = fields[20].GetFloat();
         node.Aliases = fields[21].GetString();
+        if (coordinatorColumns)
+        {
+            node.AttackQuota = fields[22].GetUInt8();
+            node.Guards = fields[23].GetUInt8();
+            for (uint32 phase = 0; phase < 3; ++phase)
+                node.PhaseWeights[phase] = std::max(0.0f, fields[24 + phase].GetFloat());
+            node.Values[0] = std::max(0.0f, fields[27].GetFloat());
+            node.Values[1] = std::max(0.0f, fields[28].GetFloat());
+        }
         def->Nodes.push_back(std::move(node));
         ++count;
     } while (result->NextRow());

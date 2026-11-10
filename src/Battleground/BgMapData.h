@@ -76,6 +76,11 @@ struct NodeDef
     int8 Rally = -1;                // index of the rally row in MapDef::Nodes
     float LeashRadius = 0.0f;
     std::string Aliases;
+    // the coordinator's columns (docs/design/BG_COORDINATOR.md §2.9; read only when the table has them): 0 = the mode's default
+    uint8 AttackQuota = 0;
+    uint8 Guards = 0;
+    float PhaseWeights[3] = { 1.0f, 1.0f, 1.0f };   // early, mid, late
+    float Values[2] = { 0.0f, 0.0f };               // the coordinator's value per team; 0 = Weights (the old path keeps Weights)
 
     bool IsBoss() const { return Kind == NodeKind::KillCaptain || Kind == NodeKind::KillGeneral; }
     bool IsNode() const { return Kind == NodeKind::Capture || Kind == NodeKind::Burn; }

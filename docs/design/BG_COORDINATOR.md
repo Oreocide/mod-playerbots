@@ -285,6 +285,10 @@ Core keys, all under `Playerbots.Bg.`:
   - `attack_quota TINYINT UNSIGNED NOT NULL DEFAULT 0` (0 = the mode default);
   - `guards TINYINT UNSIGNED NOT NULL DEFAULT 0` (0 = the mode default);
   - `w_early FLOAT NOT NULL DEFAULT 1`, `w_mid FLOAT NOT NULL DEFAULT 1`, `w_late FLOAT NOT NULL DEFAULT 1`: the phase multipliers, one column each (owner: no packed string).
+  - `ally_value FLOAT NOT NULL DEFAULT 0`, `horde_value FLOAT NOT NULL DEFAULT 0`: the coordinator's value per team (0 = the row's weight).
+    - The §4 values cannot go into `ally_weight` / `horde_weight`: the old path reads those, and changing them would change arm A (the baseline rule).
+    - Each team's value is its attack value on the rows it attacks and its hold value on its own rows; the phase weights multiply only the attack value.
+- As built (W7), the columns are added to the existing `2026_11_06_00_world_mod_playerbots_bg_node.sql`, which drops and recreates the table. A changed file is applied again at the next boot. The §4 values are `UPDATE`s at its end; the old weights are untouched.
 - The staging point and its N reuse the existing `rally` and `min_group` columns.
 - Which value wins: the row's non-default value, then `Playerbots.Bg.<Map>.<Key>`, then `Playerbots.Bg.<Mode>.<Key>`.
 - **Pitfall:** a query on a missing column aborts worldserver 10 s later (TrinityCore `CLAUDE.md`). The `ALTER` ships as module SQL together with the binary that reads it. The loader checks first that the columns exist, and falls back to the defaults when they don't.
@@ -733,7 +737,7 @@ Every item is one commit in `Oreocide/mod-playerbots`, behind a key that default
   - These stay unchanged until the owner switches to the coordinator, and are deleted only after that: `PlanTeam`, `PlanValleyTeam`, `StepRally`, `Discover`, `ReadState`, `ReadValley`, `PlaceDefenders`, `SplitTeam`, `PassOver`, the `Play*` functions, `FlagInfo`, the MoveOn cap.
   - **Identity check, at source level:** the diff of those functions is empty except for one `if (sBgConfig.Coordinator)` dispatch line in `Plan` and one in `Bg::Play`, and the unit tests pass. A headless match cannot prove identity, because matches differ in timing and positions even with a shared seed.
   - W0's metrics and plan logging only read state.
-- **Commits:** each message is shown to the owner first, with no attribution lines; nothing is pushed without approval.
+- **Commits:** no attribution lines. The owner waived showing the messages first for these work items (2026-11-10); nothing is pushed without approval.
 - **New files:** a new `.cpp` needs `cmake .` run with no other build going (`modules/CLAUDE.md`).
 - **Header layout:** a change to `BgPlanner.h` needs a `touch` and a full module rebuild (the header-layout pitfall).
 - **Shared files:** `GenericStrategies.cpp`, `PlayerbotsScripts.cpp` and the conf.dist hold other sessions' hunks; splice only ours.

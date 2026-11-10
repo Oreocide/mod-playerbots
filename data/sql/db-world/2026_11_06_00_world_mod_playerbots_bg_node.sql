@@ -17,6 +17,10 @@
 --       first), the share of defenders among nodes it holds; 0 = the team never goes for it
 -- min_group: the team needs at least this many attackers before it pushes this boss
 -- leash_r: the boss evades this far (2D) from its home
+-- The coordinator's columns (docs/design/BG_COORDINATOR.md §2.9, §4; read only by Playerbots.Bg.Coordinator): ally_value,
+--       horde_value: a team's value of the node (its attack value where it attacks, its hold value where it holds; 0 = the
+--       weight, which stays the old planner's); attack_quota, guards: the most bots on a Take, the guards on a running assault of
+--       the team (0 = the mode's default); w_early, w_mid, w_late: the attack value's multiplier in each phase of the team
 -- Banners are found near x, y by their script (go_av_capturable_object, go_av_contested_object); positions of the nodes are their
 -- banners in world.gameobject, of the bosses their creature spawns. Rally spots: points of the AzerothCore mod-playerbots
 -- (GPL-2) Alterac Valley road paths (BattleGroundTactics.cpp), 64-130 yd from the boss and away from creatures hostile to the
@@ -46,6 +50,13 @@ CREATE TABLE `playerbots_bg_node` (
   `rally` varchar(32) NOT NULL DEFAULT '',
   `leash_r` float NOT NULL DEFAULT '0',
   `aliases` varchar(255) NOT NULL DEFAULT '',
+  `attack_quota` tinyint unsigned NOT NULL DEFAULT '0',
+  `guards` tinyint unsigned NOT NULL DEFAULT '0',
+  `w_early` float NOT NULL DEFAULT '1',
+  `w_mid` float NOT NULL DEFAULT '1',
+  `w_late` float NOT NULL DEFAULT '1',
+  `ally_value` float NOT NULL DEFAULT '0',
+  `horde_value` float NOT NULL DEFAULT '0',
   `comment` varchar(255) NOT NULL DEFAULT '',
   PRIMARY KEY (`map`, `node`)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='Playerbots: battleground objective graph (BG_PLAN.md)';
@@ -85,3 +96,26 @@ INSERT INTO `playerbots_bg_node` (`map`, `node`, `kind`, `side`, `name`, `x`, `y
 -- its higher weight; the owner gets 1 reinforcement every 45 s (battleground_alterac_valley.cpp)
 (30, 'irondeep_mine', 'mine', 0, 'Irondeep Mine', 863.1, -441.3, 50.6, 30, 11657, 1358, 0, 1359, 0, 0, '', 2, 1, 4, '', 0, 'irondeep,id mine,north mine', 'Morloch 11657 neutral; Umi Thorson 13078 for the Alliance, Keetar 13079 for the Horde'),
 (30, 'coldtooth_mine', 'mine', 0, 'Coldtooth Mine', -851.6, -92.6, 68.5, 30, 11677, 1355, 0, 1356, 0, 0, '', 1, 2, 4, '', 0, 'coldtooth,ct mine,south mine', 'Taskmaster Snivvle 11677 neutral; Aggi Rumblestomp 13086 for the Alliance, Masha Swiftcut 13088 for the Horde');
+
+-- The coordinator's values for Alterac Valley (docs/design/BG_COORDINATOR.md §4): a push-path tower 8, a captain 8 (mid phase), the
+-- graveyards 6, the far towers 7, the last graveyard 4, the general 10 (late), Snowfall 3 with a quota of 4 and 1 guard. Hold
+-- values on a team's own nodes: the graveyard nearest the front 3, the others 2, towers and bunkers 1. Tuning (M) until tested
+UPDATE `playerbots_bg_node` SET `ally_value` = 3, `horde_value` = 3, `attack_quota` = 4, `guards` = 1, `w_early` = 1, `w_mid` = 0.3, `w_late` = 0 WHERE `map` = 30 AND `node` = 'snowfall_gy';
+UPDATE `playerbots_bg_node` SET `ally_value` = 8, `horde_value` = 1, `attack_quota` = 12, `guards` = 2, `w_early` = 1, `w_mid` = 1, `w_late` = 0.5 WHERE `map` = 30 AND `node` = 'iceblood_tower';
+UPDATE `playerbots_bg_node` SET `ally_value` = 8, `horde_value` = 1, `attack_quota` = 12, `guards` = 2, `w_early` = 1, `w_mid` = 1, `w_late` = 0.5 WHERE `map` = 30 AND `node` = 'tower_point';
+UPDATE `playerbots_bg_node` SET `ally_value` = 8, `horde_value` = 0, `attack_quota` = 12, `guards` = 0, `w_early` = 0, `w_mid` = 1, `w_late` = 0.3 WHERE `map` = 30 AND `node` = 'galvangar';
+UPDATE `playerbots_bg_node` SET `ally_value` = 6, `horde_value` = 3, `attack_quota` = 8, `guards` = 2, `w_early` = 0.3, `w_mid` = 1, `w_late` = 0.5 WHERE `map` = 30 AND `node` = 'iceblood_gy';
+UPDATE `playerbots_bg_node` SET `ally_value` = 6, `horde_value` = 2, `attack_quota` = 8, `guards` = 2, `w_early` = 0, `w_mid` = 1, `w_late` = 0.8 WHERE `map` = 30 AND `node` = 'frostwolf_gy';
+UPDATE `playerbots_bg_node` SET `ally_value` = 7, `horde_value` = 1, `attack_quota` = 10, `guards` = 2, `w_early` = 0, `w_mid` = 0.8, `w_late` = 1 WHERE `map` = 30 AND `node` = 'fw_east';
+UPDATE `playerbots_bg_node` SET `ally_value` = 7, `horde_value` = 1, `attack_quota` = 10, `guards` = 2, `w_early` = 0, `w_mid` = 0.8, `w_late` = 1 WHERE `map` = 30 AND `node` = 'fw_west';
+UPDATE `playerbots_bg_node` SET `ally_value` = 4, `horde_value` = 2, `attack_quota` = 6, `guards` = 1, `w_early` = 0, `w_mid` = 0.3, `w_late` = 0.8 WHERE `map` = 30 AND `node` = 'relief_hut';
+UPDATE `playerbots_bg_node` SET `ally_value` = 10, `horde_value` = 0, `attack_quota` = 0, `guards` = 0, `w_early` = 0, `w_mid` = 0, `w_late` = 1 WHERE `map` = 30 AND `node` = 'drekthar';
+UPDATE `playerbots_bg_node` SET `ally_value` = 1, `horde_value` = 8, `attack_quota` = 12, `guards` = 2, `w_early` = 1, `w_mid` = 1, `w_late` = 0.5 WHERE `map` = 30 AND `node` = 'stonehearth_bunker';
+UPDATE `playerbots_bg_node` SET `ally_value` = 1, `horde_value` = 8, `attack_quota` = 12, `guards` = 2, `w_early` = 1, `w_mid` = 1, `w_late` = 0.5 WHERE `map` = 30 AND `node` = 'icewing';
+UPDATE `playerbots_bg_node` SET `ally_value` = 0, `horde_value` = 8, `attack_quota` = 12, `guards` = 0, `w_early` = 0, `w_mid` = 1, `w_late` = 0.3 WHERE `map` = 30 AND `node` = 'balinda';
+UPDATE `playerbots_bg_node` SET `ally_value` = 3, `horde_value` = 6, `attack_quota` = 8, `guards` = 2, `w_early` = 0.3, `w_mid` = 1, `w_late` = 0.5 WHERE `map` = 30 AND `node` = 'stonehearth_gy';
+UPDATE `playerbots_bg_node` SET `ally_value` = 2, `horde_value` = 6, `attack_quota` = 8, `guards` = 2, `w_early` = 0, `w_mid` = 1, `w_late` = 0.8 WHERE `map` = 30 AND `node` = 'stormpike_gy';
+UPDATE `playerbots_bg_node` SET `ally_value` = 1, `horde_value` = 7, `attack_quota` = 10, `guards` = 2, `w_early` = 0, `w_mid` = 0.8, `w_late` = 1 WHERE `map` = 30 AND `node` = 'db_north';
+UPDATE `playerbots_bg_node` SET `ally_value` = 1, `horde_value` = 7, `attack_quota` = 10, `guards` = 2, `w_early` = 0, `w_mid` = 0.8, `w_late` = 1 WHERE `map` = 30 AND `node` = 'db_south';
+UPDATE `playerbots_bg_node` SET `ally_value` = 2, `horde_value` = 4, `attack_quota` = 6, `guards` = 1, `w_early` = 0, `w_mid` = 0.3, `w_late` = 0.8 WHERE `map` = 30 AND `node` = 'aid_station';
+UPDATE `playerbots_bg_node` SET `ally_value` = 0, `horde_value` = 10, `attack_quota` = 0, `guards` = 0, `w_early` = 0, `w_mid` = 0, `w_late` = 1 WHERE `map` = 30 AND `node` = 'vanndar';
