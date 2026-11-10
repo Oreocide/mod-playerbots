@@ -160,7 +160,8 @@ Each objective is a generic `Objective` (`BgPlanner.h`). A mode keeps any extra 
   - Free bots are those whose commitment ran out, bots new to the match, and released bots. They go in seeded-shuffle order (`BgRules::ShuffleKey`), so matches still vary.
   - Pass 1 brings Hold tasks (defenders, and the guards of our running assaults) up to their minimum.
   - Pass 2 gives each remaining bot its best task, counting live as it goes.
-  - Pass 3 dissolves any Take or Burn task left with fewer than `Bg.Squad.MinTake` (4) bots. Its bots are filled again by pass 2 with that task closed, until no task is below the minimum. Three bots deep in enemy ground take nothing and feed kills (the §4 mid example shows the effect).
+  - Pass 3 dissolves any Take or Burn task whose weighted count (living 1, dead at half) is above 0 and below `Bg.Squad.MinTake` (4). Its bots are filled again by pass 2 with that task closed, until no task is below the minimum. Three bots deep in enemy ground take nothing and feed kills (the §4 mid example shows the effect).
+  - The weighted count is used so that a squad of 3 living and 6 dead waiting for the spirit healer is not dissolved: its dead come back to it. A unit test caught this.
   - Cost: O(bots x tasks) per pass; pass 3 repeats at most once per task.
   - The quotas add up to more than the team on purpose: they are caps, not demands, and the scores decide which tasks fill.
 - **Hold share:** the Hold tasks together get the team's seeded defend share (`Bg.DefendMinPct`-`MaxPct`, 20-40%), as today.

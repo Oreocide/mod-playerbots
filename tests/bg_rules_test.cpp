@@ -19,6 +19,8 @@
 
 #include "Battleground/BgRules.h"
 #include "Battleground/BgReactRules.h"
+#include "Battleground/BgTaskRules.h"
+#include <cmath>
 #include <cstdio>
 #include <set>
 
@@ -733,6 +735,319 @@ void TestLegs()
     }
     CHECK(Near(at.X, wind.back().X) && legs >= 6 && legs < 40);
 }
+
+// ---- the coordinator's task rules (Battleground/BgTaskRules.h, docs/design/BG_COORDINATOR.md) ----
+
+TaskView TaskAt(TaskIntent intent, float value, float x, float y, uint8 quotaMax, uint32 enemies = 0, uint32 allies = 0)
+{
+    TaskView task;
+    task.Intent = intent;
+    task.Value = value;
+    task.X = x;
+    task.Y = y;
+    task.QuotaMax = quotaMax;
+    task.Enemies = enemies;
+    task.Allies = allies;
+    return task;
+}
+
+std::vector<uint32> Counts(std::vector<TaskView> const& tasks, std::vector<FillBot> const& bots)
+{
+    std::vector<uint32> n(tasks.size(), 0);
+    for (FillBot const& bot : bots)
+        if (bot.Task >= 0 && bot.Alive)
+            ++n[bot.Task];
+    return n;
+}
+
+std::vector<FillBot> BotsAt(uint64 seed, uint32 first, uint32 count, float x, float y)
+{
+    std::vector<FillBot> bots;
+    for (uint32 i = 0; i < count; ++i)
+    {
+        FillBot bot;
+        bot.Id = first + i;
+        bot.Key = ShuffleKey(seed, bot.Id);
+        bot.X = x;
+        bot.Y = y;
+        bots.push_back(bot);
+    }
+    return bots;
+}
+
+void TestTaskOpening()
+{
+    // §4 worked opening: 28 attackers per team at their gate, early weights, 0.2 per 100 yd
+    ScoreParams sp;
+    FillParams fp;
+    std::vector<TaskView> alliance = { TaskAt(TaskIntent::Take, 8.0f, -571.9f, -262.8f, 12), TaskAt(TaskIntent::Take, 8.0f, -768.1f, -362.7f, 12),
+        TaskAt(TaskIntent::Take, 3.0f, -202.6f, -112.8f, 4), TaskAt(TaskIntent::Take, 1.8f, -612.7f, -396.7f, 8) };
+    CHECK(std::fabs(TaskScore(alliance[0], 794.6f, -493.5f, 0.0f, sp) - 5.2f) < 0.05f);
+    CHECK(std::fabs(TaskScore(alliance[1], 794.6f, -493.5f, 0.0f, sp) - 4.9f) < 0.05f);
+    CHECK(std::fabs(TaskScore(alliance[2], 794.6f, -493.5f, 0.0f, sp) - 0.9f) < 0.05f);
+    CHECK(std::fabs(TaskScore(alliance[3], 794.6f, -493.5f, 0.0f, sp) + 1.0f) < 0.05f);
+    for (uint64 seed = 1; seed <= 20; ++seed)
+    {
+        std::vector<TaskView> tasks = alliance;
+        std::vector<FillBot> bots = BotsAt(seed, 100, 28, 794.6f, -493.5f);
+        FillResult result = FillTasks(tasks, bots, 100000, sp, fp);
+        std::vector<uint32> n = Counts(tasks, bots);
+        CHECK(n[0] == 12 && n[1] == 12 && n[2] == 4 && n[3] == 0);
+        CHECK(result.Fallbacks == 0 && result.Closed == 0 && result.Changed == 28);
+    }
+    std::vector<TaskView> horde = { TaskAt(TaskIntent::Take, 8.0f, -152.4f, -441.6f, 12), TaskAt(TaskIntent::Take, 8.0f, 203.2f, -360.3f, 12),
+        TaskAt(TaskIntent::Take, 3.0f, -202.6f, -112.8f, 4), TaskAt(TaskIntent::Take, 1.8f, 73.3f, -425.8f, 8) };
+    std::vector<FillBot> bots = BotsAt(9, 200, 28, -1382.1f, -545.9f);
+    FillTasks(horde, bots, 100000, sp, fp);
+    std::vector<uint32> n = Counts(horde, bots);
+    CHECK(n[0] == 12 && n[1] == 12 && n[2] == 4 && n[3] == 0);
+}
+
+void TestTaskMidSplit()
+{
+    // §4 mid-phase split: the quotas add up to 54 for 28 attackers; no Take squad below 4 is left, the captain squad fills first
+    ScoreParams sp;
+    FillParams fp;
+    for (uint64 seed = 1; seed <= 30; ++seed)
+    {
+        std::vector<TaskView> tasks = { TaskAt(TaskIntent::Squad, 8.0f, -545.2f, -165.4f, 12, 1), TaskAt(TaskIntent::Take, 6.0f, -612.7f, -396.7f, 8, 4),
+            TaskAt(TaskIntent::Take, 6.0f, -1082.5f, -346.6f, 8, 2), TaskAt(TaskIntent::Take, 5.6f, -1302.9f, -317.0f, 10, 1),
+            TaskAt(TaskIntent::Take, 5.6f, -1297.7f, -266.7f, 10, 1), TaskAt(TaskIntent::Take, 1.2f, -1402.2f, -307.5f, 6) };
+        std::vector<FillBot> bots = BotsAt(seed, 300, 10, -571.9f, -262.8f);
+        for (auto const& group : { BotsAt(seed, 310, 10, -768.1f, -362.7f), BotsAt(seed, 320, 4, -202.6f, -112.8f), BotsAt(seed, 324, 4, 73.3f, -425.8f) })
+            bots.insert(bots.end(), group.begin(), group.end());
+        FillResult result = FillTasks(tasks, bots, 100000, sp, fp);
+        std::vector<uint32> n = Counts(tasks, bots);
+        uint32 sum = 0;
+        for (size_t t = 0; t < tasks.size(); ++t)
+        {
+            sum += n[t];
+            CHECK(!tasks[t].QuotaMax || n[t] <= tasks[t].QuotaMax);
+            if (tasks[t].Intent == TaskIntent::Take)
+                CHECK(n[t] == 0 || n[t] >= fp.MinTake);
+        }
+        CHECK(sum == 28 && n[0] == 12 && n[5] == 0 && result.Fallbacks == 0);
+    }
+}
+
+void TestTaskFalloffNegative()
+{
+    // past the quota the value term falls, so a full task far away is worth less than an open one: never more (negative scores)
+    ScoreParams sp;
+    TaskView full = TaskAt(TaskIntent::Take, 2.0f, 2000.0f, 0.0f, 1);
+    TaskView open = TaskAt(TaskIntent::Take, 1.0f, 2000.0f, 0.0f, 10);
+    CHECK(std::fabs(TaskScore(full, 0.0f, 0.0f, 0.0f, sp) + 2.0f) < 0.01f);
+    CHECK(std::fabs(TaskScore(full, 0.0f, 0.0f, 1.0f, sp) + 3.8f) < 0.01f);
+    CHECK(TaskScore(open, 0.0f, 0.0f, 0.0f, sp) > TaskScore(full, 0.0f, 0.0f, 1.0f, sp));
+    CHECK(Threat(7, 1, sp) == 3.0f && Threat(2, 4, sp) == 0.0f && Threat(3, 2, sp) == 0.5f);
+}
+
+void TestTaskNotOffered()
+{
+    ScoreParams sp;
+    FillParams fp;
+    std::vector<TaskView> tasks = { TaskAt(TaskIntent::Take, 0.0f, 0.0f, 0.0f, 0), TaskAt(TaskIntent::Take, 1.0f, 100.0f, 0.0f, 0) };
+    CHECK(!Offered(tasks[0]) && Offered(tasks[1]));
+    std::vector<FillBot> bots = BotsAt(3, 400, 4, 0.0f, 0.0f);
+    FillTasks(tasks, bots, 100000, sp, fp);
+    for (FillBot const& bot : bots)
+        CHECK(bot.Task == 1);
+}
+
+void TestTaskFallback()
+{
+    // nothing scores above 0: free bots join the attack task with the most living bots and are counted
+    ScoreParams sp;
+    FillParams fp;
+    std::vector<TaskView> tasks = { TaskAt(TaskIntent::Take, 0.5f, 1000.0f, 0.0f, 0), TaskAt(TaskIntent::Take, 0.5f, -1000.0f, 0.0f, 0) };
+    std::vector<FillBot> bots = BotsAt(4, 500, 5, 0.0f, 0.0f);
+    for (uint32 i = 0; i < 3; ++i)
+    {
+        bots[i].Task = 1;
+        bots[i].SinceMs = 99000;    // committed
+    }
+    FillResult result = FillTasks(tasks, bots, 100000, sp, fp);
+    CHECK(result.Fallbacks == 2 && bots[3].Task == 1 && bots[4].Task == 1 && bots[3].Fallback && !bots[0].Fallback);
+    CHECK(MainPush(tasks, bots) == 1);
+}
+
+void TestCommitMargin()
+{
+    FillParams fp;
+    CHECK(!CommitMarginMet(0.5f, -0.1f, fp));   // 0.6 < the floor 1.0
+    CHECK(CommitMarginMet(5.5f, 4.0f, fp));     // 1.5 >= max(1.0, 1.0)
+    CHECK(!CommitMarginMet(12.0f, 10.0f, fp));  // 2.0 < 25% of 10
+    CHECK(CommitMarginMet(13.0f, 10.0f, fp));
+    // past its commitment a bot on a 4.0 task stays when another scores 4.8
+    ScoreParams sp;
+    std::vector<TaskView> tasks = { TaskAt(TaskIntent::Take, 4.0f, 0.0f, 0.0f, 0), TaskAt(TaskIntent::Take, 4.8f, 0.0f, 0.0f, 0) };
+    std::vector<FillBot> bots = BotsAt(5, 600, 4, 0.0f, 0.0f);
+    for (FillBot& bot : bots)
+        bot.Task = 0;
+    FillTasks(tasks, bots, 100000, sp, fp);
+    for (FillBot const& bot : bots)
+        CHECK(bot.Task == 0);
+}
+
+void TestTaskDeadWeight()
+{
+    // six dead on a task of six count three: three replacements; when the six are back, the replacements leave, not the rejoining
+    ScoreParams sp;
+    FillParams fp;
+    std::vector<TaskView> tasks = { TaskAt(TaskIntent::Take, 5.0f, 0.0f, 0.0f, 6), TaskAt(TaskIntent::Take, 3.0f, 10.0f, 0.0f, 10) };
+    std::vector<FillBot> bots = BotsAt(6, 700, 6, 0.0f, 0.0f);
+    for (FillBot& bot : bots)
+    {
+        bot.Task = 0;
+        bot.Alive = false;
+    }
+    for (FillBot const& bot : BotsAt(6, 800, 7, 0.0f, 0.0f))
+        bots.push_back(bot);
+    FillTasks(tasks, bots, 100000, sp, fp);
+    std::vector<uint32> n = Counts(tasks, bots);
+    CHECK(n[0] == 3 && n[1] == 4);
+    for (uint32 i = 0; i < 6; ++i)
+    {
+        bots[i].Alive = true;
+        bots[i].RejoinUntilMs = 120000;
+    }
+    FillTasks(tasks, bots, 105000, sp, fp);
+    n = Counts(tasks, bots);
+    CHECK(n[0] == 6 && n[1] == 7);
+    for (uint32 i = 0; i < 6; ++i)
+        CHECK(bots[i].Task == 0);
+}
+
+void TestTaskRejoin()
+{
+    ScoreParams sp;
+    FillParams fp;
+    std::vector<TaskView> tasks = { TaskAt(TaskIntent::Take, 1.0f, 0.0f, 0.0f, 0), TaskAt(TaskIntent::Take, 8.0f, 0.0f, 0.0f, 0) };
+    std::vector<FillBot> bots = BotsAt(7, 900, 4, 0.0f, 0.0f);
+    for (FillBot& bot : bots)
+    {
+        bot.Task = 0;
+        bot.RejoinUntilMs = 110000;
+    }
+    FillTasks(tasks, bots, 100000, sp, fp);
+    for (FillBot const& bot : bots)
+        CHECK(bot.Task == 0);
+    FillTasks(tasks, bots, 110000, sp, fp);    // the rejoin time is over and so is the commitment: the margin moves them
+    for (FillBot const& bot : bots)
+        CHECK(bot.Task == 1);
+}
+
+void TestStage()
+{
+    CHECK(StepStage(SquadStage::Staging, 7, 8, 0, 60000, 59000) == SquadStage::Staging);
+    CHECK(StepStage(SquadStage::Staging, 8, 8, 0, 60000, 1000) == SquadStage::Moving);
+    CHECK(StepStage(SquadStage::Staging, 2, 8, 0, 60000, 60000) == SquadStage::Moving);
+    CHECK(StepStage(SquadStage::Staging, 0, 0, 0, 60000, 1) == SquadStage::Moving);
+    CHECK(StepStage(SquadStage::Moving, 0, 8, 0, 60000, 1) == SquadStage::Moving);
+}
+
+void TestPushGate()
+{
+    PushGateParams params;
+    CHECK(PushCondition(false, 10.0f, 8.0f, params));     // 10 >= 1.2 x 8
+    CHECK(!PushCondition(false, 9.0f, 8.0f, params));
+    CHECK(PushCondition(true, 0.0f, 8.0f, params));
+    PushGate gate;
+    CHECK(!StepPushGate(gate, true, false, 1000, params));
+    CHECK(!StepPushGate(gate, true, false, 10999, params));
+    CHECK(StepPushGate(gate, true, false, 11000, params));
+    CHECK(StepPushGate(gate, false, false, 20000, params));
+    CHECK(StepPushGate(gate, false, false, 49999, params));
+    CHECK(!StepPushGate(gate, false, false, 50000, params));
+    CHECK(!StepPushGate(gate, false, false, 60000, params));
+    // the condition flickering resets the hold
+    CHECK(!StepPushGate(gate, true, false, 61000, params));
+    CHECK(!StepPushGate(gate, false, false, 65000, params));
+    CHECK(!StepPushGate(gate, true, false, 66000, params));
+    CHECK(!StepPushGate(gate, true, false, 75999, params));
+    CHECK(StepPushGate(gate, true, false, 76000, params));
+    // charging, fighting or regrouping: never off from scores
+    CHECK(StepPushGate(gate, false, true, 200000, params) && StepPushGate(gate, false, true, 400000, params));
+}
+
+void TestTetherRules()
+{
+    TetherZone zone;
+    TetherCheck check;
+    check.Role = TetherRole::Fighter;
+    check.BotX = 500.0f;
+    check.TargetX = 30.0f;
+    CHECK(JudgeTether(check, zone) == TetherVerdict::Keep);         // within 40 yd of the anchor
+    check.TargetX = 250.0f;
+    check.TargetY = 20.0f;
+    CHECK(JudgeTether(check, zone) == TetherVerdict::Keep);         // 20 yd off the straight way to the anchor
+    check.TargetY = 60.0f;
+    CHECK(JudgeTether(check, zone) == TetherVerdict::Drop);
+    check.HitUsRecently = true;
+    check.BudgetLeftMs = 5000;
+    CHECK(JudgeTether(check, zone) == TetherVerdict::Retaliate);
+    check.BudgetLeftMs = 0;
+    CHECK(JudgeTether(check, zone) == TetherVerdict::Drop);
+    check.BudgetLeftMs = 5000;
+    check.Role = TetherRole::Carrier;
+    CHECK(JudgeTether(check, zone) == TetherVerdict::Drop);
+    check.Role = TetherRole::Capper;
+    check.HitUsRecently = false;
+    check.TargetX = 25.0f;
+    check.TargetY = 0.0f;
+    CHECK(JudgeTether(check, zone) == TetherVerdict::Drop);         // a capper fights only within 20 yd of the banner
+    check.TargetX = 15.0f;
+    CHECK(JudgeTether(check, zone) == TetherVerdict::Keep);
+    // the leg: a bent road
+    check.Role = TetherRole::Fighter;
+    check.HasLeg = true;
+    check.LegAX = 500.0f;
+    check.LegAY = 0.0f;
+    check.LegBX = 400.0f;
+    check.LegBY = 100.0f;
+    check.TargetX = 440.0f;
+    check.TargetY = 75.0f;
+    CHECK(JudgeTether(check, zone) == TetherVerdict::Keep);
+    check.TargetX = 250.0f;
+    check.TargetY = 10.0f;
+    CHECK(JudgeTether(check, zone) == TetherVerdict::Drop);         // near the straight line, far from the road
+    CHECK(TetherIgnoreMs(0) == 8000 && TetherIgnoreMs(1) == 16000 && TetherIgnoreMs(2) == 32000 && TetherIgnoreMs(3) == 60000
+        && TetherIgnoreMs(12) == 60000);
+    RetaliateBudget budget;
+    StepRetaliateBudget(budget, true, false, 4000, 1000);
+    CHECK(budget.LeftMs == 6000);
+    StepRetaliateBudget(budget, true, false, 7000, 8000);
+    CHECK(budget.LeftMs == 0);
+    StepRetaliateBudget(budget, false, true, 0, 10000);
+    StepRetaliateBudget(budget, false, true, 0, 29999);
+    CHECK(budget.LeftMs == 0);
+    StepRetaliateBudget(budget, false, true, 0, 30000);
+    CHECK(budget.LeftMs == 10000);
+}
+
+void TestLanePhase()
+{
+    LanePhaseParams params;
+    LanePhaseView view;
+    CHECK(LanePhase(TaskPhase::Early, view, params) == TaskPhase::Early);
+    view.PushTowersTaken = 1;
+    CHECK(LanePhase(TaskPhase::Early, view, params) == TaskPhase::Early);
+    view.PushTowersTaken = 2;
+    CHECK(LanePhase(TaskPhase::Early, view, params) == TaskPhase::Mid);
+    view = LanePhaseView();
+    view.PlayMs = 6 * 60000;
+    CHECK(LanePhase(TaskPhase::Early, view, params) == TaskPhase::Mid);
+    view.EnemyTowersBurnt = 2;
+    CHECK(LanePhase(TaskPhase::Mid, view, params) == TaskPhase::Late);
+    view = LanePhaseView();
+    view.EnemyStart = 700;
+    view.EnemyScore = 281;
+    CHECK(LanePhase(TaskPhase::Early, view, params) == TaskPhase::Early);
+    view.EnemyScore = 280;
+    CHECK(LanePhase(TaskPhase::Early, view, params) == TaskPhase::Late);
+    CHECK(LanePhase(TaskPhase::Late, LanePhaseView(), params) == TaskPhase::Late);
+    CHECK(LanePhase(TaskPhase::Mid, LanePhaseView(), params) == TaskPhase::Mid);
+}
 }
 
 int main()
@@ -766,6 +1081,18 @@ int main()
     TestDeaths();
     TestLegs();
     TestSpreadCapped();
+    TestTaskOpening();
+    TestTaskMidSplit();
+    TestTaskFalloffNegative();
+    TestTaskNotOffered();
+    TestTaskFallback();
+    TestCommitMargin();
+    TestTaskDeadWeight();
+    TestTaskRejoin();
+    TestStage();
+    TestPushGate();
+    TestTetherRules();
+    TestLanePhase();
 
     if (Failures)
     {
