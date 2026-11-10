@@ -80,7 +80,7 @@ Proposed order (each step its own go):
 - If BG bot ticks ever move to a map thread, the planner API needs a lock first (the rule is written at the top of `BgPlanner.h`).
 
 ### Planner (`src/Battleground/BgPlanner.*`)
-- Registry keyed by `(mapId, instanceId)`: two team plans plus objective states. Bots touch it from their BG action; no touch for 30 s or `STATUS_WAIT_LEAVE` drops it. `Battleground*` is never stored: re-fetched each tick through `sMapMgr->FindMap(map, instance)`.
+- Registry keyed by `(mapId, instanceId)`: two team plans plus objective states. Bots touch it from their BG action (the first touch opens it); it is dropped only when the match is gone or over (`STATUS_WAIT_LEAVE`) or its map leaves `Bg.Planner.Maps` (2026-11-10, #33: the old 30 s no-touch drop re-made plans mid-match while every bot fought). `Battleground*` is never stored: re-fetched each tick through `sMapMgr->FindMap(map, instance)`.
 - Roster from `bg->GetBgMap()->GetPlayers()`: bots and humans, alive, spec role.
 - Objective state: AV from world states; pilot maps from GO guids cached per match (`Map::GetGameObject`), with one pass over the map's object store, at most every 5 s, only when a guid misses (flags and respawned banners get new guids). Capture points are read from `GetGOValue()->CapturePoint` (state, last capturing team), towers from `GetControllingTeam`, flags from `GetFlagState`/`GetFlagCarrierGUID` and their `NEW_FLAG_DROP` object. Score from `GetTeamScore` or a world-state pair per map.
 - Output per bot: job (attack, defend, carrier, escort, heal, rally), objective, point, radius, squad, since. Kept in the planner's own map keyed by `ObjectGuid`, never a `PlayerbotAI` member.

@@ -44,7 +44,6 @@ namespace
 {
 using CaptureState = WorldPackets::Battleground::BattlegroundCapturePointState;
 
-constexpr uint32 DropAfterMs = 30000;       // a plan nobody touched for this long is dropped
 constexpr uint32 DiscoverEveryMs = 5000;    // a missing objective is searched for at most this often
 constexpr uint32 RetargetEveryMs = 60000;   // attack targets are picked again at least this often
 constexpr uint32 NoPathMs = 60000;          // an objective without a mesh path is avoided by that bot this long
@@ -401,7 +400,7 @@ Assignment Planner::Touch(Player* bot)
         plan.CreatedMs = now;
         // the first plan within a second, then every TickMs, the matches spread over the tick
         plan.LastTickMs = now - sBgConfig.TickMs + (plan.InstanceId % 8) * 125;
-        TC_LOG_DEBUG("server.playerbots", "Playerbots: battleground planner opened map {} instance {}", plan.MapId, plan.InstanceId);
+        TC_LOG_INFO("server.playerbots", "Playerbots: battleground planner opened map {} instance {}", plan.MapId, plan.InstanceId);
     }
     plan.LastTouchMs = now;
 
@@ -482,7 +481,11 @@ void Planner::Update()
         Map* map = sMapMgr->FindMap(plan.MapId, plan.InstanceId);
         BattlegroundMap* bgMap = map ? map->ToBattlegroundMap() : nullptr;
         Battleground* bg = bgMap ? bgMap->GetBG() : nullptr;
-        if (!bg || !plan.Def || bg->GetStatus() == STATUS_WAIT_LEAVE || now - plan.LastTouchMs > DropAfterMs || !sBgConfig.Plans(plan.MapId))
+        // a plan lives as long as its match (mod-playerbots#33): bots touch it only from Bg::Play, which does not run while they fight,
+        // so a match where every bot fought or lay dead for half a minute lost its plan, rolled the split again and restarted every job
+        char const* gone = !bg ? "match gone" : !plan.Def ? "no definition" : bg->GetStatus() == STATUS_WAIT_LEAVE ? "match over"
+            : !sBgConfig.Plans(plan.MapId) ? "map no longer planned" : nullptr;
+        if (gone)
         {
             // #20: the result of the side a real player was on moves the streak (players on both sides, or none: no change)
             if (bg && plan.Def && bg->GetStatus() == STATUS_WAIT_LEAVE && !plan.ResultSeen && plan.Teams[0].HadHuman != plan.Teams[1].HadHuman)
@@ -498,7 +501,8 @@ void Planner::Update()
                         plan.Def->Name, plan.InstanceId, TeamName(won), _streak);
                 }
             }
-            TC_LOG_DEBUG("server.playerbots", "Playerbots: battleground planner closed map {} instance {} after {} plans", plan.MapId, plan.InstanceId, plan.Ticks);
+            TC_LOG_INFO("server.playerbots", "Playerbots: battleground planner closed map {} instance {} after {} plans ({})", plan.MapId, plan.InstanceId,
+                plan.Ticks, gone);
             it = _plans.erase(it);
             continue;
         }
