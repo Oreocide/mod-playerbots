@@ -473,7 +473,9 @@ public:
         Battleground* bg = FindBg(*plan);
         handler->PSendSysMessage("%s (map %u, instance %u): %s, %u plans every %u ms",
             plan->Def ? plan->Def->Name : "?", plan->MapId, plan->InstanceId,
-            bg ? (bg->GetStatus() == STATUS_IN_PROGRESS ? Trinity::StringFormat("in progress {} s", bg->GetElapsedTime() / 1000).c_str() : "not started") : "gone",
+            // elapsed time counts the preparation; play time is the match since the gates opened (Battleground.h GetInProgressDuration)
+            bg ? (bg->GetStatus() == STATUS_IN_PROGRESS ? Trinity::StringFormat("in progress {} s (play {} s)", bg->GetElapsedTime() / 1000,
+                bg->GetInProgressDuration().count() / 1000).c_str() : "not started") : "gone",
             plan->Ticks, sBgConfig.TickMs);
         handler->PSendSysMessage("  captures: cast %u, used directly %u%s, gave up for now %u%s",
             plan->CaptureCasts, plan->CaptureFallbacks,
