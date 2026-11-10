@@ -19,10 +19,20 @@
 
 namespace Playerbots::Bg
 {
-// The coordinator's battlegrounds (docs/design/BG_COORDINATOR.md §4, §6). Alterac Valley comes with the Lane mode (W6) and its
-// profile (W7); every other map stays on the planner's old path (backlog B1-B6)
-Profile const* FindProfile(uint32 /*mapId*/)
+// The coordinator's battlegrounds (docs/design/BG_COORDINATOR.md §4, §6): Alterac Valley, the lane push over its playerbots_bg_node
+// rows (values, quotas, guards and phase weights from the rows; the planner's ReadValley reads the state). Every other map stays on
+// the planner's old path (backlog B1-B6)
+Profile const* FindProfile(uint32 mapId)
 {
-    return nullptr;
+    static Profile const alteracValley = []
+    {
+        Profile profile;
+        profile.MapId = 30;
+        profile.Short = "AV";
+        profile.Modes = { &LaneMode() };
+        profile.PhaseOf = AlteracValleyPhase;
+        return profile;
+    }();
+    return mapId == alteracValley.MapId ? &alteracValley : nullptr;
 }
 }
