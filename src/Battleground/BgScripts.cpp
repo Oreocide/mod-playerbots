@@ -21,6 +21,7 @@
 #include "ActivityMgr.h"
 #include "Battleground/BgConfig.h"
 #include "Battleground/BgMapData.h"
+#include "Battleground/BgMetrics.h"
 #include "Battleground/BgPlanner.h"
 #include "Battleground.h"
 #include "BattlegroundMgr.h"
@@ -395,6 +396,7 @@ public:
             { "rally",   rallyCommandTable },
             { "show",    HandleBgShowCommand,   rbac::RBAC_PERM_COMMAND_DEBUG, Console::No },
             { "reload",  HandleBgReloadCommand, rbac::RBAC_PERM_COMMAND_DEBUG, Console::Yes },
+            { "metrics", HandleBgMetricsCommand, rbac::RBAC_PERM_COMMAND_DEBUG, Console::Yes },
             { "test",    testCommandTable },
             { "vehicle", vehicleCommandTable },
             { "",        HandleBgCommand,       rbac::RBAC_PERM_COMMAND_DEBUG, Console::Yes },
@@ -717,9 +719,20 @@ public:
         return true;
     }
 
-    // .bot bg test start <map> [level]: the random bots fill and play one normal battleground match with no real player in it
-    static bool HandleBgTestStartCommand(ChatHandler* handler, uint32 mapId, Optional<uint32> level)
+    // .bot bg metrics: per map since boot, and the last minute line of each team in the running matches (Playerbots.Bg.Metrics)
+    static bool HandleBgMetricsCommand(ChatHandler* handler)
     {
+        for (std::string const& line : Metrics::Report())
+            handler->SendSysMessage(line);
+        return true;
+    }
+
+    // .bot bg test start <map> [level] [seed]: the random bots fill and play one normal battleground match with no real player in it;
+    // a seed (not 0) makes the teams roll the same way in every test match started with it (level 0: the bracket with most bots)
+    static bool HandleBgTestStartCommand(ChatHandler* handler, uint32 mapId, Optional<uint32> level, Optional<uint64> seed)
+    {
+        if (level && !*level)
+            level.reset();
         // the normal (not rated, not arena) battleground whose only map is this one. Every BattlemasterList row, not the type ids
         // below MAX_BATTLEGROUND_TYPE_ID: today's Warsong Gulch (map 2106) and Arathi Basin (2107) are rows 1014 and 1018
         BattlegroundTemplate const* bgTemplate = nullptr;
@@ -774,6 +787,9 @@ public:
         handler->PSendSysMessage("Test match started: %s (map %u), bracket %u, %u Alliance and %u Horde random bots online in it, for at most %u minutes. "
             "The bots queue on the next scans (every 5 s); .bot bg test shows it, .bot bg test stop ends it.", bgTemplate->BattlemasterEntry->Name[DEFAULT_LOCALE],
             mapId, uint32(bracketId), online[bracketId][0], online[bracketId][1], BgTestMinutes);
+        SetTestSeed(seed.value_or(0));
+        if (seed && *seed)
+            handler->SendSysMessage(Trinity::StringFormat("The teams of the test match roll from seed {}.", *seed));
         if (!sPlayerbotsConfig.RandomBattlegrounds)
             handler->SendSysMessage("Warning: Playerbots.Random.Battlegrounds is off, no bot will queue.");
         if (!sBgConfig.Plans(mapId))

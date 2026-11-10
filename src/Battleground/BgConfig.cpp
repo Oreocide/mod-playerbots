@@ -72,6 +72,7 @@ void Config::Load()
     Rebuff = sConfigMgr->GetBoolDefault("Playerbots.Bg.Rebuff", false);
     MoveOn = sConfigMgr->GetBoolDefault("Playerbots.Bg.MoveOn", false);
     MoveOnGuards = uint32(std::clamp<int32>(sConfigMgr->GetIntDefault("Playerbots.Bg.MoveOn.Guards", 2), 1, 10));
+    Metrics = sConfigMgr->GetBoolDefault("Playerbots.Bg.Metrics", false);
 
     ThreatResponse = sConfigMgr->GetBoolDefault("Playerbots.Bg.ThreatResponse", false);
     RetakeTimers = sConfigMgr->GetBoolDefault("Playerbots.Bg.RetakeTimers", false);

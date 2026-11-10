@@ -17,7 +17,9 @@
 
 #include "Battleground/BgPlanner.h"
 #include "Battleground/BgConfig.h"
+#include "Battleground/BgMetrics.h"
 #include "Battleground/BgReact.h"
+#include "ActivityMgr.h"
 #include "Battleground/BgTalk.h"
 #include "BotSession.h"
 #include "Engine/PerfMonitor.h"
@@ -44,6 +46,7 @@ namespace
 {
 using CaptureState = WorldPackets::Battleground::BattlegroundCapturePointState;
 
+uint64 TestSeedValue = 0;                    // .bot bg test start: the seed of the test match's rolls (0: the match's own)
 constexpr uint32 DiscoverEveryMs = 5000;    // a missing objective is searched for at most this often
 constexpr uint32 RetargetEveryMs = 60000;   // attack targets are picked again at least this often
 constexpr uint32 NoPathMs = 60000;          // an objective without a mesh path is avoided by that bot this long
@@ -318,6 +321,11 @@ void RallyCall(BgPlan& plan, uint32 team, std::vector<Player*> const& bots, int8
 }
 }
 
+void SetTestSeed(uint64 seed)
+{
+    TestSeedValue = seed;
+}
+
 Planner& Planner::Instance()
 {
     static Planner planner;
@@ -503,6 +511,7 @@ void Planner::Update()
             }
             TC_LOG_INFO("server.playerbots", "Playerbots: battleground planner closed map {} instance {} after {} plans ({})", plan.MapId, plan.InstanceId,
                 plan.Ticks, gone);
+            Metrics::Close(plan, bg, gone);
             it = _plans.erase(it);
             continue;
         }
@@ -639,7 +648,9 @@ void Planner::Plan(BgPlan& plan, Battleground* bg, Map* map, uint32 now)
         for (uint32 team = 0; team < 2; ++team)
         {
             TeamPlan& teamPlan = plan.Teams[team];
-            teamPlan.Seed = BgRules::MatchSeed(plan.InstanceId, team, plan.StartTime);
+            // .bot bg test start <map> <level> <seed>: the test match rolls from the given seed, so a pair of test matches can share one
+            teamPlan.Seed = TestSeedValue && sActivityMgr->IsBgTest(plan.InstanceId) ? BgRules::MatchSeed(uint32(TestSeedValue), team, TestSeedValue)
+                : BgRules::MatchSeed(plan.InstanceId, team, plan.StartTime);
             teamPlan.DefendPct = BgRules::RollDefendPct(teamPlan.Seed, sBgConfig.DefendMinPct, sBgConfig.DefendMaxPct);
             teamPlan.LastReasonMs = now;
         }
@@ -758,6 +769,9 @@ void Planner::Plan(BgPlan& plan, Battleground* bg, Map* map, uint32 now)
         else
             ++it;
     }
+
+    // Playerbots.Bg.Metrics: read only, after everything above is decided
+    Metrics::Sample(plan, bg, map, now);
 }
 
 void Planner::PlanTeam(BgPlan& plan, Map* map, uint32 team, std::vector<Player*> const& members, bool retarget, std::string const& reason, uint32 now)

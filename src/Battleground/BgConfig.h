@@ -54,6 +54,7 @@ struct Config
     bool Rebuff = false;                                    // back from a graveyard: a few seconds for the raid buffs before it runs
     bool MoveOn = false;                                    // a running capture of ours keeps a guard or two, a hopeless target is left
     uint32 MoveOnGuards = 2;                                // the defenders a running capture of ours keeps
+    bool Metrics = false;                                   // per-minute and per-match lines (BgMetrics.h); read only, plays the same
 
     // the reactive behaviours (phase 4, BG_PLAN.md §4), each off by default
     bool ThreatResponse = false;                            // #1 a node of ours under attack pulls the nearest defenders and 2 attackers

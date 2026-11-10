@@ -286,6 +286,8 @@ private:
 bool ObjectivePosition(BgPlan const& plan, int8 objective, Position& out);
 std::string ObjectiveName(BgPlan const& plan, int8 objective);
 TeamId TeamOf(Player const* player);
+/// .bot bg test start: the seed the next test match's teams roll from (0: the match's own, from its instance and start time)
+void SetTestSeed(uint64 seed);
 /// The team's score: Battleground::GetTeamScore, or the map's score world states (Alterac Valley reinforcements)
 uint32 TeamScore(BgPlan const& plan, Battleground const* bg, Map const* map, uint32 team);
 /// Valley maps: the row of an objective (nullptr for the code-table maps or a bad index)
