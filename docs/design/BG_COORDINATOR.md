@@ -70,7 +70,13 @@ The assault-to-capture time is 4 minutes (`src/server/scripts/Battlegrounds/Alte
 **Rule for the probe results:** if a cause assumed here is rejected, every design part that depends on it is flagged here and at that part. The probe covers Warsong Gulch, Arathi Basin and Eye of the Storm only. AV causes A-C are not re-tested by it.
 
 ### Probe results (2026-11-10 11:18-12:06 CST, bot-only, 150 bots, live keys = arm A)
-- **Run:** WSG 13 v 16 (samples 162-848 s elapsed) and AB 13 v 15 (164-1,107 s). The Eye was skipped: under 15 min of the window was left. Its items stay code-only.
+- **Run:** WSG 13 v 16 (samples 162-848 s elapsed) and AB 13 v 15 (164-1,107 s). The Eye ran separately, 15:02-15:18 CST: 13 v 16, samples 164-863 s.
+- **Eye of the Storm result (mod-playerbots#34):**
+  - 13 minutes of play at 0-0; all four towers stayed neutral and the flag never left its base. No capture cast, no job change, no sampled bot in combat.
+  - The sampled bots stood within 1 yd of their tower object all match (Alliance at Mage Tower, Horde at Blood Elf Tower).
+  - Lead from code (M): the control zone counts only players with `Player::IsOutdoorPvPActive()` (`Player.cpp:7754`): `IsPvP()`, not flying. Headless bots may lack the PvP flag or carry a stale movement flag.
+  - The planner's "no runners before a tower" rule (`BgPlanner.cpp:895-900`) then keeps the flag in base: confirmed in effect.
+  - **Design parts affected:** §3.2's Eye fixes and backlog B3 assume a tower can be taken. B3 must first fix #34: the problem sits at the bot or core level, not in the plan.
 - **Data:** runner, results and analyzer in the session scratchpad (`bgprobe.sh`, `bgprobe_results.txt`, `bgprobe_analyze.py`). Conf restored, md5 equal.
 
 | Finding | Evidence | Verdict |
@@ -756,6 +762,27 @@ Every item is one commit in `Oreocide/mod-playerbots`, behind a key that default
 | W8 | AV acceptance and tuning: the arms until §5.3 passes; tune rows and keys; then ask the owner to set `Bg.Coordinator = 1` and `Bg.Tether = 1` live | rows, conf | §5.3 | low |
 
 Order: W-1, W0, W1, W3 (pure, so it can come before W2), W2, W4, W5, W6, W7, W8. W0 comes early so arm A has numbers.
+
+**Status 2026-11-10 (local main, not pushed):**
+
+| Done | Commit |
+|---|---|
+| W-1 MoveOn | 96c5a58 |
+| #33 fix | b35157a |
+| W0 metrics and test seed | 82c7253 |
+| W1 play-time display | 3a738c2 |
+| W3 task rules | 9ecf1a5 |
+| W2 interfaces | 01ccd57 |
+| W7 row columns, AV values, loader | 95ac13b |
+| W4 coordinator planning | 81ee3cc |
+| W6 lane mode and AV profile | cd1b282 |
+
+- All of them are live, keys off, since boot 20 (2026-11-10 16:09, binary d18a9f2ae528).
+- Open:
+  - **W6b:** the captain Squad task with its staging point and its own rally per squad. Owner: captains on by default as a mid-phase squad.
+  - **W5:** tether and retaliation.
+  - **W8:** the A/C/B runs.
+- Arm C can run once W6b is in; arm B once W5 is in.
 
 **Backlog (other maps, after AV):**
 - B1 Node mode, with the AB and BFG profiles: `HoldTarget`, guards, retake in time (§3.1, §3.5).
