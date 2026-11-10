@@ -387,6 +387,85 @@ using LegRules::Point3;
 using LegRules::LegGoal;
 using LegRules::PickLeg;
 
+// ---- moving on (Playerbots.Bg.MoveOn) ----
+
+constexpr uint32 Uncapped = std::numeric_limits<uint32>::max();
+
+/// Spread (weights over targets) with a cap per target: a node under our own capture timer keeps a guard or two, what it cannot take goes
+/// to the other targets by their weights. When every target is full, the rest stays unplaced (the caller sends those bots on)
+inline std::vector<uint32> SpreadCapped(std::vector<float> const& weights, std::vector<uint32> const& caps, uint32 total)
+{
+    std::vector<uint32> counts(weights.size(), 0);
+    if (weights.empty() || caps.size() != weights.size())
+        return counts;
+
+    uint32 left = total;
+    while (left)
+    {
+        std::vector<float> open(weights.size(), 0.0f);
+        float sum = 0.0f;
+        size_t openCount = 0;
+        for (size_t i = 0; i < weights.size(); ++i)
+            if (counts[i] < caps[i])
+            {
+                open[i] = std::max(0.0f, weights[i]);
+                sum += open[i];
+                ++openCount;
+            }
+        if (!openCount)
+            break;
+        // open targets that all weigh nothing share equally
+        if (sum <= 0.0f)
+            for (size_t i = 0; i < weights.size(); ++i)
+                if (counts[i] < caps[i])
+                    open[i] = 1.0f;
+
+        std::vector<uint32> add = Spread(open, left);
+        uint32 placed = 0;
+        bool clipped = false;
+        for (size_t i = 0; i < weights.size(); ++i)
+        {
+            if (counts[i] >= caps[i])
+                continue;
+            uint32 room = caps[i] == Uncapped ? Uncapped : caps[i] - counts[i];
+            uint32 take = std::min(add[i], room);
+            counts[i] += take;
+            placed += take;
+            clipped |= take < add[i];
+        }
+        left -= placed;
+        if (!clipped || !placed)
+            break;
+    }
+    return counts;
+}
+
+/// The most bots the targets take in all (Uncapped when one of them has no cap)
+inline uint32 CapTotal(std::vector<uint32> const& caps)
+{
+    uint64 total = 0;
+    for (uint32 cap : caps)
+    {
+        if (cap == Uncapped)
+            return Uncapped;
+        total += cap;
+    }
+    return uint32(std::min<uint64>(total, Uncapped - 1));
+}
+
+/// Of the defenders a team wants, the ones it keeps when a target takes at most its cap: what the plain spread would put past a cap
+/// moves on (attacks) rather than going to the uncapped targets, which keep their own share
+inline uint32 CappedDefenders(std::vector<float> const& weights, std::vector<uint32> const& caps, uint32 want)
+{
+    if (weights.empty() || caps.size() != weights.size())
+        return want;
+    std::vector<uint32> quota = Spread(weights, want);
+    uint32 keep = 0;
+    for (size_t i = 0; i < quota.size(); ++i)
+        keep += std::min(quota[i], caps[i]);
+    return keep;
+}
+
 // ---- /bg calls of a real player (#10) ----
 
 enum class CallKind : uint8

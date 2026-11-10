@@ -52,6 +52,8 @@ struct Config
     uint32 SoftGateScorePct = 40;                           // or once the enemy score is down to this share of its start
     uint32 LegYards = 0;                                    // a route longer than this is walked in legs along the mesh (0: off)
     bool Rebuff = false;                                    // back from a graveyard: a few seconds for the raid buffs before it runs
+    bool MoveOn = false;                                    // a running capture of ours keeps a guard or two, a hopeless target is left
+    uint32 MoveOnGuards = 2;                                // the defenders a running capture of ours keeps
 
     // the reactive behaviours (phase 4, BG_PLAN.md §4), each off by default
     bool ThreatResponse = false;                            // #1 a node of ours under attack pulls the nearest defenders and 2 attackers

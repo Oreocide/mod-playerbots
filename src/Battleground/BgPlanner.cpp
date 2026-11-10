@@ -54,6 +54,11 @@ constexpr float CarrierHealRange = 100.0f;  // #14: only healers this close to i
 constexpr uint32 FlagRunnerCount = 2;
 constexpr uint32 AbandonMs = 120000;        // Valley: a push given up is not the team's target again for this long
 constexpr uint32 TwoTargetsFrom = 24;       // Valley: this many attackers split over two node targets (never over a boss)
+constexpr uint32 PassOverMs = 60000;        // MoveOn: a push that left a hopeless target does not pick it again for this long
+constexpr float PassOverEnemyRange = 40.0f; // MoveOn: the enemies this close to the target hold it (BgReact's threat range)
+constexpr float PassOverAllyRange = 150.0f; // MoveOn: ours this close to it count for the fight, as do the bots sent to it
+constexpr uint32 PassOverRatio = 2;
+constexpr uint32 PassOverMinEnemies = 4;
 
 bool Contains(std::vector<int8> const& list, int8 value)
 {
@@ -79,8 +84,11 @@ float DistTo(BgPlan const& plan, Player const* player, int8 objective)
 }
 
 /// The split of the team's ownerless bots into attackers and defenders (BgRules::Split). Returns the bots whose job changed
-uint32 SplitTeam(BgPlan& plan, TeamPlan const& teamPlan, std::vector<Player*> const& bots, uint32 now)
+uint32 SplitTeam(BgPlan& plan, TeamPlan const& teamPlan, std::vector<Player*> const& bots, uint32 now, std::vector<uint32> const* caps = nullptr)
 {
+    // MoveOn: a running capture of ours is no reason to be picked to defend or to stay a defender; the nodes we hold are (when there are any)
+    bool anyUncapped = caps && caps->size() == teamPlan.DefendTargets.size()
+        && std::find(caps->begin(), caps->end(), BgRules::Uncapped) != caps->end();
     std::vector<BgRules::Seat> seats;
     seats.reserve(bots.size());
     for (Player* bot : bots)
@@ -97,8 +105,9 @@ uint32 SplitTeam(BgPlan& plan, TeamPlan const& teamPlan, std::vector<Player*> co
         if (!teamPlan.DefendTargets.empty())
         {
             seat.DefendCost = std::numeric_limits<float>::max();
-            for (int8 target : teamPlan.DefendTargets)
-                seat.DefendCost = std::min(seat.DefendCost, DistTo(plan, bot, target));
+            for (size_t t = 0; t < teamPlan.DefendTargets.size(); ++t)
+                if (!anyUncapped || (*caps)[t] == BgRules::Uncapped)
+                    seat.DefendCost = std::min(seat.DefendCost, DistTo(plan, bot, teamPlan.DefendTargets[t]));
         }
         // #12: a turtle is the first to defend and the last to go back; a brawler or road fighter the other way round
         if (job.Style == BgRules::Archetype::Turtle)
@@ -125,11 +134,16 @@ uint32 SplitTeam(BgPlan& plan, TeamPlan const& teamPlan, std::vector<Player*> co
 }
 
 /// Defenders over the defended objectives by weight: the ones already there stay while the node's share has room. Returns the
-/// defenders that moved
-uint32 PlaceDefenders(BgPlan& plan, TeamPlan const& teamPlan, std::vector<Player*> const& defenders, std::vector<float> const& weights, uint32 now)
+/// defenders that moved. With caps (MoveOn), a capped target takes no more than its cap, and a defender with no room anywhere, or one
+/// too many at a capped target, becomes an attacker (added to released)
+uint32 PlaceDefenders(BgPlan& plan, TeamPlan const& teamPlan, std::vector<Player*> const& defenders, std::vector<float> const& weights, uint32 now,
+    std::vector<uint32> const* caps = nullptr, std::vector<Player*>* released = nullptr)
 {
     uint32 changed = 0;
-    std::vector<uint32> quota = BgRules::Spread(weights, defenders.size());
+    if (caps && (caps->size() != weights.size() || !released))
+        caps = nullptr;
+    std::vector<uint32> quota = caps ? BgRules::SpreadCapped(weights, *caps, defenders.size()) : BgRules::Spread(weights, defenders.size());
+    auto capped = [&](size_t i) { return caps && (*caps)[i] != BgRules::Uncapped; };
     std::vector<Player*> unplaced;
     for (Player* bot : defenders)
     {
@@ -144,13 +158,16 @@ uint32 PlaceDefenders(BgPlan& plan, TeamPlan const& teamPlan, std::vector<Player
     for (Player* bot : unplaced)
     {
         Assignment& job = plan.Jobs[bot->GetGUID()];
+        // a guard too many at a running capture of ours goes on with the attackers; it does not walk back to a node we hold
+        auto at = std::find(teamPlan.DefendTargets.begin(), teamPlan.DefendTargets.end(), job.Objective);
+        bool surplus = at != teamPlan.DefendTargets.end() && capped(size_t(at - teamPlan.DefendTargets.begin()));
         int best = -1;
         float bestDist = 0.0f;
-        for (int pass = 0; pass < 2 && best < 0; ++pass)
+        for (int pass = 0; pass < 2 && best < 0 && !surplus; ++pass)
             for (size_t i = 0; i < teamPlan.DefendTargets.size(); ++i)
             {
                 int8 target = teamPlan.DefendTargets[i];
-                if ((pass == 0 && !quota[i]) || (Blocked(job, target, now) && teamPlan.DefendTargets.size() > 1))
+                if ((pass == 0 && !quota[i]) || (pass == 1 && capped(i)) || (Blocked(job, target, now) && teamPlan.DefendTargets.size() > 1))
                     continue;
                 float dist = DistTo(plan, bot, target);
                 if (best < 0 || dist < bestDist)
@@ -159,6 +176,15 @@ uint32 PlaceDefenders(BgPlan& plan, TeamPlan const& teamPlan, std::vector<Player
                     bestDist = dist;
                 }
             }
+        if (best < 0 && caps)
+        {
+            job.Base = Job::Attack;
+            job.SinceMs = now;
+            job.Objective = NoObjective;
+            released->push_back(bot);
+            ++changed;
+            continue;
+        }
         if (best < 0)
             best = 0;
         if (quota[best])
@@ -170,6 +196,61 @@ uint32 PlaceDefenders(BgPlan& plan, TeamPlan const& teamPlan, std::vector<Player
         }
     }
     return changed;
+}
+
+/// MoveOn: a target of the push where the enemy stays at least twice as strong as all of ours there or on the way (and at least
+/// PassOverMinEnemies) is left for PassOverMs, when the team has another candidate. Ours under enemy assault is never left this way
+/// (ThreatResponse decides that fight), nor what eligible() refuses (bosses: the rally has its own wipe and give-up)
+template <typename Eligible>
+void PassOver(BgPlan& plan, Map* map, uint32 team, std::vector<int8>& candidates, Eligible eligible, std::string& why, uint32 now)
+{
+    TeamPlan const& teamPlan = plan.Teams[team];
+    TeamId us = TeamId(team);
+    TeamId them = TeamId(1 - team);
+    struct Lost { int8 Target; uint32 Enemies; uint32 Allies; };
+    std::vector<Lost> lost;
+    for (int8 target : teamPlan.AttackTargets)
+    {
+        if (target < 0 || size_t(target) >= plan.Objectives.size() || !Contains(candidates, target) || !eligible(target))
+            continue;
+        Objective const& objective = plan.Objectives[target];
+        if (objective.Owner == us && objective.Assaulting == them)
+            continue;
+        uint32 enemies = 0, near = 0, sent = 0;
+        for (MapReference const& ref : map->GetPlayers())
+        {
+            Player* player = ref.GetSource();
+            if (!player || !player->IsInWorld() || player->IsGameMaster() || !player->IsAlive())
+                continue;
+            TeamId side = TeamOf(player);
+            float dist = player->GetExactDist2d(objective.Pos);
+            if (side == them && dist <= PassOverEnemyRange)
+                ++enemies;
+            else if (side == us)
+            {
+                if (dist <= PassOverAllyRange)
+                    ++near;
+                auto job = plan.Jobs.find(player->GetGUID());
+                if (job != plan.Jobs.end() && job->second.Base == Job::Attack && job->second.Objective == target)
+                    ++sent;
+            }
+        }
+        uint32 allies = std::max(near, sent);
+        if (BgRules::Hopeless(enemies, allies, 0, PassOverRatio, PassOverMinEnemies))
+            lost.push_back({ target, enemies, allies });
+    }
+    if (lost.empty() || lost.size() >= candidates.size())
+        return;
+    for (Lost const& left : lost)
+    {
+        Objective& objective = plan.Objectives[left.Target];
+        uint32 until = now + PassOverMs;
+        if (int32(objective.BlockedUntilMs[team] - until) < 0)
+            objective.BlockedUntilMs[team] = until;
+        candidates.erase(std::remove(candidates.begin(), candidates.end(), left.Target), candidates.end());
+        why = Trinity::StringFormat("left {}: {} enemies to {} of ours", objective.Name, left.Enemies, left.Allies);
+        TC_LOG_DEBUG("server.playerbots", "Playerbots: {} instance {} {}: {}", plan.Def->Name, plan.InstanceId, TeamName(us), why);
+    }
 }
 
 /// Valley: the team has done a node of a "requires" list: holds the graveyard, burnt the tower, killed the boss
@@ -714,13 +795,26 @@ void Planner::PlanTeam(BgPlan& plan, Map* map, uint32 team, std::vector<Player*>
         teamPlan.WantDefenders = std::max<uint32>(teamPlan.WantDefenders, uint32(bots.size()) - TurtleCap(plan, team, uint32(bots.size())));
     // #10: a player's "everyone to ..." takes the defenders along while it holds
     CallOrder const* order = AttackOrder(plan, team, now);
+    // the defended objectives' weights: ours under assault needs the most hands. MoveOn: our own running assault keeps
+    // MoveOn.Guards, the defenders the share would have put there past that attack instead
+    std::vector<float> weights;
+    std::vector<uint32> caps;
+    for (int8 target : teamPlan.DefendTargets)
+    {
+        Objective const& objective = plan.Objectives[target];
+        weights.push_back(objective.Weight * (objective.Owner == us && objective.Assaulting == them ? 2.0f : 1.0f));
+        caps.push_back(kind != MapKind::Flag && objective.Owner != us && objective.Assaulting == us ? sBgConfig.MoveOnGuards : BgRules::Uncapped);
+    }
+    bool moveOn = sBgConfig.MoveOn && !teamPlan.DefendTargets.empty();
+    if (moveOn)
+        teamPlan.WantDefenders = BgRules::CappedDefenders(weights, caps, teamPlan.WantDefenders);
     if (order && order->Kind == BgRules::CallKind::Everyone)
         teamPlan.WantDefenders = 0;
 
     auto distTo = [&](Player const* player, int8 objective) { return DistTo(plan, player, objective); };
 
     // the split
-    uint32 changed = SplitTeam(plan, teamPlan, bots, now);
+    uint32 changed = SplitTeam(plan, teamPlan, bots, now, moveOn ? &caps : nullptr);
 
     // defenders over the defended objectives: the ones already there stay while the node's share has room
     std::vector<Player*> defenders, attackers;
@@ -729,15 +823,9 @@ void Planner::PlanTeam(BgPlan& plan, Map* map, uint32 team, std::vector<Player*>
 
     if (!teamPlan.DefendTargets.empty())
     {
-        std::vector<float> weights;
-        for (int8 target : teamPlan.DefendTargets)
-        {
-            Objective const& objective = plan.Objectives[target];
-            // ours under assault needs the most hands, our own running assault the fewest
-            float weight = objective.Weight * (objective.Owner == us && objective.Assaulting == them ? 2.0f : 1.0f);
-            weights.push_back(weight);
-        }
-        changed += PlaceDefenders(plan, teamPlan, defenders, weights, now);
+        std::vector<Player*> released;
+        changed += PlaceDefenders(plan, teamPlan, defenders, weights, now, moveOn ? &caps : nullptr, &released);
+        attackers.insert(attackers.end(), released.begin(), released.end());
     }
 
     // attack targets: picked again on an event, every minute, or when one stops being a target
@@ -747,10 +835,16 @@ void Planner::PlanTeam(BgPlan& plan, Map* map, uint32 team, std::vector<Player*>
         Objective const& objective = plan.Objectives[i];
         if (!objective.Known)
             continue;
+        // MoveOn: a target left as hopeless is not picked again for a while (nothing else blocks an objective on these maps)
+        if (int32(objective.BlockedUntilMs[team] - now) > 0)
+            continue;
         bool attack = kind == MapKind::Flag ? i == size_t(them) : (objective.Owner != us && objective.Assaulting != us) || objective.Assaulting == them;
         if (attack)
             candidates.push_back(int8(i));
     }
+    std::string why = reason;
+    if (sBgConfig.MoveOn && kind != MapKind::Flag)
+        PassOver(plan, map, team, candidates, [](int8) { return true; }, why, now);
     bool stale = teamPlan.AttackTargets.empty();
     for (int8 target : teamPlan.AttackTargets)
         stale |= !Contains(candidates, target);
@@ -922,7 +1016,7 @@ void Planner::PlanTeam(BgPlan& plan, Map* map, uint32 team, std::vector<Player*>
 
     if (changed || reacted)
     {
-        teamPlan.LastReason = !changed ? reactReason : reason.empty() ? "hold time over" : reason;
+        teamPlan.LastReason = !changed ? reactReason : why.empty() ? "hold time over" : why;
         teamPlan.LastReasonMs = now;
         teamPlan.LastChanged = changed + reacted;
         ++teamPlan.Reassigns;
@@ -1036,6 +1130,7 @@ void Planner::PlanValleyTeam(BgPlan& plan, Battleground* bg, Map* map, uint32 te
     // unless held); ours under assault weigh triple: retaking it is the defenders' job, the attackers never turn back for it
     teamPlan.DefendTargets.clear();
     std::vector<float> weights;
+    std::vector<uint32> caps;
     for (size_t i = 0; i < rows.size(); ++i)
     {
         NodeDef const& row = rows[i];
@@ -1046,6 +1141,7 @@ void Planner::PlanValleyTeam(BgPlan& plan, Battleground* bg, Map* map, uint32 te
         {
             teamPlan.DefendTargets.push_back(int8(i));
             weights.push_back(row.Weights[team] * (objective.Owner == us && objective.Assaulting == them ? 3.0f : 1.0f));
+            caps.push_back(objective.Owner != us && objective.Assaulting == us ? sBgConfig.MoveOnGuards : BgRules::Uncapped);
         }
     }
 
@@ -1056,18 +1152,26 @@ void Planner::PlanValleyTeam(BgPlan& plan, Battleground* bg, Map* map, uint32 te
         || (order && order->Kind == BgRules::CallKind::Everyone);
     teamPlan.WantDefenders = teamPlan.DefendTargets.empty() || pulled ? 0
         : std::min<uint32>(bots.size(), BgRules::ShareOf(bots.size(), StanceDefendPct(teamPlan)));
+    // MoveOn: our own running assault keeps MoveOn.Guards, the defenders the share would have put there past that attack instead
+    bool moveOn = sBgConfig.MoveOn && !teamPlan.DefendTargets.empty();
+    if (moveOn)
+        teamPlan.WantDefenders = BgRules::CappedDefenders(weights, caps, teamPlan.WantDefenders);
     if (pulled)
         for (Player* bot : bots)
             if (Assignment& job = plan.Jobs[bot->GetGUID()]; job.Base == Job::Defend)
                 job.Base = Job::None;
 
-    uint32 changed = SplitTeam(plan, teamPlan, bots, now);
+    uint32 changed = SplitTeam(plan, teamPlan, bots, now, moveOn ? &caps : nullptr);
 
     std::vector<Player*> defenders, attackers;
     for (Player* bot : bots)
         (plan.Jobs[bot->GetGUID()].Base == Job::Defend ? defenders : attackers).push_back(bot);
     if (!teamPlan.DefendTargets.empty())
-        changed += PlaceDefenders(plan, teamPlan, defenders, weights, now);
+    {
+        std::vector<Player*> released;
+        changed += PlaceDefenders(plan, teamPlan, defenders, weights, now, moveOn ? &caps : nullptr, &released);
+        attackers.insert(attackers.end(), released.begin(), released.end());
+    }
 
     // what we attack: the highest weight first, ties to the nearest. A boss needs its rally row, MinGroup players and its "requires"
     // done, unless the soft gate is open (match time, or the enemy score low)
@@ -1111,6 +1215,9 @@ void Planner::PlanValleyTeam(BgPlan& plan, Battleground* bg, Map* map, uint32 te
         if (attack)
             candidates.push_back(int8(i));
     }
+    std::string why = reason;
+    if (sBgConfig.MoveOn)
+        PassOver(plan, map, team, candidates, [&rows](int8 target) { return rows[target].IsNode(); }, why, now);
 
     // a push that charged keeps its boss until it is dead or the push gives up
     BgRules::RallyState rally = teamPlan.Rally.State;
@@ -1213,7 +1320,7 @@ void Planner::PlanValleyTeam(BgPlan& plan, Battleground* bg, Map* map, uint32 te
 
     if (changed || reacted)
     {
-        teamPlan.LastReason = !rallyEvent.empty() ? rallyEvent : !changed ? reactReason : reason.empty() ? "hold time over" : reason;
+        teamPlan.LastReason = !rallyEvent.empty() ? rallyEvent : !changed ? reactReason : why.empty() ? "hold time over" : why;
         teamPlan.LastReasonMs = now;
         teamPlan.LastChanged = changed + reacted;
         ++teamPlan.Reassigns;

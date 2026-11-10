@@ -649,6 +649,36 @@ void TestDeaths()
     CHECK(!DiesAtOneSpot(two, 3000, 600000, 40.0f, 3));
 }
 
+void TestSpreadCapped()
+{
+    // Snowfall under our own timer (weight 9, two guards) and three of our nodes: the rest of the 13 by 3:2:1
+    std::vector<uint32> counts = SpreadCapped({ 9.0f, 3.0f, 2.0f, 1.0f }, { 2, Uncapped, Uncapped, Uncapped }, 13);
+    CHECK(counts[0] == 2 && counts[0] + counts[1] + counts[2] + counts[3] == 13);
+    CHECK(counts[1] >= counts[2] && counts[2] >= counts[3] && counts[1] == 5);
+    // no cap reached: the same as Spread
+    CHECK(SpreadCapped({ 1.0f, 1.0f }, { Uncapped, Uncapped }, 6) == Spread({ 1.0f, 1.0f }, 6));
+    // every target full: the rest stays unplaced
+    counts = SpreadCapped({ 9.0f, 5.0f }, { 2, 1 }, 10);
+    CHECK(counts[0] == 2 && counts[1] == 1);
+    // open targets with no weight share what is left
+    counts = SpreadCapped({ 9.0f, 0.0f, 0.0f }, { 1, Uncapped, Uncapped }, 5);
+    CHECK(counts[0] == 1 && counts[1] + counts[2] == 4 && counts[1] == 2);
+    CHECK(CapTotal({ 2, 1 }) == 3 && CapTotal({ 2, Uncapped }) == Uncapped);
+    CHECK(SpreadCapped({}, {}, 5).empty());
+
+    // MoveOn: Snowfall (9) and our nodes (13 in all), 12 defenders: the plain spread puts 5 on Snowfall; with 2 guards the other 3
+    // attack and our nodes keep their 7
+    CHECK(Spread({ 9.0f, 13.0f }, 12)[0] == 5);
+    CHECK(CappedDefenders({ 9.0f, 13.0f }, { 2, Uncapped }, 12) == 9);
+    counts = SpreadCapped({ 9.0f, 13.0f }, { 2, Uncapped }, 9);
+    CHECK(counts[0] == 2 && counts[1] == 7);
+    // only running captures: their guards; nothing capped: all of them; none wanted: none
+    CHECK(CappedDefenders({ 5.0f, 5.0f }, { 2, 2 }, 10) == 4);
+    CHECK(CappedDefenders({ 1.0f, 1.0f }, { Uncapped, Uncapped }, 7) == 7);
+    CHECK(CappedDefenders({ 9.0f }, { 2 }, 0) == 0);
+    CHECK(CappedDefenders({}, {}, 3) == 3);
+}
+
 bool Near(float a, float b) { return std::fabs(a - b) < 0.01f; }
 
 void TestLegs()
@@ -735,6 +765,7 @@ int main()
     TestArchetypes();
     TestDeaths();
     TestLegs();
+    TestSpreadCapped();
 
     if (Failures)
     {
