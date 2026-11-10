@@ -241,8 +241,13 @@ struct BgPlan
     std::unordered_map<ObjectGuid, std::vector<BgRules::Death>> Deaths;    // #19: the last deaths of each bot
 };
 
+class Coordinator;
+
 class Planner
 {
+    // the coordinator path (BgCoordinator.h) reuses the push machinery (StepRally) and the team preparation of the old path
+    friend class Coordinator;
+
 public:
     static Planner& Instance();
 

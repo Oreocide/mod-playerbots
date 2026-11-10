@@ -55,6 +55,8 @@ struct Config
     bool MoveOn = false;                                    // a running capture of ours keeps a guard or two, a hopeless target is left
     uint32 MoveOnGuards = 2;                                // the defenders a running capture of ours keeps
     bool Metrics = false;                                   // per-minute and per-match lines (BgMetrics.h); read only, plays the same
+    bool Coordinator = false;                               // the coordinator path on maps that have a profile (BgCoordinator.h)
+    uint32 CoordinatorTickMs = 1000;                        // its plan interval (Planner.TickMs stays for the old path)
 
     // the reactive behaviours (phase 4, BG_PLAN.md §4), each off by default
     bool ThreatResponse = false;                            // #1 a node of ours under attack pulls the nearest defenders and 2 attackers

@@ -17,6 +17,7 @@
 
 #include "Battleground/BgPlanner.h"
 #include "Battleground/BgConfig.h"
+#include "Battleground/BgCoordinator.h"
 #include "Battleground/BgMetrics.h"
 #include "Battleground/BgReact.h"
 #include "ActivityMgr.h"
@@ -512,11 +513,12 @@ void Planner::Update()
             TC_LOG_INFO("server.playerbots", "Playerbots: battleground planner closed map {} instance {} after {} plans ({})", plan.MapId, plan.InstanceId,
                 plan.Ticks, gone);
             Metrics::Close(plan, bg, gone);
+            Coordinator::Close(plan);
             it = _plans.erase(it);
             continue;
         }
 
-        if (bg->GetStatus() == STATUS_IN_PROGRESS && now - plan.LastTickMs >= sBgConfig.TickMs)
+        if (bg->GetStatus() == STATUS_IN_PROGRESS && now - plan.LastTickMs >= (Coordinator::Coordinates(plan) ? sBgConfig.CoordinatorTickMs : sBgConfig.TickMs))
         {
             plan.LastTickMs = now;
             Plan(plan, bg, map, now);
@@ -751,13 +753,19 @@ void Planner::Plan(BgPlan& plan, Battleground* bg, Map* map, uint32 now)
     // #4/#15: the score outlook and each team's stance (Normal while both keys are off)
     UpdateStances(plan, bg, map, now);
 
-    for (uint32 team = 0; team < 2; ++team)
+    // Playerbots.Bg.Coordinator on a map with a profile: the coordinator plans the teams (BgCoordinator.h); else the old path
+    if (Coordinator::Coordinates(plan))
+        Coordinator::Plan(*this, plan, bg, map, members, reason, now);
+    else
     {
-        bool retarget = !reason.empty() || now - plan.Teams[team].LastRetargetMs >= RetargetEveryMs;
-        if (valley)
-            PlanValleyTeam(plan, bg, map, team, members[team], retarget, reason.empty() && retarget ? "periodic" : reason, now);
-        else
-            PlanTeam(plan, map, team, members[team], retarget, reason.empty() && retarget ? "periodic" : reason, now);
+        for (uint32 team = 0; team < 2; ++team)
+        {
+            bool retarget = !reason.empty() || now - plan.Teams[team].LastRetargetMs >= RetargetEveryMs;
+            if (valley)
+                PlanValleyTeam(plan, bg, map, team, members[team], retarget, reason.empty() && retarget ? "periodic" : reason, now);
+            else
+                PlanTeam(plan, map, team, members[team], retarget, reason.empty() && retarget ? "periodic" : reason, now);
+        }
     }
 
     // players who left the match
