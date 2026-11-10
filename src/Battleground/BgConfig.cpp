@@ -75,6 +75,24 @@ void Config::Load()
     Metrics = sConfigMgr->GetBoolDefault("Playerbots.Bg.Metrics", false);
     Coordinator = sConfigMgr->GetBoolDefault("Playerbots.Bg.Coordinator", false);
     CoordinatorTickMs = uint32(std::max(250, sConfigMgr->GetIntDefault("Playerbots.Bg.Coordinator.TickMs", 1000)));
+    auto count = [](char const* key, int32 def, int32 lo, int32 hi) { return uint32(std::clamp(sConfigMgr->GetIntDefault(key, def), lo, hi)); };
+    auto real = [](char const* key, float def, float lo, float hi) { return std::clamp(sConfigMgr->GetFloatDefault(key, def), lo, hi); };
+    CommitSeconds = count("Playerbots.Bg.CommitSeconds", 30, 0, 600);
+    CommitMarginMin = real("Playerbots.Bg.CommitMarginMin", 1.0f, 0.0f, 100.0f);
+    CommitMarginPct = count("Playerbots.Bg.CommitMarginPct", 25, 0, 500);
+    RejoinSeconds = count("Playerbots.Bg.RejoinSeconds", 20, 0, 300);
+    DeadWeightPct = count("Playerbots.Bg.Quota.DeadWeightPct", 50, 0, 100);
+    TravelPer100Yards = real("Playerbots.Bg.Score.TravelPer100Yards", 0.2f, 0.0f, 10.0f);
+    ThreatPerEnemy = real("Playerbots.Bg.Score.ThreatPerEnemy", 0.5f, 0.0f, 10.0f);
+    ThreatCap = count("Playerbots.Bg.Score.ThreatCap", 6, 0, 40);
+    QuotaFalloffPct = count("Playerbots.Bg.Score.QuotaFalloffPct", 10, 0, 100);
+    SquadMinTake = count("Playerbots.Bg.Squad.MinTake", 4, 1, 40);
+    LaneTakeMax = count("Playerbots.Bg.Lane.TakeMax", 12, 1, 80);
+    LaneGuards = count("Playerbots.Bg.Lane.Guards", 2, 0, 10);
+    LaneMidAfterMinutes = count("Playerbots.Bg.Lane.MidAfterMinutes", 6, 0, 120);
+    LanePushMarginPct = count("Playerbots.Bg.Lane.PushMarginPct", 20, 0, 500);
+    LanePushHoldSeconds = count("Playerbots.Bg.Lane.PushHoldSeconds", 10, 0, 600);
+    LanePushDropSeconds = count("Playerbots.Bg.Lane.PushDropSeconds", 30, 0, 600);
 
     ThreatResponse = sConfigMgr->GetBoolDefault("Playerbots.Bg.ThreatResponse", false);
     RetakeTimers = sConfigMgr->GetBoolDefault("Playerbots.Bg.RetakeTimers", false);

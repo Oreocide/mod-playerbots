@@ -57,6 +57,23 @@ struct Config
     bool Metrics = false;                                   // per-minute and per-match lines (BgMetrics.h); read only, plays the same
     bool Coordinator = false;                               // the coordinator path on maps that have a profile (BgCoordinator.h)
     uint32 CoordinatorTickMs = 1000;                        // its plan interval (Planner.TickMs stays for the old path)
+    // the coordinator's task rules (BgTaskRules.h; docs/design/BG_COORDINATOR.md §2.3-§2.6, §3.3)
+    uint32 CommitSeconds = 30;                              // a bot keeps its task this long unless the task ends
+    float CommitMarginMin = 1.0f;                           // after that it moves for a task better by at least this
+    uint32 CommitMarginPct = 25;                            // or this share of its current score, whichever is more
+    uint32 RejoinSeconds = 20;                              // back from a graveyard: not rescored this long
+    uint32 DeadWeightPct = 50;                              // a dead bot counts this share toward its task's quota
+    float TravelPer100Yards = 0.2f;                         // score cost of 100 yd to the task
+    float ThreatPerEnemy = 0.5f;                            // score cost of each enemy more than allies at the task
+    uint32 ThreatCap = 6;                                   // net enemies counted at most
+    uint32 QuotaFalloffPct = 10;                            // the value left at or past a task's max quota
+    uint32 SquadMinTake = 4;                                // a Take squad smaller than this is dissolved
+    uint32 LaneTakeMax = 12;                                // a Take task's quota when its row gives none
+    uint32 LaneGuards = 2;                                  // guards on a running assault of ours when its row gives none
+    uint32 LaneMidAfterMinutes = 6;                         // the lane's mid phase at the latest after this much play
+    uint32 LanePushMarginPct = 20;                          // the general's push: its value beats the best other by this much
+    uint32 LanePushHoldSeconds = 10;                        // for this long
+    uint32 LanePushDropSeconds = 30;                        // a gathering push is dropped after both conditions failed this long
 
     // the reactive behaviours (phase 4, BG_PLAN.md §4), each off by default
     bool ThreatResponse = false;                            // #1 a node of ours under attack pulls the nearest defenders and 2 attackers

@@ -20,6 +20,7 @@
 
 #include "ActivityMgr.h"
 #include "Battleground/BgConfig.h"
+#include "Battleground/BgCoordinator.h"
 #include "Battleground/BgMapData.h"
 #include "Battleground/BgMetrics.h"
 #include "Battleground/BgPlanner.h"
@@ -397,6 +398,7 @@ public:
             { "show",    HandleBgShowCommand,   rbac::RBAC_PERM_COMMAND_DEBUG, Console::No },
             { "reload",  HandleBgReloadCommand, rbac::RBAC_PERM_COMMAND_DEBUG, Console::Yes },
             { "metrics", HandleBgMetricsCommand, rbac::RBAC_PERM_COMMAND_DEBUG, Console::Yes },
+            { "squads",  HandleBgSquadsCommand,  rbac::RBAC_PERM_COMMAND_DEBUG, Console::Yes },
             { "test",    testCommandTable },
             { "vehicle", vehicleCommandTable },
             { "",        HandleBgCommand,       rbac::RBAC_PERM_COMMAND_DEBUG, Console::Yes },
@@ -905,6 +907,17 @@ public:
             at.GetPositionX(), at.GetPositionY(), at.GetPositionZ(), vehicleEntry, vehicle->GetName(),
             active ? "" : " (open world: a bot far from players is dormant and may never finish boarding)"));
         handler->SendSysMessage("Vehicle test started; .bot bg vehicle test shows the steps (about 40 s).");
+        return true;
+    }
+
+    // .bot bg squads [instance]: the coordinator's tasks per team (phase, the general's push gate, fallbacks, bots per task)
+    static bool HandleBgSquadsCommand(ChatHandler* handler, Optional<uint32> instanceId)
+    {
+        BgPlan const* plan = Pick(handler, instanceId);
+        if (!plan)
+            return true;
+        for (std::string const& line : Coordinator::Report(*plan))
+            handler->SendSysMessage(line);
         return true;
     }
 

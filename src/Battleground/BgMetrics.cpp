@@ -17,6 +17,7 @@
 
 #include "Battleground/BgMetrics.h"
 #include "Battleground/BgConfig.h"
+#include "Battleground/BgCoordinator.h"
 #include "Battleground/BgMapData.h"
 #include "Battleground.h"
 #include "Log.h"
@@ -199,9 +200,12 @@ void Sample(BgPlan const& plan, Battleground* bg, Map* map, uint32 now)
             objectivesText += Trinity::StringFormat("{}{} a{}{} p{}", objectivesText.empty() ? "" : "; ", ObjectiveName(plan, int8(i)),
                 assigned[team][i], dead[team][i] ? Trinity::StringFormat("+{}d", dead[team][i]) : std::string(), present[team][i]);
         }
-        match.LastLine[team] = Trinity::StringFormat("{} instance {} play {} s {}: score {}, deaths {} (+{}), captures {}, attackers {}; {}",
+        // the coordinator's fallback share (docs/design/BG_COORDINATOR.md §5.3: over 15% flags the profile for redesign)
+        uint32 fallbacks = 0, assignments = 0;
+        Coordinator::FallbackCounts(plan, team, fallbacks, assignments);
+        match.LastLine[team] = Trinity::StringFormat("{} instance {} play {} s {}: score {}, deaths {} (+{}), captures {}, attackers {}, fallbacks {}/{}; {}",
             match.Name, plan.InstanceId, playS, TeamWord(team), match.Score[team], match.Deaths[team], match.MinuteDeaths[team],
-            match.Captures[team], attackers[team], objectivesText.empty() ? "-" : objectivesText);
+            match.Captures[team], attackers[team], fallbacks, assignments, objectivesText.empty() ? "-" : objectivesText);
         TC_LOG_INFO("server.playerbots.bg", "Playerbots: bg metrics map {} {}", plan.MapId, match.LastLine[team]);
         match.MinuteDeaths[team] = 0;
     }

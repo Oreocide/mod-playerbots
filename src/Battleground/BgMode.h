@@ -91,8 +91,18 @@ struct Task
     uint8 QuotaMax = 0;             // 0: no cap
     std::vector<RoleSlot> Roles;
     Stage Staging;
+    bool FixedQuota = false;        // Hold: the mode set the quota (the guards of a running assault); else the team's defend share
     uint32 CommitMs = 0;            // 0: Playerbots.Bg.CommitSeconds
     TetherRole Combat = TetherRole::Fighter;
+};
+
+/// What a mode and a profile's phase rule may read besides the plan (world thread, valid for one plan)
+struct Context
+{
+    Battleground* Bg = nullptr;
+    Map* MatchMap = nullptr;
+    uint32 Now = 0;                 // GameTime ms
+    uint32 PlayMs = 0;              // Battleground::GetInProgressDuration: the match since the gates opened
 };
 
 class Mode
@@ -100,10 +110,8 @@ class Mode
 public:
     virtual ~Mode() = default;
     virtual char const* Name() const = 0;
-    /// The tasks this mode offers the team now
-    virtual void Offer(BgPlan const& plan, uint32 team, TaskPhase phase, std::vector<Task>& out) const = 0;
-    /// Done (completed) or lost: the squad is released at once
-    virtual bool Ends(BgPlan const& plan, uint32 team, Task const& task) const = 0;
+    /// The tasks this mode offers the team now. A task it no longer offers ends: its squad is released at once
+    virtual void Offer(BgPlan const& plan, Context const& context, uint32 team, TaskPhase phase, std::vector<Task>& out) const = 0;
 };
 
 /// The profile's thin state reader. The coordinator path reuses the planner's readers (ReadValley, Discover + ReadState); an
@@ -122,11 +130,19 @@ struct Profile
     char const* Short = "";         // the Playerbots.Bg.<Short>.* section
     std::vector<Mode const*> Modes; // several modes per profile: declared, used first by the flag maps (backlog B2/B3)
     Adapter const* State = nullptr;
-    std::function<TaskPhase(BgPlan const&, Battleground const*, uint32 team, TaskPhase current)> PhaseOf;
+    std::function<TaskPhase(BgPlan const&, Context const&, uint32 team, TaskPhase current)> PhaseOf;
 };
 
 /// The profile of a map, nullptr when the coordinator does not handle it (the old path plays it, whatever the key says)
 Profile const* FindProfile(uint32 mapId);
+
+/// The lane push (BgModeLane.cpp, §3.3): Alterac Valley's banners (graveyards to take, towers to burn), holds and guards, retakes and
+/// the general's push from the playerbots_bg_node rows
+Mode const& LaneMode();
+/// Alterac Valley's phase per team (§4): early until both towers of its push path are taken, late from two enemy towers burnt
+TaskPhase AlteracValleyPhase(BgPlan const& plan, Context const& context, uint32 team, TaskPhase current);
+/// The soft gate of a general (Playerbots.Bg.SoftGateMinutes of play, or the enemy score down to SoftGateScorePct of its start)
+bool SoftGateOpen(BgPlan const& plan, Context const& context, uint32 team);
 }
 
 #endif

@@ -44,6 +44,10 @@ public:
         uint32 now);
     /// The planner drops the match's plan
     static void Close(BgPlan const& plan);
+    /// .bot bg squads: per team the phase, the general's push gate, the fallback share and every task with its bots
+    static std::vector<std::string> Report(BgPlan const& plan);
+    /// Bots that took the fallback task, and all assignments, since the match began (Playerbots.Bg.Metrics)
+    static void FallbackCounts(BgPlan const& plan, uint32 team, uint32& fallbacks, uint32& assignments);
 };
 }
 

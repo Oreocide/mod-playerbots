@@ -18,39 +18,395 @@
 #include "Battleground/BgCoordinator.h"
 #include "Battleground/BgConfig.h"
 #include "Battleground/BgMode.h"
+#include "Battleground/BgReact.h"
+#include "BotSession.h"
+#include "PlayerbotAI.h"
+#include "PlayerbotMgr.h"
+#include "Battleground.h"
 #include "Log.h"
+#include "Map.h"
+#include "Player.h"
+#include "StringFormat.h"
+#include <algorithm>
 #include <map>
+#include <unordered_map>
 
 namespace Playerbots::Bg
 {
 namespace
 {
 using MatchKey = std::pair<uint32, uint32>;
+constexpr float NearRange = 40.0f;          // the counting pass: a living player this close to an objective is near it
 
-/// The path of each match, fixed at its first plan
-std::map<MatchKey, bool> Paths;
+struct BotRecord
+{
+    int8 Objective = NoObjective;
+    TaskIntent Intent = TaskIntent::Take;
+    uint32 SinceMs = 0;
+    bool Fallback = false;
+};
+
+struct TeamRecord
+{
+    TaskPhase Phase = TaskPhase::Early;
+    BgRules::PushGate Gate;
+    uint32 Fallbacks = 0;                   // fallback assignments since the match began
+    uint32 Assignments = 0;                 // task changes since the match began
+    std::vector<Task> Tasks;                // the last plan's tasks, for .bot bg squads
+    std::vector<uint32> Living;             // their living bots
+    std::vector<uint32> Dead;
+};
+
+struct Match
+{
+    bool Coordinated = false;
+    TeamRecord Teams[2];
+    std::unordered_map<ObjectGuid, BotRecord> Bots;
+};
+
+std::map<MatchKey, Match> Matches;
+
+char const* IntentName(TaskIntent intent)
+{
+    switch (intent)
+    {
+        case TaskIntent::Take: return "take";
+        case TaskIntent::Hold: return "hold";
+        case TaskIntent::Retake: return "retake";
+        case TaskIntent::Escort: return "escort";
+        case TaskIntent::Hunt: return "hunt";
+        case TaskIntent::Return: return "return";
+        case TaskIntent::Squad: return "squad";
+        case TaskIntent::Push: return "push";
+        case TaskIntent::Drive: return "drive";
+    }
+    return "?";
+}
+
+char const* PhaseName(TaskPhase phase)
+{
+    return phase == TaskPhase::Early ? "early" : phase == TaskPhase::Mid ? "mid" : "late";
+}
+
+/// The counting pass (§2.2): living players of each team near each objective, from one pass over the match's players. It does not
+/// need the reactive behaviours' picture, whose keys are off
+void CountNear(BgPlan& plan, Map* map)
+{
+    std::vector<Position> where(plan.Objectives.size());
+    std::vector<bool> placed(plan.Objectives.size(), false);
+    for (size_t i = 0; i < plan.Objectives.size(); ++i)
+    {
+        plan.Objectives[i].Near[0] = plan.Objectives[i].Near[1] = 0;
+        placed[i] = ObjectivePosition(plan, int8(i), where[i]);
+    }
+    for (MapReference const& ref : map->GetPlayers())
+    {
+        Player* player = ref.GetSource();
+        if (!player || !player->IsInWorld() || player->IsGameMaster() || !player->IsAlive())
+            continue;
+        TeamId team = TeamOf(player);
+        if (team != TEAM_ALLIANCE && team != TEAM_HORDE)
+            continue;
+        for (size_t i = 0; i < plan.Objectives.size(); ++i)
+            if (placed[i] && player->GetExactDist2d(where[i]) <= NearRange)
+                ++plan.Objectives[i].Near[team];
+    }
+}
+
+bool Charged(BgRules::RallyState state)
+{
+    return state == BgRules::RallyState::Charging || state == BgRules::RallyState::Fighting || state == BgRules::RallyState::Regroup;
+}
 }
 
 bool Coordinator::Coordinates(BgPlan const& plan)
 {
-    auto [it, created] = Paths.try_emplace({ plan.MapId, plan.InstanceId }, false);
+    auto [it, created] = Matches.try_emplace({ plan.MapId, plan.InstanceId });
     if (created)
     {
-        it->second = sBgConfig.Coordinator && FindProfile(plan.MapId) != nullptr;
-        if (it->second)
+        it->second.Coordinated = sBgConfig.Coordinator && FindProfile(plan.MapId) != nullptr;
+        if (it->second.Coordinated)
             TC_LOG_INFO("server.playerbots", "Playerbots: battleground coordinator plans map {} instance {}", plan.MapId, plan.InstanceId);
     }
-    return it->second;
+    return it->second.Coordinated;
 }
 
-void Coordinator::Plan(Planner& /*planner*/, BgPlan& /*plan*/, Battleground* /*bg*/, Map* /*map*/, std::vector<Player*> const (&/*members*/)[2],
-    std::string const& /*reason*/, uint32 /*now*/)
+void Coordinator::Plan(Planner& planner, BgPlan& plan, Battleground* bg, Map* map, std::vector<Player*> const (&members)[2], std::string const& reason,
+    uint32 now)
 {
-    // W4 (docs/design/BG_COORDINATOR.md §6): no map has a profile yet, so Coordinates() is false and this is never reached
+    Profile const* profile = FindProfile(plan.MapId);
+    if (!profile || !plan.Def || !bg || !map)
+        return;
+    Match& match = Matches[{ plan.MapId, plan.InstanceId }];
+    Context context;
+    context.Bg = bg;
+    context.MatchMap = map;
+    context.Now = now;
+    context.PlayMs = uint32(bg->GetInProgressDuration().count());
+    if (profile->State)
+        profile->State->Read(plan, bg, map, now);
+    CountNear(plan, map);
+
+    BgRules::ScoreParams scoreParams;
+    scoreParams.TravelPer100Yards = sBgConfig.TravelPer100Yards;
+    scoreParams.ThreatPerEnemy = sBgConfig.ThreatPerEnemy;
+    scoreParams.ThreatCap = sBgConfig.ThreatCap;
+    scoreParams.QuotaFalloffPct = float(sBgConfig.QuotaFalloffPct);
+    BgRules::FillParams fillParams;
+    fillParams.CommitMs = sBgConfig.CommitSeconds * 1000;
+    fillParams.CommitMarginMin = sBgConfig.CommitMarginMin;
+    fillParams.CommitMarginPct = float(sBgConfig.CommitMarginPct);
+    fillParams.DeadWeight = float(sBgConfig.DeadWeightPct) / 100.0f;
+    fillParams.MinTake = sBgConfig.SquadMinTake;
+    BgRules::PushGateParams gateParams;
+    gateParams.MarginPct = float(sBgConfig.LanePushMarginPct);
+    gateParams.HoldMs = sBgConfig.LanePushHoldSeconds * 1000;
+    gateParams.DropMs = sBgConfig.LanePushDropSeconds * 1000;
+
+    for (uint32 team = 0; team < 2; ++team)
+    {
+        TeamPlan& teamPlan = plan.Teams[team];
+        TeamRecord& record = match.Teams[team];
+        TeamId us = TeamId(team);
+        TeamId them = TeamId(1 - team);
+
+        // ownerless bots are planned; humans and owned bots count (as in the old path)
+        std::vector<Player*> bots;
+        teamPlan.Others = 0;
+        for (Player* player : members[team])
+        {
+            PlayerbotAI* ai = IsBot(player) ? sPlayerbotMgr->GetAI(player) : nullptr;
+            if (ai && !ai->GetMaster())
+                bots.push_back(player);
+            else
+                ++teamPlan.Others;
+        }
+        teamPlan.Assignable = uint32(bots.size());
+        PrepareTeam(plan, team, members[team], bots, planner._streak);
+
+        if (profile->PhaseOf)
+            record.Phase = profile->PhaseOf(plan, context, team, record.Phase);
+        std::vector<Task> tasks;
+        for (Mode const* mode : profile->Modes)
+            mode->Offer(plan, context, team, record.Phase, tasks);
+
+        // the general's push: all or nothing behind its gate (§3.3); guards and the defenders stay
+        int32 push = -1;
+        float bestOther = 0.0f;
+        for (size_t t = 0; t < tasks.size(); ++t)
+        {
+            if (tasks[t].Intent == TaskIntent::Push)
+                push = int32(t);
+            else if (tasks[t].Intent == TaskIntent::Take)
+                bestOther = std::max(bestOther, tasks[t].Value);
+        }
+        bool pushOn = false;
+        if (push >= 0)
+        {
+            bool locked = teamPlan.RallyObjective == tasks[push].Objective && Charged(teamPlan.Rally.State);
+            bool condition = BgRules::PushCondition(SoftGateOpen(plan, context, team), tasks[push].Value, bestOther, gateParams);
+            pushOn = BgRules::StepPushGate(record.Gate, condition, locked, now, gateParams);
+        }
+        else
+            record.Gate = BgRules::PushGate();
+        std::erase_if(tasks, [&](Task const& task)
+        {
+            if (task.Intent == TaskIntent::Push)
+                return !pushOn;
+            return pushOn && task.Intent != TaskIntent::Hold && task.Intent != TaskIntent::Retake;
+        });
+
+        // the hold share: the guards of our running assaults first, then the team's seeded share over the holds by value. A rally
+        // that restarted with the defenders called in (Bg.Rally.PullDefenders) keeps only the guards
+        uint32 want = BgRules::ShareOf(uint32(bots.size()), StanceDefendPct(teamPlan));
+        if (pushOn && teamPlan.Rally.DefendersPulled)
+            want = 0;
+        uint32 fixed = 0;
+        std::vector<float> holdValues;
+        std::vector<size_t> holds;
+        for (size_t t = 0; t < tasks.size(); ++t)
+        {
+            if (tasks[t].Intent != TaskIntent::Hold)
+                continue;
+            if (tasks[t].FixedQuota)
+                fixed += tasks[t].QuotaMin;
+            else
+            {
+                holds.push_back(t);
+                holdValues.push_back(tasks[t].Value);
+            }
+        }
+        std::vector<uint32> shares = BgRules::Spread(holdValues, want > fixed ? want - fixed : 0);
+        for (size_t h = 0; h < holds.size(); ++h)
+        {
+            uint8 quota = uint8(std::min<uint32>(shares[h], 255));
+            tasks[holds[h]].QuotaMin = quota;
+            tasks[holds[h]].QuotaMax = quota;
+        }
+        // a hold that gets no share is not offered (a max quota of 0 would mean no cap)
+        std::erase_if(tasks, [](Task const& task) { return task.Intent == TaskIntent::Hold && !task.QuotaMax; });
+        teamPlan.WantDefenders = want;
+
+        std::vector<BgRules::TaskView> views;
+        views.reserve(tasks.size());
+        for (Task const& task : tasks)
+        {
+            BgRules::TaskView view;
+            view.Intent = task.Intent;
+            view.Value = task.Value;
+            Position at;
+            if (ObjectivePosition(plan, task.Objective, at))
+            {
+                view.X = at.GetPositionX();
+                view.Y = at.GetPositionY();
+            }
+            view.QuotaMin = task.QuotaMin;
+            view.QuotaMax = task.QuotaMax;
+            if (task.Objective >= 0 && size_t(task.Objective) < plan.Objectives.size())
+            {
+                view.Enemies = plan.Objectives[task.Objective].Near[them];
+                view.Allies = plan.Objectives[task.Objective].Near[us];
+            }
+            views.push_back(view);
+        }
+
+        std::vector<BgRules::FillBot> fill;
+        fill.reserve(bots.size());
+        for (Player* bot : bots)
+        {
+            BotRecord& bot0 = match.Bots[bot->GetGUID()];
+            Assignment const& job = plan.Jobs[bot->GetGUID()];
+            BgRules::FillBot entry;
+            entry.Id = bot->GetGUID().GetCounter();
+            entry.Key = BgRules::ShuffleKey(teamPlan.Seed, entry.Id);
+            entry.X = bot->GetPositionX();
+            entry.Y = bot->GetPositionY();
+            entry.Alive = bot->IsAlive();
+            for (size_t t = 0; t < tasks.size(); ++t)
+                if (tasks[t].Objective == bot0.Objective && tasks[t].Intent == bot0.Intent)
+                    entry.Task = int32(t);
+            entry.SinceMs = bot0.SinceMs;
+            entry.RejoinUntilMs = job.RezMs ? job.RezMs + sBgConfig.RejoinSeconds * 1000 : 0;
+            fill.push_back(entry);
+        }
+        BgRules::FillResult result = BgRules::FillTasks(views, fill, now, scoreParams, fillParams);
+
+        // the jobs the bot side reads: an attack intent attacks its objective, a hold or a retake defends it. PlayValley does the
+        // banners (one capper, the others guard), PlayPush the general's push
+        uint32 changed = 0;
+        record.Living.assign(tasks.size(), 0);
+        record.Dead.assign(tasks.size(), 0);
+        for (size_t i = 0; i < bots.size(); ++i)
+        {
+            BgRules::FillBot const& entry = fill[i];
+            BotRecord& bot0 = match.Bots[bots[i]->GetGUID()];
+            Assignment& job = plan.Jobs[bots[i]->GetGUID()];
+            int8 objective = NoObjective;
+            Job base = Job::Attack;
+            if (entry.Task >= 0)
+            {
+                Task const& task = tasks[entry.Task];
+                bot0.Objective = task.Objective;
+                bot0.Intent = task.Intent;
+                bot0.SinceMs = entry.SinceMs;
+                bot0.Fallback = entry.Fallback;
+                objective = task.Objective;
+                base = task.Intent == TaskIntent::Hold || task.Intent == TaskIntent::Retake ? Job::Defend : Job::Attack;
+                ++(entry.Alive ? record.Living : record.Dead)[entry.Task];
+            }
+            else
+                bot0 = BotRecord();
+            if (job.Base != base || job.Objective != objective)
+            {
+                ++changed;
+                job.SinceMs = now;
+            }
+            job.Base = base;
+            job.Now = base;
+            job.Objective = objective;
+            job.Follow.Clear();
+        }
+        record.Fallbacks += result.Fallbacks;
+        record.Assignments += result.Changed;
+        record.Tasks = tasks;
+
+        // the planner's view of the team: .bot bg prints it, StepRally reads the push from AttackTargets
+        teamPlan.AttackTargets.clear();
+        teamPlan.DefendTargets.clear();
+        for (size_t t = 0; t < tasks.size(); ++t)
+        {
+            if (!record.Living[t] && !record.Dead[t])
+                continue;
+            std::vector<int8>& list = BgRules::AttackIntent(tasks[t].Intent) && tasks[t].Intent != TaskIntent::Retake ? teamPlan.AttackTargets
+                : teamPlan.DefendTargets;
+            if (std::find(list.begin(), list.end(), tasks[t].Objective) == list.end())
+                list.push_back(tasks[t].Objective);
+        }
+        if (pushOn)
+            teamPlan.AttackTargets = { tasks[std::distance(tasks.begin(), std::find_if(tasks.begin(), tasks.end(),
+                [](Task const& task) { return task.Intent == TaskIntent::Push; }))].Objective };
+
+        std::string rallyEvent;
+        uint32 rallyChanged = 0;
+        planner.StepRally(plan, map, team, members[team], bots, rallyChanged, rallyEvent, now);
+        // deaths and resurrections (Bg.Rebuff and the rejoin time read them) and the overlays, which stay off with their keys
+        std::string reactReason;
+        uint32 reacted = ReactTeam(plan, team, bots, reactReason, now);
+
+        if (changed || rallyChanged || reacted)
+        {
+            teamPlan.LastReason = !rallyEvent.empty() ? rallyEvent : !changed ? reactReason : reason.empty() ? "periodic" : reason;
+            teamPlan.LastReasonMs = now;
+            teamPlan.LastChanged = changed + rallyChanged + reacted;
+            ++teamPlan.Reassigns;
+        }
+    }
+
+    // bots that left the match
+    std::erase_if(match.Bots, [&plan](auto const& entry) { return !plan.Jobs.contains(entry.first); });
 }
 
 void Coordinator::Close(BgPlan const& plan)
 {
-    Paths.erase({ plan.MapId, plan.InstanceId });
+    Matches.erase({ plan.MapId, plan.InstanceId });
+}
+
+std::vector<std::string> Coordinator::Report(BgPlan const& plan)
+{
+    std::vector<std::string> lines;
+    auto it = Matches.find({ plan.MapId, plan.InstanceId });
+    if (it == Matches.end() || !it->second.Coordinated)
+    {
+        lines.push_back("The coordinator does not plan this match (Playerbots.Bg.Coordinator off when it began, or no profile for the map).");
+        return lines;
+    }
+    for (uint32 team = 0; team < 2; ++team)
+    {
+        TeamRecord const& record = it->second.Teams[team];
+        TeamPlan const& teamPlan = plan.Teams[team];
+        lines.push_back(Trinity::StringFormat("{}: phase {}, general's push {}, fallbacks {} of {} assignments ({}%), defend share {}",
+            team == TEAM_ALLIANCE ? "Alliance" : "Horde", PhaseName(record.Phase), record.Gate.On ? "on" : "off", record.Fallbacks,
+            record.Assignments, record.Assignments ? record.Fallbacks * 100 / record.Assignments : 0, teamPlan.WantDefenders));
+        for (size_t t = 0; t < record.Tasks.size(); ++t)
+        {
+            Task const& task = record.Tasks[t];
+            Objective const* objective = task.Objective >= 0 && size_t(task.Objective) < plan.Objectives.size() ? &plan.Objectives[task.Objective] : nullptr;
+            lines.push_back(Trinity::StringFormat("  {} {}: value {:.1f}, quota {}-{}, bots {}{}, near us {} them {}", IntentName(task.Intent),
+                ObjectiveName(plan, task.Objective), task.Value, uint32(task.QuotaMin), task.QuotaMax ? std::to_string(task.QuotaMax) : "any",
+                t < record.Living.size() ? record.Living[t] : 0u, t < record.Dead.size() && record.Dead[t] ? Trinity::StringFormat(" (+{} dead)", record.Dead[t]) : "",
+                objective ? objective->Near[team] : 0u, objective ? objective->Near[1 - team] : 0u));
+        }
+    }
+    return lines;
+}
+
+void Coordinator::FallbackCounts(BgPlan const& plan, uint32 team, uint32& fallbacks, uint32& assignments)
+{
+    fallbacks = assignments = 0;
+    auto it = Matches.find({ plan.MapId, plan.InstanceId });
+    if (it == Matches.end() || !it->second.Coordinated || team > 1)
+        return;
+    fallbacks = it->second.Teams[team].Fallbacks;
+    assignments = it->second.Teams[team].Assignments;
 }
 }
