@@ -696,7 +696,9 @@ Defenders (Hold tasks, `BgRules::Spread` over the hold values) at the seeded sha
 1. **Snowfall after the rush.** From 3:00 of play, to 5:00 in (a) and to the end in (b):
    - bots assigned to Snowfall per team stay within quota plus guards (4 + 1 = 5) in every sample;
    - bots present within 40 yd stay at 5 or fewer in at least 90% of the per-minute samples (fights can pull a few in for a minute).
-2. **Main force at the first tower.** At least half of the team's Take and Burn attackers are within 40 yd of a push-path tower by **4:00 of play**, in at least 8 of 10 opening matches per team; 3:00 is the stretch goal.
+2. **A tower squad at its push-path tower** (owner's rule, 2026-11-11). A push-path tower's squad has arrived when at least half of it (assigned living plus dead) and at least 4 bots stand within 40 yd. The criterion is met when either push-path tower's squad arrives by **4:00 of play**, in at least 8 of 10 opening matches per team; 3:00 is the stretch goal.
+   - The first rule, half of all the team's living attackers at one tower, could not pass with the two-tower split: 12 + 11 of 27 Alliance attackers. The match line's `massed` still measures it, for reference.
+   - `bgmatch_analyze.py` also prints every squad's arrival over time: present / (assigned + dead) at each metrics line. `Playerbots.Bg.Metrics.LineSeconds` sets the line spacing, for example 15 s in test windows. Present counts every teammate within 40 yd, so graveyards can read above 100%.
    - Alliance: Iceblood Tower (1,386 yd in a straight line from the gate) or Tower Point (1,568).
    - Horde: Stonehearth Bunker (1,234) or Icewing (1,596).
    - Why 4:00: roads run about 1.3 x the straight line, so 1,600-1,800 yd. On 11-10 bots assaulted Snowfall (1,067 yd) about 120 s into play, about 10 yd/s including mounting and legs. That makes about 3 minutes, plus a minute of margin.
@@ -776,22 +778,22 @@ Defenders (Hold tasks, `BgRules::Spread` over the hold values) at the seeded sha
 - **The navmesh is connected. The mover is not ruled out:**
   - `trinitycore-tracking/tools/bg/navcheck.cpp` is an offline Detour query on `docker/data/mmaps`. It mirrors the core's player filter and poly search (`PathGenerator.cpp:141-152`, `:650-673`).
   - Map 30 has 28 tiles. From each team's gate and graveyards, Iceblood Tower, Tower Point, both captains, the rally points and Snowfall route complete.
-  - All four Alliance bunkers route partially from everywhere, but each path ends 13-18 yd from the anchor in 2D, inside the 40 yd presence circle (`BgMetrics.cpp:34`, `:147`).
-  - The movement target and the presence point are the same: both come from `ObjectivePosition` (`BgPlay.cpp:440`, `BgMetrics.cpp:114`).
+  - All four Alliance bunkers route partially from everywhere, but each path ends 13-18 yd from the anchor in 2D, inside the 40 yd presence circle (`BgMetrics.cpp:42`, `:315`).
+  - The movement target and the presence point are the same: both come from `ObjectivePosition` (`BgPlay.cpp:450`, `BgMetrics.cpp:282`).
   - These routes are 700-2400 yd long. The core's smooth path gives up at 74 points, about 300 yd (`PathGenerator.cpp:951`). The bots get past that only through `Bg.LegYards` legs, which is 180 in the live conf. So navcheck shows the mesh is connected, not that the bots' mover gets there.
 - **A lead, not yet the cause (Medium-Low):**
-  - `PlayValley` calls `Engage(bot, ai, pos, GuardRange)` before `Go` at any distance (`BgPlay.cpp:684-685`).
-  - `Engage` makes the enemy player nearest the *objective* a forced target, however far away the bot is (`BgPlay.cpp:144-164`).
+  - `PlayValley` calls `Engage(bot, ai, pos, GuardRange)` before `Go` at any distance (`BgPlay.cpp:694-695`).
+  - `Engage` makes the enemy player nearest the *objective* a forced target, however far away the bot is (`BgPlay.cpp:154-174`).
   - With `Combat.RoleTargeting = 1` (live), a forced target comes first and skips the chase-distance check (`PlayerbotAI.cpp:1244-1246`; compare `withinChase` at `:1215`).
   - So a tower squad member anywhere on the map can take a defender at its tower as its target.
   - **What fits:**
     - The tasks `PlayValley` runs never fill: the arm A Horde Snowfall assignees, and the C/B tower squads.
-    - The captain pushes do arrive: `PlayPush` engages only around its rally point, and the rallies stand away from hostile spawns (`BgPlay.cpp:610-613`).
+    - The captain pushes do arrive: `PlayPush` engages only around its rally point, and the rallies stand away from hostile spawns (`BgPlay.cpp:620-623`).
   - **What does not fit yet:**
     - The C/B captain squads also go through `PlayPush`, yet nobody reached their rally. Maybe they were taken from parked tower squads still holding the old forced target; this is unchecked.
   - **The check:** `bot state` (position, combat target, last action) on tower-squad members during a window.
 - **Criterion 2 as defined cannot pass with the approved split:**
-  - `BgMetrics.cpp:183` counts a tower as massed only when the bots at one objective, doubled, reach the team's living attackers.
+  - `BgMetrics.cpp:351` counts a tower as massed only when the bots at one objective, doubled, reach the team's living attackers.
   - The opening sends 12 + 11 of 27 Alliance attackers to two towers: 24 < 27 even with full arrival. Horde Icewing: 14 < 18.
   - **Open decision (user):** either keep the definition and change the split, or measure arrival per push-path tower. Proposed per-tower measure: at least half of the tower's own squad within 40 yd, and at least 4 (`Squad.MinTake`). A pair-wide measure is the alternative: the team's two push-path towers together hold half the living attackers.
   - Window 2 under each, best value by 300 s:
@@ -803,6 +805,32 @@ Defenders (Hold tasks, `BgRules::Spread` over the hold values) at the seeded sha
     - `bgmatch.sh --states`, with the sampled names taken from the tower squads (`.bot bg squads`, `.bot bg roles`), not the first three attackers;
     - `Logger.server.playerbots.stuck=2` for the window, the 11-07 method, which shows the no-path lines.
   - Then catch the #36 stack. Only then more windows.
+- **2026-11-11 follow-up:**
+  - **Criterion 2 rule (owner):** the per-tower rule in §5.3 replaces the first one. Re-scored, windows 1-2 still show no push-tower squad arrival by 240 s in any arm. Arm B Alliance reached Tower Point at 480 s.
+  - **Peer SQL:** world updates `2026_11_10_84` (Halls of Atonement `jump_charge_params` 376) and `_85` (Sanguine Depths flyer 169898 `smart_scripts`) touch no battleground or bot table. They were applied at the 22:04:51 boot, after every window 1-2 match, so no result here depends on them.
+  - **New code with `Bg.Coordinator = 0` (584eae6):**
+    - **Inert (gated):**
+      - `Coordinates()` is false (`BgCoordinator.cpp:278`), so there is no coordinator plan (`BgPlanner.cpp:759`). The old tick rate applies (`:521`).
+      - `SquadPush` is false (`BgCoordinator.cpp:791`), so `PlayPush` and `LeashOf` behave as before (`BgPlay.cpp:614`, `:745-747`).
+      - The tether trigger is false, so its action never runs.
+      - The fallback and tether counts are 0.
+      - The damage hook is registered at every boot. Its body checked only `Bg.Tether` (off in arm A, so it returned at once); since 584eae6 it, `NoteLeg` and `TetherWants` return unless both keys are on.
+      - The 19 `playerbots_bg_node` updates write only the 7 new columns, so the old weights are unchanged.
+    - **Active by design:**
+      - metrics, only with `Bg.Metrics` (the runner turns it on in every arm);
+      - the plan-lifetime fix (#33);
+      - the 11-09 leave and teleport caps (`Bg.LeavePerScan` 6, `FarTeleportsPerTick` 4; uncommitted).
+      The caps and the damage hook are on #36's suspect list.
+    - **Thread:** battleground bots' AI runs on the world thread (`PlayerbotMgr::TickOtherMapBots`, `PlayerbotsScripts.cpp:104`). So the map-thread crash in #36 is not `BgPlay`; bots that had just left for a continent map, or core map code, are likelier.
+  - **Crash cores:** on since 2026-11-11 08:12 (owner's approval). The host pipe handler writes them to `/home/brandon/trinity-cores` and keeps the newest 3 (`trinitycore-tracking/tools/coredump/README.md`).
+  - **Trace (584eae6):** `Playerbots.Bg.Trace = <node row>` (runner: `--trace tower_point --line-seconds 15`). It writes one line per second for up to 4 bots attacking that node:
+    - job and task, position and distance;
+    - last action, movement generator and spline target;
+    - spline launches and restarts (and restarts to the same spot);
+    - Go calls and no-paths;
+    - the forced target and the chosen target, with their distances;
+    - squad staging and the team rally.
+    It tests the `Engage` lead (`BgPlay.cpp:694`) without changing behaviour. The cause is reported from it before any fix, and the 18% fallback share waits until arrival works.
 - **Sample:** arm A 4 matches, arm C 4, arm B 1. No pass or fail is claimed.
 
 ### 5.4 Unit tests (`tests/bg_rules_test.cpp`, run by `tests/run_engine_test.sh`; both exist)
@@ -874,7 +902,9 @@ Order: W-1, W0, W1, W3 (pure, so it can come before W2), W2, W4, W5, W6, W7, W8.
 - Open:
   - **W6b (built: d289a97):** the captain Squad task with its staging point and its own rally per squad. Owner: captains on by default as a mid-phase squad. Staging N = max(`min_group`, `Squad.StageMin` 8), because `min_group` stays 5 for the old path. A squad under N is dissolved and offered again after 60 s.
   - **W5 (built: b5f962d, path fix b006f28):** tether and retaliation.
-  - **W8:** the A/C/B runs. Windows 1 and 2 are done (§5.3a). Paused for #36, the crash after `bot bg test stop`. Next comes a position diagnostic for assigned bots that are not present, then the criterion 2 decision.
+  - **W8:** the A/C/B runs. Windows 1 and 2 are done (§5.3a), and the criterion 2 rule is settled (§5.3). The trace and the tether gates are built in 584eae6, and crash cores are on since 2026-11-11.
+    - Next: ship 584eae6 at a coordinated boot, then one window with `--trace tower_point --line-seconds 15`.
+    - Then the cause from the trace before any fix. The fallback share (18% in arm B) waits until arrival works.
 - W6b and W5 are live since the 21:02 boot of 2026-11-10 (binary installed 20:49, rev 132023350214+), keys off.
 
 **Backlog (other maps, after AV):**
