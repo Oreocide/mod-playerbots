@@ -718,6 +718,27 @@ Defenders (Hold tasks, `BgRules::Spread` over the hold values) at the seeded sha
 - **Arathi Basin, Gilneas:** nodes held over time, attackers present 10 s after our cast lands, retakes in time.
 - **Eye of the Storm:** flag captures, and runners before the first tower.
 
+### 5.3a Results so far (W8)
+
+**Window 1, 2026-11-10 19:46-20:35 CST** (run dir `trinitycore-tracking/tools/bg/runs/2026-11-10_1946_av_AC`).
+- **Setup:**
+  - 4 opening-only Alterac Valley matches, arms A, C, A, C, on seeds 101, 101, 102, 102. A 5th was skipped for time.
+  - Binary of boot 22: no tether, so no arm B yet.
+  - Teams were uneven: Alliance 40 against Horde 24-28, because of the test bracket's online bots.
+
+| Criterion | Arm A (today's planner) | Arm C (coordinator, no tether) |
+|---|---|---|
+| 1 Snowfall after the rush | 1 / 4 team-matches (the Horde kept 18-19 assigned there) | 4 / 4 (Alliance 1 guard, Horde none) |
+| 2 Main force at a push-path tower by 4:00 | 0 / 4 (best: Alliance at Iceblood Tower, 385 s) | 0 / 4 (never) |
+| 6 Fallback share | 0% (no coordinator) | inflated by a counting bug, fixed in 9da1462 (true share about 4 of 32 Alliance attackers) |
+
+- **The split works:** Alliance Iceblood Tower 13-16 and Tower Point 12; Horde Stonehearth Bunker 8-12 and Icewing 6-9; the captain squad formed in the mid phase (10-12 bots, gathering).
+- **The towers were not reached:**
+  - The tower squads never got there: at most 2 present at a push-path tower in 7 minutes.
+  - The armies met mid-map instead; half of each team's attackers first massed at Iceblood Graveyard at about 460 s.
+  - That is cause C, which the tether (arm B) addresses. Arm B needs boot 23 (`5ddc3c91bf99`: b5f962d, b006f28, 9da1462).
+- **Sample:** 2 matches per arm of the 10 needed. No pass or fail is claimed.
+
 ### 5.4 Unit tests (`tests/bg_rules_test.cpp`, run by `tests/run_engine_test.sh`; both exist)
 - **Score and fill:**
   - the §4 worked opening (4 / 12 / 12 per team) and the defender table;
