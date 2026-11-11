@@ -128,6 +128,11 @@ void Config::Load()
     NinjaCaps = sConfigMgr->GetBoolDefault("Playerbots.Bg.NinjaCaps", false);
     LaneChange = sConfigMgr->GetBoolDefault("Playerbots.Bg.LaneChange", false);
 
+    MetricsLineMs = count("Playerbots.Bg.Metrics.LineSeconds", 60, 5, 600) * 1000;
+    Trace = sConfigMgr->GetStringDefault("Playerbots.Bg.Trace", "");
+    TraceBots = count("Playerbots.Bg.Trace.Bots", 4, 1, 8);
+    TraceMs = count("Playerbots.Bg.Trace.Ms", 1000, 200, 10000);
+
     if (Planner && !sPlayerbotsConfig.BgObjectives)
         TC_LOG_WARN("server.playerbots", "Playerbots: Playerbots.Bg.Planner = 1 does nothing while Playerbots.Bg.Objectives = 0");
 }

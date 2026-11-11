@@ -125,6 +125,7 @@ public:
     Unit* FindCombatTarget() const;
     /// Explicit target from the "attack" command
     void SetForcedTarget(ObjectGuid target) { _forcedTarget = target; }
+    ObjectGuid GetForcedTarget() const { return _forcedTarget; }
 
     void TellMaster(std::string_view text) const;
 

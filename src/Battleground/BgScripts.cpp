@@ -245,7 +245,8 @@ public:
 
     void OnDamage(Unit* attacker, Unit* victim, uint32& /*damage*/) override
     {
-        if (!sBgConfig.Tether)
+        // registered at every boot: with Playerbots.Bg.Coordinator or Playerbots.Bg.Tether off it returns before reading anything else
+        if (!sBgConfig.Coordinator || !sBgConfig.Tether)
             return;
         Coordinator::NoteDamage(attacker, victim);
     }

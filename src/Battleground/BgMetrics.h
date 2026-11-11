@@ -28,11 +28,13 @@
 
 class Battleground;
 class Map;
+class Player;
 
 namespace Playerbots::Bg::Metrics
 {
 /// After each plan of a match: counts deaths, bot-seconds per objective, first assaults, when half of a team's attackers first
-/// massed at an objective; once a minute of play, one line per team (score, deaths, per objective assigned / dead / present)
+/// massed at an objective; every Playerbots.Bg.Metrics.LineSeconds (60) of play, one line per team (score, deaths, per objective
+/// assigned / dead / present)
 void Sample(BgPlan const& plan, Battleground* bg, Map* map, uint32 now);
 
 /// The planner drops the plan (why: "match over", "match gone", ...): one line for the match, and the map's totals since boot
@@ -40,6 +42,15 @@ void Close(BgPlan const& plan, Battleground* bg, char const* why);
 
 /// .bot bg metrics: per map since boot (matches, wins per team, average play time), then each running match's last lines
 std::vector<std::string> Report();
+
+/// Playerbots.Bg.Trace (a node row, "" = off): every world tick while the match runs, up to Trace.Bots bots with an attack job on that
+/// objective are watched, and one line per bot is written every Trace.Ms: its job and task, position and distance to the objective,
+/// last action, movement (generator, spline destination, splines launched and restarted before their end), Go calls, the forced
+/// target and the combat target with their distances, the team's rally. World thread, like the bots' own AI here; read only
+void Trace(BgPlan const& plan, Battleground* bg, Map* map, uint32 now);
+
+/// Bg::Go reports each call (noPath: it found no mesh path) so the trace can count them per line; nothing for an untraced bot
+void NoteGo(Player const* bot, Position const& where, bool noPath);
 }
 
 #endif

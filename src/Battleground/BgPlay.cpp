@@ -18,6 +18,7 @@
 #include "Battleground/BgPlay.h"
 #include "Battleground/BgConfig.h"
 #include "Battleground/BgCoordinator.h"
+#include "Battleground/BgMetrics.h"
 #include "Battleground/BgPlanner.h"
 #include "Battleground/BgReact.h"
 #include "Battleground/BgReactRules.h"
@@ -109,7 +110,16 @@ bool Transient(SpellCastResult result)
 }
 
 /// Along the navmesh only (never a straight line): mounts for long runs, tells the planner when there is no path
+static bool GoAlongMesh(Player* bot, Position const& where, float arrive, int8 objective);
+
 bool Go(Player* bot, Position const& where, float arrive, int8 objective)
+{
+    bool moved = GoAlongMesh(bot, where, arrive, objective);
+    Metrics::NoteGo(bot, where, !moved);    // Playerbots.Bg.Trace counts the calls (key off: nothing)
+    return moved;
+}
+
+static bool GoAlongMesh(Player* bot, Position const& where, float arrive, int8 objective)
 {
     UpdateMountForTravel(bot, bot->GetExactDist(where));
     // Bg.LegYards: a far target in legs along the mesh route (a running leg is not planned again); a winding route that is short

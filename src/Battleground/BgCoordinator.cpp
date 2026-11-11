@@ -627,7 +627,7 @@ void Coordinator::NoteDamage(Unit* attacker, Unit* victim)
 
 void Coordinator::NoteLeg(Player const* bot, Position const& from, Position const& to)
 {
-    if (!sBgConfig.Tether)
+    if (!sBgConfig.Coordinator || !sBgConfig.Tether)
         return;
     auto it = Tethers.find(bot->GetGUID());
     if (it == Tethers.end())
@@ -639,7 +639,7 @@ void Coordinator::NoteLeg(Player const* bot, Position const& from, Position cons
 
 bool Coordinator::TetherWants(PlayerbotAI& ai)
 {
-    if (!sBgConfig.Tether)
+    if (!sBgConfig.Coordinator || !sBgConfig.Tether)
         return false;
     Player* bot = ai.GetBot();
     auto tit = Tethers.find(bot->GetGUID());
@@ -806,5 +806,37 @@ void Coordinator::FallbackCounts(BgPlan const& plan, uint32 team, uint32& fallba
         return;
     fallbacks = it->second.Teams[team].Fallbacks;
     assignments = it->second.Teams[team].Assignments;
+}
+
+std::string Coordinator::TraceTask(BgPlan const& plan, uint32 team, ObjectGuid bot, uint32 now)
+{
+    auto it = Matches.find({ plan.MapId, plan.InstanceId });
+    if (it == Matches.end() || !it->second.Coordinated || team > 1)
+        return {};
+    auto bit = it->second.Bots.find(bot);
+    if (bit == it->second.Bots.end() || bit->second.Objective == NoObjective)
+        return "task none";
+    BotRecord const& record = bit->second;
+    std::string out = Trinity::StringFormat("task {} {} {} s{}", IntentName(record.Intent), ObjectiveName(plan, record.Objective),
+        (now - record.SinceMs) / IN_MILLISECONDS, record.Fallback ? " fallback" : "");
+    TeamRecord const& teamRecord = it->second.Teams[team];
+    for (size_t t = 0; t < teamRecord.Tasks.size(); ++t)
+    {
+        Task const& task = teamRecord.Tasks[t];
+        if (task.Objective != record.Objective || task.Intent != record.Intent)
+            continue;
+        out += Trinity::StringFormat(", quota {}-{} living {} dead {}", task.QuotaMin, task.QuotaMax, t < teamRecord.Living.size() ? teamRecord.Living[t] : 0,
+            t < teamRecord.Dead.size() ? teamRecord.Dead[t] : 0);
+        out += task.Staging.Row == NoObjective ? std::string(", stage none")
+            : Trinity::StringFormat(", stage {} min {} timeout {} s", ObjectiveName(plan, task.Staging.Row), task.Staging.Min, task.Staging.TimeoutMs / IN_MILLISECONDS);
+        if (auto squad = teamRecord.Squads.find(task.Objective); task.Intent == TaskIntent::Squad && squad != teamRecord.Squads.end())
+        {
+            BgRules::Rally const& rally = squad->second.Rally;
+            out += Trinity::StringFormat(", rally {} need {} gathering {} s restarts {}", BgRules::RallyStateName(rally.State), rally.Need,
+                rally.GatherStartMs ? (now - rally.GatherStartMs) / IN_MILLISECONDS : 0, rally.Restarts);
+        }
+        return out;
+    }
+    return out + ", not offered this plan";
 }
 }

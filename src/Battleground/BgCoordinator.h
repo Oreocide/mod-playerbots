@@ -69,6 +69,9 @@ public:
     static void TetherCounts(BgPlan const& plan, uint32 team, uint32& drops, uint32& retaliations, uint32& reengages);
     /// Bots that took the fallback task, and all assignments, since the match began (Playerbots.Bg.Metrics)
     static void FallbackCounts(BgPlan const& plan, uint32 team, uint32& fallbacks, uint32& assignments);
+    /// Playerbots.Bg.Trace: the bot's task as the last plan left it (intent, objective, since; the offered task's quota, its living and
+    /// dead, its staging; a captain squad's rally state), "" when the match is not coordinated
+    static std::string TraceTask(BgPlan const& plan, uint32 team, ObjectGuid bot, uint32 now);
 };
 }
 

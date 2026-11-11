@@ -20,10 +20,18 @@
 #include "Battleground/BgCoordinator.h"
 #include "Battleground/BgMapData.h"
 #include "Battleground.h"
+#include "BotSession.h"
 #include "Log.h"
 #include "Map.h"
+#include "MotionMaster.h"
+#include "MoveSpline.h"
+#include "ObjectAccessor.h"
 #include "Player.h"
+#include "PlayerbotAI.h"
+#include "PlayerbotMgr.h"
 #include "StringFormat.h"
+#include <algorithm>
+#include <limits>
 #include <map>
 #include <unordered_map>
 
@@ -32,7 +40,6 @@ namespace Playerbots::Bg::Metrics
 namespace
 {
 constexpr float PresentRange = 40.0f;       // a player this close to an objective is present there (the coordinator's counting pass)
-constexpr uint32 LineEveryMs = 60000;       // one line per team per minute of play
 constexpr uint32 MassedMinAttackers = 4;    // a team with fewer living attackers never counts as massed anywhere
 
 struct Match
@@ -40,7 +47,7 @@ struct Match
     std::string Name;
     uint32 LastSampleMs = 0;
     uint32 PlayMs = 0;                      // Battleground::GetInProgressDuration on the last sample (play time, no preparation)
-    uint32 NextLineMs = LineEveryMs;
+    uint32 NextLineMs = 0;                  // play ms of the next line (Playerbots.Bg.Metrics.LineSeconds apart; 0: not set yet)
     uint32 Plans = 0;
     std::unordered_map<ObjectGuid, bool> Alive;     // every player as the last sample saw it
     uint32 Deaths[2] = { 0, 0 };
@@ -89,6 +96,167 @@ std::string Firsts(BgPlan const& plan, std::vector<int32> const& seconds)
         if (seconds[i] >= 0)
             out += Trinity::StringFormat("{}{} {} s", out.empty() ? "" : ", ", ObjectiveName(plan, int8(i)), seconds[i]);
     return out.empty() ? "-" : out;
+}
+
+// Playerbots.Bg.Trace: world thread only (the planner's update and the battleground bots' own AI, PlayerbotMgr::TickOtherMapBots)
+struct TraceBot
+{
+    bool Seen = false;
+    uint32 SplineId = 0;
+    bool SplineRunning = false;
+    float DestX = 0.0f, DestY = 0.0f;
+    uint32 Launches = 0;                    // splines started since the last line
+    uint32 Restarts = 0;                    // of them, started while the one before was still running
+    uint32 SameRestarts = 0;                // of those, to the same spot (5 yd): the move given again, the path started over
+    uint32 GoCalls = 0;                     // Bg::Go calls since the last line
+    uint32 GoNoPath = 0;
+    Position GoTo;                          // the last Go target
+    bool HasGo = false;
+    uint32 LastLineMs = 0;
+};
+
+struct TraceMatch
+{
+    uint32 PickedAtPlan = std::numeric_limits<uint32>::max();
+    std::vector<ObjectGuid> Bots;
+};
+
+std::map<std::pair<uint32, uint32>, TraceMatch> TraceMatches;
+std::unordered_map<ObjectGuid, TraceBot> TraceBots;
+
+int8 TraceObjective(BgPlan const& plan)
+{
+    if (sBgConfig.Trace.empty() || !plan.Def)
+        return NoObjective;
+    for (size_t i = 0; i < plan.Def->Nodes.size() && i < plan.Objectives.size(); ++i)
+        if (plan.Def->Nodes[i].Key == sBgConfig.Trace)
+            return int8(i);
+    return NoObjective;
+}
+
+char const* MotionName(MovementGeneratorType type)
+{
+    switch (type)
+    {
+        case IDLE_MOTION_TYPE: return "idle";
+        case CHASE_MOTION_TYPE: return "chase";
+        case POINT_MOTION_TYPE: return "point";
+        case FOLLOW_MOTION_TYPE: return "follow";
+        case EFFECT_MOTION_TYPE: return "effect";
+        case FLEEING_MOTION_TYPE: case TIMED_FLEEING_MOTION_TYPE: return "flee";
+        case CONFUSED_MOTION_TYPE: return "confused";
+        case FACE_MOTION_TYPE: return "face";
+        default: return "other";
+    }
+}
+
+std::string UnitText(Player const* bot, Unit const* unit)
+{
+    if (!unit)
+        return "none";
+    return Trinity::StringFormat("{} {:.0f} yd{}", unit->GetName(), bot->GetExactDist2d(unit), unit->IsAlive() ? "" : " dead");
+}
+
+/// The bots traced: those still attacking the objective stay, the rest are dropped, and the list is filled again in guid order
+void PickTraced(BgPlan const& plan, Map* map, int8 objective, TraceMatch& match, uint32 playS)
+{
+    auto attacking = [&](ObjectGuid guid)
+    {
+        auto job = plan.Jobs.find(guid);
+        return job != plan.Jobs.end() && job->second.Base == Job::Attack && job->second.Objective == objective;
+    };
+    std::erase_if(match.Bots, [&](ObjectGuid guid)
+    {
+        Player* bot = ObjectAccessor::GetPlayer(map, guid);
+        if (bot && attacking(guid))
+            return false;
+        auto job = plan.Jobs.find(guid);
+        TC_LOG_INFO("server.playerbots.bg", "Playerbots: bg trace map {} instance {} play {} s: {} dropped ({})", plan.MapId, plan.InstanceId, playS,
+            bot ? bot->GetName() : guid.ToString(), !bot ? "left the match" : job == plan.Jobs.end() ? "no job"
+            : Trinity::StringFormat("now {} {}", BgRules::JobName(job->second.Base), ObjectiveName(plan, job->second.Objective)));
+        TraceBots.erase(guid);
+        return true;
+    });
+    std::vector<ObjectGuid> candidates;
+    for (auto const& [guid, job] : plan.Jobs)
+        if (attacking(guid) && std::find(match.Bots.begin(), match.Bots.end(), guid) == match.Bots.end())
+            if (Player* bot = ObjectAccessor::GetPlayer(map, guid); bot && IsBot(bot))
+                candidates.push_back(guid);
+    std::sort(candidates.begin(), candidates.end());
+    NodeDef const* row = RowOf(plan, objective);
+    for (ObjectGuid guid : candidates)
+    {
+        if (match.Bots.size() >= sBgConfig.TraceBots)
+            break;
+        match.Bots.push_back(guid);
+        TraceBots[guid] = TraceBot();
+        Player* bot = ObjectAccessor::GetPlayer(map, guid);
+        TC_LOG_INFO("server.playerbots.bg", "Playerbots: bg trace map {} instance {} play {} s: {} ({}) traced, attacking {} (min_group {})", plan.MapId,
+            plan.InstanceId, playS, bot->GetName(), TeamWord(TeamOf(bot)), ObjectiveName(plan, objective), row ? uint32(row->MinGroup) : 0);
+    }
+}
+
+/// Every world tick: a new spline id is a launch; a launch while the one before still ran is a restart
+void SampleMovement(Player const* bot, TraceBot& state)
+{
+    Movement::MoveSpline const& spline = *bot->movespline;
+    uint32 id = spline.GetId();
+    auto const& dest = spline.FinalDestination();
+    if (state.Seen && id != state.SplineId)
+    {
+        ++state.Launches;
+        if (state.SplineRunning)
+        {
+            ++state.Restarts;
+            float dx = dest.x - state.DestX, dy = dest.y - state.DestY;
+            if (dx * dx + dy * dy < 25.0f)
+                ++state.SameRestarts;
+        }
+    }
+    state.Seen = true;
+    state.SplineId = id;
+    state.SplineRunning = spline.Initialized() && !spline.Finalized();
+    state.DestX = dest.x;
+    state.DestY = dest.y;
+}
+
+void WriteTrace(BgPlan const& plan, Battleground* bg, int8 objective, Player* bot, TraceBot const& state, uint32 now)
+{
+    uint32 team = uint32(TeamOf(bot));
+    Position at;
+    bool placed = ObjectivePosition(plan, objective, at);
+    float toObjective = placed ? bot->GetExactDist2d(at) : -1.0f;
+    auto job = plan.Jobs.find(bot->GetGUID());
+    std::string jobText = job == plan.Jobs.end() ? std::string("none") : Trinity::StringFormat("{} {}{}{}", BgRules::JobName(job->second.Now),
+        ObjectiveName(plan, job->second.Objective), job->second.Over != BgRules::Overlay::None ? " (overlay)" : "",
+        job->second.NoPathObjective != NoObjective && int32(job->second.NoPathUntilMs - now) > 0
+            ? Trinity::StringFormat(" (no path to {})", ObjectiveName(plan, job->second.NoPathObjective)) : std::string());
+    std::string task = team < 2 ? Coordinator::TraceTask(plan, team, bot->GetGUID(), now) : std::string();
+    PlayerbotAI* ai = sPlayerbotMgr->GetAI(bot);
+    std::string action = ai ? Trinity::StringFormat("{} {} ms ago", ai->GetLastActionName(), now - ai->GetLastActionMs()) : std::string("no AI");
+    std::string forced = "none";
+    if (ai && !ai->GetForcedTarget().IsEmpty())
+    {
+        Unit const* unit = ObjectAccessor::GetUnit(*bot, ai->GetForcedTarget());
+        forced = unit ? UnitText(bot, unit) : std::string("not on the map");
+    }
+    std::string pick = ai ? UnitText(bot, ai->FindCombatTarget()) : std::string("no AI");
+    Movement::MoveSpline const& spline = *bot->movespline;
+    auto const& dest = spline.FinalDestination();
+    MovementGeneratorType motion = bot->GetMotionMaster()->GetCurrentMovementGeneratorType();
+    std::string splineText = state.SplineRunning ? Trinity::StringFormat("to ({:.0f}, {:.0f}, {:.0f}) {:.0f} yd ahead, {:.0f} yd from the objective",
+        dest.x, dest.y, dest.z, bot->GetExactDist2d(dest.x, dest.y), placed ? at.GetExactDist2d(dest.x, dest.y) : -1.0f) : std::string("none");
+    std::string goText = state.HasGo ? Trinity::StringFormat("go {} no-path {}, last to {:.0f} yd from the objective", state.GoCalls, state.GoNoPath,
+        placed ? at.GetExactDist2d(state.GoTo) : -1.0f) : Trinity::StringFormat("go {} no-path {}", state.GoCalls, state.GoNoPath);
+    TeamPlan const* teamPlan = team < 2 ? &plan.Teams[team] : nullptr;
+    std::string rally = teamPlan && teamPlan->RallyObjective != NoObjective ? Trinity::StringFormat("{} {} need {}", ObjectiveName(plan, teamPlan->RallyObjective),
+        BgRules::RallyStateName(teamPlan->Rally.State), teamPlan->Rally.Need) : std::string("none");
+    TC_LOG_INFO("server.playerbots.bg", "Playerbots: bg trace map {} instance {} play {} s {} ({}): {} | job {}{}{} | at ({:.0f}, {:.0f}, {:.0f}) {:.0f} yd from {} "
+        "| action {} | move {} spline {}, launched {} restarted {} same spot {} | {} | forced {} | pick {} | victim {} | team rally {}",
+        plan.MapId, plan.InstanceId, uint32(bg->GetInProgressDuration().count() / 1000), bot->GetName(), team < 2 ? TeamWord(team) : "none",
+        !bot->IsAlive() ? "dead" : bot->IsInCombat() ? "alive, in combat" : "alive", jobText, task.empty() ? "" : " | ", task,
+        bot->GetPositionX(), bot->GetPositionY(), bot->GetPositionZ(), toObjective, ObjectiveName(plan, objective), action, MotionName(motion),
+        splineText, state.Launches, state.Restarts, state.SameRestarts, goText, forced, pick, UnitText(bot, bot->GetVictim()), rally);
 }
 }
 
@@ -186,10 +354,12 @@ void Sample(BgPlan const& plan, Battleground* bg, Map* map, uint32 now)
     for (uint32 team = 0; team < 2; ++team)
         match.Score[team] = TeamScore(plan, bg, map, team);
 
+    if (!match.NextLineMs)
+        match.NextLineMs = sBgConfig.MetricsLineMs;
     if (match.PlayMs < match.NextLineMs)
         return;
     while (match.NextLineMs <= match.PlayMs)
-        match.NextLineMs += LineEveryMs;
+        match.NextLineMs += sBgConfig.MetricsLineMs;
     for (uint32 team = 0; team < 2; ++team)
     {
         std::string objectivesText;
@@ -216,6 +386,13 @@ void Sample(BgPlan const& plan, Battleground* bg, Map* map, uint32 now)
 
 void Close(BgPlan const& plan, Battleground* bg, char const* why)
 {
+    if (auto trace = TraceMatches.find({ plan.MapId, plan.InstanceId }); trace != TraceMatches.end())
+    {
+        for (ObjectGuid guid : trace->second.Bots)
+            TraceBots.erase(guid);
+        TraceMatches.erase(trace);
+    }
+
     auto it = Matches.find({ plan.MapId, plan.InstanceId });
     if (it == Matches.end())
         return;
@@ -260,5 +437,48 @@ std::vector<std::string> Report()
     if (lines.empty())
         lines.push_back("No battleground metrics yet.");
     return lines;
+}
+
+void Trace(BgPlan const& plan, Battleground* bg, Map* map, uint32 now)
+{
+    if (sBgConfig.Trace.empty() || !bg || !map || !plan.Def || bg->GetStatus() != STATUS_IN_PROGRESS)
+        return;
+    int8 objective = TraceObjective(plan);
+    if (objective == NoObjective)
+        return;
+    TraceMatch& match = TraceMatches[{ plan.MapId, plan.InstanceId }];
+    if (match.PickedAtPlan != plan.Ticks)
+    {
+        match.PickedAtPlan = plan.Ticks;
+        PickTraced(plan, map, objective, match, uint32(bg->GetInProgressDuration().count() / 1000));
+    }
+    for (ObjectGuid guid : match.Bots)
+    {
+        Player* bot = ObjectAccessor::GetPlayer(map, guid);
+        auto state = TraceBots.find(guid);
+        if (!bot || state == TraceBots.end())
+            continue;
+        SampleMovement(bot, state->second);
+        if (now - state->second.LastLineMs < sBgConfig.TraceMs)
+            continue;
+        WriteTrace(plan, bg, objective, bot, state->second, now);
+        TraceBot& next = state->second;
+        next.LastLineMs = now;
+        next.Launches = next.Restarts = next.SameRestarts = next.GoCalls = next.GoNoPath = 0;
+    }
+}
+
+void NoteGo(Player const* bot, Position const& where, bool noPath)
+{
+    if (sBgConfig.Trace.empty())
+        return;
+    auto it = TraceBots.find(bot->GetGUID());
+    if (it == TraceBots.end())
+        return;
+    ++it->second.GoCalls;
+    if (noPath)
+        ++it->second.GoNoPath;
+    it->second.GoTo = where;
+    it->second.HasGo = true;
 }
 }

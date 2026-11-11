@@ -1034,8 +1034,20 @@ Playerbots.Bg.MoveOn.Guards = 2
 # per objective the bots assigned, dead and present within 40 yd) and one line per match (play time, winner, first assaults, when
 # half of a team's attackers first massed at each objective) on the logger server.playerbots.bg (INFO; without a Logger line of
 # its own it goes where server.playerbots goes). Read only: a match plays the same with it on. ".bot bg metrics" sums each map since
-# boot. A test match can roll from a fixed seed: .bot bg test start <map> <level, 0 = any> <seed>.
+# boot. A test match can roll from a fixed seed: .bot bg test start <map> <level, 0 = any> <seed>. Metrics.LineSeconds: how often
+# the per-team line is written (5 to 600; 60 = once a minute).
 Playerbots.Bg.Metrics = 0
+Playerbots.Bg.Metrics.LineSeconds = 60
+
+# Battleground trace (planner on; docs/design/BG_COORDINATOR.md 5.3a): a playerbots_bg_node row (for example tower_point; empty =
+# off). Up to Trace.Bots bots (1 to 8) with an attack job on that objective get one line each every Trace.Ms (200 to 10000) on
+# server.playerbots.bg: their job and coordinator task, position and distance to the objective, last action, movement generator
+# and spline destination, splines started and restarted before their end (and to the same spot), Go calls and no-paths, the
+# forced target and the combat target with their distances, the team's rally. Read only, for test windows: four bots write
+# about 4 lines a second.
+Playerbots.Bg.Trace =
+Playerbots.Bg.Trace.Bots = 4
+Playerbots.Bg.Trace.Ms = 1000
 
 # Battleground coordinator (planner on; docs/design/BG_COORDINATOR.md): on a map that has a coordinator profile, tasks with
 # quotas, phases and squads plan the teams instead of the planner's attack/defend split. The path of a match is fixed at its first

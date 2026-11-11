@@ -23,6 +23,7 @@
 // The defaults here equal conf/playerbots.conf.dist
 
 #include "Define.h"
+#include <string>
 #include <vector>
 
 namespace Playerbots::Bg
@@ -105,6 +106,12 @@ struct Config
     uint32 TeamSkillStreakStep = 10;
     bool NinjaCaps = false;                                 // #17 a stealth class sneaks to an empty enemy node
     bool LaneChange = false;                                // #19 three deaths at one spot: another objective for a while
+
+    // diagnostics (BG_COORDINATOR.md §5.3a), read only: a match plays the same with them on or off
+    uint32 MetricsLineMs = 60000;                           // one Playerbots.Bg.Metrics line per team this often (Metrics.LineSeconds)
+    std::string Trace;                                      // a playerbots_bg_node row ("tower_point"): 1 s lines for bots attacking it
+    uint32 TraceBots = 4;                                   // how many of them (Trace.Bots)
+    uint32 TraceMs = 1000;                                  // one line per bot this often (Trace.Ms)
 
     void Load();
     /// Any reactive behaviour is on: the planner builds its picture of the match every plan

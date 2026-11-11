@@ -523,6 +523,8 @@ void Planner::Update()
             plan.LastTickMs = now;
             Plan(plan, bg, map, now);
         }
+        // Playerbots.Bg.Trace: every world tick, read only (BgMetrics.h)
+        Metrics::Trace(plan, bg, map, now);
         ++it;
     }
 }
