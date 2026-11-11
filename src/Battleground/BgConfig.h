@@ -78,6 +78,14 @@ struct Config
     uint32 SquadStageMin = 8;                               // a captain squad waits at its staging point for this many (and is
                                                             // dissolved below it)
     uint32 SquadStageTimeoutSeconds = 60;                   // or this long, then it moves
+    // the combat tether (§2.7): a coordinated bot drops a fight outside the zone of its task, but fights back what hit it, a while
+    bool Tether = false;
+    float TetherObjectiveYards = 40.0f;                     // fighters and defenders: this close to the task's objective
+    float TetherPathYards = 25.0f;                          // or this close to the bot's path there
+    uint32 TetherIgnoreSeconds = 8;                         // a dropped enemy is ignored this long, doubled for each drop again
+    uint32 TetherIgnoreMaxSeconds = 60;
+    uint32 TetherRetaliateSeconds = 6;                      // what hit the bot this recently may be fought anywhere
+    uint32 TetherRetaliateBudgetSeconds = 10;               // for this long outside the zone (refills after 20 s calm)
 
     // the reactive behaviours (phase 4, BG_PLAN.md §4), each off by default
     bool ThreatResponse = false;                            // #1 a node of ours under attack pulls the nearest defenders and 2 attackers

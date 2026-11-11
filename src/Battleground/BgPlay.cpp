@@ -117,14 +117,20 @@ bool Go(Player* bot, Position const& where, float arrive, int8 objective)
     bool legs = sBgConfig.LegYards && !IsMovingOnFoot(bot);
     if (legs && bot->GetExactDist2d(where) > float(sBgConfig.LegYards))
         if (Optional<Position> leg = NextMeshLeg(bot, where, float(sBgConfig.LegYards)))
+        {
+            Coordinator::NoteLeg(bot, bot->GetPosition(), *leg);   // the coordinator's tether measures fights against it (key off: nothing)
             if (MoveAlongMesh(bot, *leg, LegArrive) != MoveResult::NoPath)
                 return true;
+        }
     if (MoveAlongMesh(bot, where, arrive) != MoveResult::NoPath)
         return true;
     if (legs && bot->GetExactDist2d(where) <= float(sBgConfig.LegYards))
         if (Optional<Position> leg = NextMeshLeg(bot, where, float(sBgConfig.LegYards)))
+        {
+            Coordinator::NoteLeg(bot, bot->GetPosition(), *leg);
             if (MoveAlongMesh(bot, *leg, LegArrive) != MoveResult::NoPath)
                 return true;
+        }
 
     TC_LOG_DEBUG("server.playerbots", "Playerbots: {} has no path in battleground map {} and does not run straight", bot->GetName(), bot->GetMapId());
     sPlayerbotRepository->Remember(bot->GetGUID(), "badspot", std::to_string(bot->GetMapId()),
@@ -792,6 +798,32 @@ public:
     }
 };
 
+/// The coordinator's tether (§2.7, Playerbots.Bg.Tether): the bot's target is outside the zone of its task and did not hit it lately
+bool TetherTrigger(PlayerbotAI& ai)
+{
+    return Coordinator::TetherWants(ai);
+}
+
+class TetherAction : public Action
+{
+public:
+    char const* GetName() const override { return "bg tether"; }
+
+    bool Execute(PlayerbotAI& ai) override
+    {
+        ObjectGuid enemy;
+        uint32 ignoreMs = 0;
+        if (!Coordinator::TakeTetherDrop(ai, enemy, ignoreMs))
+            return false;
+        // ignored for a while (doubled for each drop of the same enemy again), so the raid's attacker pickup does not take it back at
+        // once; with no target left the battleground action runs again and the bot goes on with its task
+        ai.IgnoreEnemy(enemy, ignoreMs);
+        ai.ClearForcedTarget();
+        ai.GetBot()->AttackStop();
+        return true;
+    }
+};
+
 /// The planner's job of a bot in combat on a planned map (none outside one, or for a bot with an owner)
 Assignment const* CombatJob(PlayerbotAI& ai)
 {
@@ -1226,6 +1258,8 @@ void Register(AiRegistry& registry)
     registry.AddAction<FocusAction>("bg focus");
     registry.AddTrigger("bg carrier", 0, CarrierTrigger);
     registry.AddAction<CarrierAction>("bg carrier");
+    registry.AddTrigger("bg tether", 0, TetherTrigger);
+    registry.AddAction<TetherAction>("bg tether");
 }
 
 bool Plays(Player const* bot)

@@ -235,6 +235,22 @@ void UpdateVehicleTest()
     }
 }
 
+/// The coordinator's tether (§2.7): who hit a bot of a coordinated match lately. UnitScript::OnDamage comes from Unit::DealDamage on the
+/// victim's map thread (or the world thread for a hit inside a bot's cast); Coordinator::NoteDamage exits early for anything else and
+/// only writes into an entry the world thread made
+class playerbots_bg_unit : public UnitScript
+{
+public:
+    playerbots_bg_unit() : UnitScript("playerbots_bg_unit") { }
+
+    void OnDamage(Unit* attacker, Unit* victim, uint32& /*damage*/) override
+    {
+        if (!sBgConfig.Tether)
+            return;
+        Coordinator::NoteDamage(attacker, victim);
+    }
+};
+
 class playerbots_bg_world : public WorldScript
 {
 public:
@@ -968,4 +984,5 @@ void AddSC_playerbots_bg()
 {
     new playerbots_bg_world();
     new playerbots_bg_commandscript();
+    new playerbots_bg_unit();
 }

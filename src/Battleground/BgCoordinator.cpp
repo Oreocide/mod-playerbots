@@ -19,6 +19,7 @@
 #include "Battleground/BgConfig.h"
 #include "Battleground/BgMode.h"
 #include "Battleground/BgReact.h"
+#include "Spell.h"
 #include "BotSession.h"
 #include "PlayerbotAI.h"
 #include "PlayerbotMgr.h"
@@ -30,6 +31,7 @@
 #include "Player.h"
 #include "StringFormat.h"
 #include <algorithm>
+#include <array>
 #include <map>
 #include <unordered_map>
 
@@ -73,9 +75,63 @@ struct Match
     bool Coordinated = false;
     TeamRecord Teams[2];
     std::unordered_map<ObjectGuid, BotRecord> Bots;
+    uint32 TetherDrops[2] = { 0, 0 };
+    uint32 TetherRetaliations[2] = { 0, 0 };
+    uint32 TetherReengages[2] = { 0, 0 };   // drops of an enemy the bot had dropped before
 };
 
 std::map<MatchKey, Match> Matches;
+
+// ---- the tether's state (§2.7) ----
+struct Hit
+{
+    ObjectGuid Attacker;
+    uint32 Ms = 0;
+};
+
+struct DamageEntry
+{
+    std::array<Hit, 4> Hits;
+};
+
+/// Who hit each bot of a coordinated match lately. Entries are made and erased only on the world thread (Coordinator::Plan, Close):
+/// while the map threads run, the world thread waits for them (World::Update: sMapMgr->Update then OnWorldUpdate), so nothing is added
+/// or rehashed while the OnDamage hook finds an entry; one bot lives on one map, so one map thread at most writes its entry
+std::unordered_map<ObjectGuid, DamageEntry> DamageLog;
+
+struct TetherState
+{
+    Position LegFrom;
+    Position LegTo;
+    uint32 LegMs = 0;
+    BgRules::RetaliateBudget Budget;
+    uint32 LastCheckMs = 0;
+    bool Retaliating = false;
+    std::unordered_map<ObjectGuid, uint32> Drops;   // enemies dropped since the bot's last death or task change
+    int8 Objective = NoObjective;
+    TaskIntent Intent = TaskIntent::Take;
+    ObjectGuid Pending;                     // the trigger found this target to drop; the action takes it
+};
+
+/// World thread only (the planner and the bots' AI of battleground maps)
+std::unordered_map<ObjectGuid, TetherState> Tethers;
+
+bool HitRecently(ObjectGuid bot, ObjectGuid attacker, uint32 now)
+{
+    auto it = DamageLog.find(bot);
+    if (it == DamageLog.end())
+        return false;
+    for (Hit const& hit : it->second.Hits)
+        if (hit.Attacker == attacker && now - hit.Ms <= sBgConfig.TetherRetaliateSeconds * 1000)
+            return true;
+    return false;
+}
+
+void ForgetBot(ObjectGuid guid)
+{
+    DamageLog.erase(guid);
+    Tethers.erase(guid);
+}
 
 char const* IntentName(TaskIntent intent)
 {
@@ -433,6 +489,21 @@ void Coordinator::Plan(Planner& planner, BgPlan& plan, Battleground* bg, Map* ma
             job.Now = base;
             job.Objective = objective;
             job.Follow.Clear();
+
+            // the tether's entries (made here, on the world thread); a death or a new task forgets the enemies it dropped
+            if (sBgConfig.Tether)
+            {
+                DamageLog.try_emplace(bots[i]->GetGUID());
+                auto [tether, created] = Tethers.try_emplace(bots[i]->GetGUID());
+                if (created)
+                    tether->second.Budget.LeftMs = sBgConfig.TetherRetaliateBudgetSeconds * 1000;
+                if (!entry.Alive || tether->second.Objective != bot0.Objective || tether->second.Intent != bot0.Intent)
+                {
+                    tether->second.Drops.clear();
+                    tether->second.Objective = bot0.Objective;
+                    tether->second.Intent = bot0.Intent;
+                }
+            }
         }
         record.Fallbacks += result.Fallbacks;
         record.Assignments += result.Changed;
@@ -494,12 +565,184 @@ void Coordinator::Plan(Planner& planner, BgPlan& plan, Battleground* bg, Map* ma
     }
 
     // bots that left the match
-    std::erase_if(match.Bots, [&plan](auto const& entry) { return !plan.Jobs.contains(entry.first); });
+    std::erase_if(match.Bots, [&plan](auto const& entry)
+    {
+        if (plan.Jobs.contains(entry.first))
+            return false;
+        ForgetBot(entry.first);
+        return true;
+    });
 }
 
 void Coordinator::Close(BgPlan const& plan)
 {
-    Matches.erase({ plan.MapId, plan.InstanceId });
+    auto it = Matches.find({ plan.MapId, plan.InstanceId });
+    if (it == Matches.end())
+        return;
+    for (auto const& [guid, bot] : it->second.Bots)
+        ForgetBot(guid);
+    Matches.erase(it);
+}
+
+void Coordinator::NoteDamage(Unit* attacker, Unit* victim)
+{
+    // early exits before any other work: the hook runs for every hit on every unit while Playerbots.Bg.Tether is on
+    if (!attacker || !victim || !victim->IsPlayer())
+        return;
+    Map const* map = victim->GetMap();
+    if (!map || !map->IsBattleground())
+        return;
+    Player const* bot = victim->ToPlayer();
+    if (!IsBot(bot))
+        return;
+    auto it = DamageLog.find(bot->GetGUID());   // find only: entries are made on the world thread
+    if (it == DamageLog.end())
+        return;
+    uint32 now = GameTime::GetGameTimeMS();
+    auto note = [&](ObjectGuid source)
+    {
+        Hit* slot = nullptr;
+        for (Hit& hit : it->second.Hits)
+        {
+            if (hit.Attacker == source)
+            {
+                slot = &hit;
+                break;
+            }
+            if (!slot || hit.Ms < slot->Ms)
+                slot = &hit;
+        }
+        slot->Attacker = source;
+        slot->Ms = now;
+    };
+    note(attacker->GetGUID());
+    if (Unit const* owner = attacker->GetCharmerOrOwner())
+        note(owner->GetGUID());
+}
+
+void Coordinator::NoteLeg(Player const* bot, Position const& from, Position const& to)
+{
+    if (!sBgConfig.Tether)
+        return;
+    auto it = Tethers.find(bot->GetGUID());
+    if (it == Tethers.end())
+        return;
+    it->second.LegFrom = from;
+    it->second.LegTo = to;
+    it->second.LegMs = GameTime::GetGameTimeMS();
+}
+
+bool Coordinator::TetherWants(PlayerbotAI& ai)
+{
+    if (!sBgConfig.Tether)
+        return false;
+    Player* bot = ai.GetBot();
+    auto tit = Tethers.find(bot->GetGUID());
+    if (tit == Tethers.end())
+        return false;
+    TetherState& tether = tit->second;
+    tether.Pending.Clear();
+    if (!bot->IsAlive() || !bot->IsInCombat() || ai.GetMaster() || !bot->InBattleground())
+        return false;
+    BgPlan const* plan = sBgPlanner.Find(bot->GetMapId(), bot->GetInstanceId());
+    auto mit = plan ? Matches.find({ plan->MapId, plan->InstanceId }) : Matches.end();
+    if (mit == Matches.end() || !mit->second.Coordinated)
+        return false;
+    auto bit = mit->second.Bots.find(bot->GetGUID());
+    if (bit == mit->second.Bots.end() || bit->second.Objective == NoObjective)
+        return false;
+    // a cast runs (a banner's 8 s open, a heal): the bot decides its fight again when it is done
+    if (bot->GetCurrentSpell(CURRENT_GENERIC_SPELL))
+        return false;
+    Unit* victim = bot->GetVictim();
+    if (!victim)
+        victim = ai.SelectCombatTarget();
+    if (!victim || !victim->IsAlive())
+        return false;
+    Position anchor;
+    if (!ObjectivePosition(*plan, bit->second.Objective, anchor))
+        return false;
+
+    uint32 now = GameTime::GetGameTimeMS();
+    TeamId team = TeamOf(bot);
+    TaskIntent intent = bit->second.Intent;
+    BgRules::TetherCheck check;
+    check.Role = intent == TaskIntent::Hold || intent == TaskIntent::Retake ? TetherRole::Defender
+        : intent == TaskIntent::Squad || intent == TaskIntent::Push ? TetherRole::Puller : TetherRole::Fighter;
+    // back from a graveyard and still on the way: only what hits it
+    auto job = plan->Jobs.find(bot->GetGUID());
+    if (job != plan->Jobs.end() && job->second.RezMs && now - job->second.RezMs < sBgConfig.RejoinSeconds * 1000
+        && bot->GetExactDist2d(anchor) > sBgConfig.TetherObjectiveYards)
+        check.Role = TetherRole::Travel;
+    check.BotX = bot->GetPositionX();
+    check.BotY = bot->GetPositionY();
+    check.TargetX = victim->GetPositionX();
+    check.TargetY = victim->GetPositionY();
+    check.AnchorX = anchor.GetPositionX();
+    check.AnchorY = anchor.GetPositionY();
+    if (tether.LegMs && now - tether.LegMs < 15000)
+    {
+        check.HasLeg = true;
+        check.LegAX = tether.LegFrom.GetPositionX();
+        check.LegAY = tether.LegFrom.GetPositionY();
+        check.LegBX = tether.LegTo.GetPositionX();
+        check.LegBY = tether.LegTo.GetPositionY();
+    }
+    check.HitUsRecently = HitRecently(bot->GetGUID(), victim->GetGUID(), now);
+    // a long calm (the trigger only runs in combat) fills the retaliation budget again
+    uint32 budgetMs = sBgConfig.TetherRetaliateBudgetSeconds * 1000;
+    if (tether.LastCheckMs && now - tether.LastCheckMs >= 20000)
+        tether.Budget.LeftMs = budgetMs;
+    check.BudgetLeftMs = tether.Budget.LeftMs;
+    BgRules::TetherZone zone;
+    zone.ObjectiveYards = sBgConfig.TetherObjectiveYards;
+    zone.PathYards = sBgConfig.TetherPathYards;
+    BgRules::TetherVerdict verdict = BgRules::JudgeTether(check, zone);
+
+    uint32 dt = tether.LastCheckMs ? std::min<uint32>(now - tether.LastCheckMs, 2000) : 0;
+    tether.LastCheckMs = now;
+    bool retaliating = verdict == BgRules::TetherVerdict::Retaliate;
+    if (retaliating && !tether.Retaliating && (team == TEAM_ALLIANCE || team == TEAM_HORDE))
+        ++mit->second.TetherRetaliations[team];
+    tether.Retaliating = retaliating;
+    BgRules::StepRetaliateBudget(tether.Budget, retaliating, verdict == BgRules::TetherVerdict::Keep, dt, now, budgetMs);
+    if (verdict != BgRules::TetherVerdict::Drop)
+        return false;
+    tether.Pending = victim->GetGUID();
+    return true;
+}
+
+bool Coordinator::TakeTetherDrop(PlayerbotAI& ai, ObjectGuid& enemy, uint32& ignoreMs)
+{
+    Player* bot = ai.GetBot();
+    auto tit = Tethers.find(bot->GetGUID());
+    if (tit == Tethers.end() || tit->second.Pending.IsEmpty())
+        return false;
+    TetherState& tether = tit->second;
+    enemy = tether.Pending;
+    tether.Pending.Clear();
+    uint32 earlier = tether.Drops[enemy]++;
+    ignoreMs = BgRules::TetherIgnoreMs(earlier, sBgConfig.TetherIgnoreSeconds * 1000, sBgConfig.TetherIgnoreMaxSeconds * 1000);
+    TeamId team = TeamOf(bot);
+    auto mit = Matches.find({ bot->GetMapId(), bot->GetInstanceId() });
+    if (mit != Matches.end() && (team == TEAM_ALLIANCE || team == TEAM_HORDE))
+    {
+        ++mit->second.TetherDrops[team];
+        if (earlier)
+            ++mit->second.TetherReengages[team];
+    }
+    return true;
+}
+
+void Coordinator::TetherCounts(BgPlan const& plan, uint32 team, uint32& drops, uint32& retaliations, uint32& reengages)
+{
+    drops = retaliations = reengages = 0;
+    auto it = Matches.find({ plan.MapId, plan.InstanceId });
+    if (it == Matches.end() || team > 1)
+        return;
+    drops = it->second.TetherDrops[team];
+    retaliations = it->second.TetherRetaliations[team];
+    reengages = it->second.TetherReengages[team];
 }
 
 std::vector<std::string> Coordinator::Report(BgPlan const& plan)

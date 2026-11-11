@@ -29,6 +29,12 @@
 class Battleground;
 class Map;
 class Player;
+class Unit;
+
+namespace Playerbots
+{
+class PlayerbotAI;
+}
 
 namespace Playerbots::Bg
 {
@@ -49,6 +55,18 @@ public:
     /// A coordinated captain squad's own push on that boss (§3.3): its rally state and puller. False when the boss has none (the bot side
     /// then reads the team's push as before)
     static bool SquadPush(BgPlan const& plan, uint32 team, int8 boss, BgRules::RallyState& state, ObjectGuid& puller);
+    // ---- the combat tether (§2.7, Playerbots.Bg.Tether) ----
+    /// UnitScript::OnDamage, on the victim's map thread (or the world thread for a hit made inside a bot's cast): a bot of a coordinated
+    /// match was hit. Exits early for anything else; writes only into the bot's entry the world thread made, never adds one
+    static void NoteDamage(Unit* attacker, Unit* victim);
+    /// Go planned a mesh leg for the bot (world thread): the path the tether measures a fight against
+    static void NoteLeg(Player const* bot, Position const& from, Position const& to);
+    /// The tether trigger (world thread): the bot's target is outside the zone of its task's role and did not hit it lately, or its
+    /// retaliation budget is spent. Keeps the drop pending for the action
+    static bool TetherWants(PlayerbotAI& ai);
+    /// The tether action: takes the pending drop (the enemy, how long to ignore it) and counts it
+    static bool TakeTetherDrop(PlayerbotAI& ai, ObjectGuid& enemy, uint32& ignoreMs);
+    static void TetherCounts(BgPlan const& plan, uint32 team, uint32& drops, uint32& retaliations, uint32& reengages);
     /// Bots that took the fallback task, and all assignments, since the match began (Playerbots.Bg.Metrics)
     static void FallbackCounts(BgPlan const& plan, uint32 team, uint32& fallbacks, uint32& assignments);
 };

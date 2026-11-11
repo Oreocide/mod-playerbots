@@ -1076,6 +1076,19 @@ Playerbots.Bg.AV.Captain = 1
 Playerbots.Bg.Squad.StageMin = 8
 Playerbots.Bg.Squad.StageTimeoutSeconds = 60
 
+# The coordinator's combat tether (docs/design/BG_COORDINATOR.md §2.7; only with Playerbots.Bg.Coordinator). A bot drops a fight
+# outside the zone of its task: fighters and defenders fight within Tether.ObjectiveYards of their objective or Tether.PathYards of
+# the leg they walk; a captain or general squad keeps the boss-room leash; a bot back from a graveyard and still on its way only fights
+# what hits it. What hit the bot within RetaliateSeconds may be fought anywhere for RetaliateBudgetSeconds (filled again after 20 s
+# calm). A dropped enemy is ignored IgnoreSeconds, doubled for each drop of the same enemy again, at most IgnoreMaxSeconds.
+Playerbots.Bg.Tether = 0
+Playerbots.Bg.Tether.ObjectiveYards = 40
+Playerbots.Bg.Tether.PathYards = 25
+Playerbots.Bg.Tether.IgnoreSeconds = 8
+Playerbots.Bg.Tether.IgnoreMaxSeconds = 60
+Playerbots.Bg.Tether.RetaliateSeconds = 6
+Playerbots.Bg.Tether.RetaliateBudgetSeconds = 10
+
 # Battleground reactive behaviours (planner on; docs/design/BG_PLAN.md section 4). Each key is one behaviour, all off by default;
 # ".bot bg" shows what each one does in the match, ".bot bg roles" which bot follows which (threat, fall back, mine, ninja...).
 # ThreatResponse: a node of ours with more enemies than allies at it pulls the nearest defenders of other nodes and 2 attackers;

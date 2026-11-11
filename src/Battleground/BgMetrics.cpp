@@ -203,9 +203,12 @@ void Sample(BgPlan const& plan, Battleground* bg, Map* map, uint32 now)
         // the coordinator's fallback share (docs/design/BG_COORDINATOR.md §5.3: over 15% flags the profile for redesign)
         uint32 fallbacks = 0, assignments = 0;
         Coordinator::FallbackCounts(plan, team, fallbacks, assignments);
-        match.LastLine[team] = Trinity::StringFormat("{} instance {} play {} s {}: score {}, deaths {} (+{}), captures {}, attackers {}, fallbacks {}/{}; {}",
+        uint32 drops = 0, retaliations = 0, reengages = 0;
+        Coordinator::TetherCounts(plan, team, drops, retaliations, reengages);
+        match.LastLine[team] = Trinity::StringFormat("{} instance {} play {} s {}: score {}, deaths {} (+{}), captures {}, attackers {}, fallbacks {}/{}, "
+            "tether drops {} retaliations {} again {}; {}",
             match.Name, plan.InstanceId, playS, TeamWord(team), match.Score[team], match.Deaths[team], match.MinuteDeaths[team],
-            match.Captures[team], attackers[team], fallbacks, assignments, objectivesText.empty() ? "-" : objectivesText);
+            match.Captures[team], attackers[team], fallbacks, assignments, drops, retaliations, reengages, objectivesText.empty() ? "-" : objectivesText);
         TC_LOG_INFO("server.playerbots.bg", "Playerbots: bg metrics map {} {}", plan.MapId, match.LastLine[team]);
         match.MinuteDeaths[team] = 0;
     }

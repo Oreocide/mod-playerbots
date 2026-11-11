@@ -96,6 +96,13 @@ void Config::Load()
     AvCaptain = sConfigMgr->GetBoolDefault("Playerbots.Bg.AV.Captain", true);
     SquadStageMin = count("Playerbots.Bg.Squad.StageMin", 8, 1, 40);
     SquadStageTimeoutSeconds = count("Playerbots.Bg.Squad.StageTimeoutSeconds", 60, 5, 600);
+    Tether = sConfigMgr->GetBoolDefault("Playerbots.Bg.Tether", false);
+    TetherObjectiveYards = real("Playerbots.Bg.Tether.ObjectiveYards", 40.0f, 5.0f, 200.0f);
+    TetherPathYards = real("Playerbots.Bg.Tether.PathYards", 25.0f, 5.0f, 200.0f);
+    TetherIgnoreSeconds = count("Playerbots.Bg.Tether.IgnoreSeconds", 8, 1, 300);
+    TetherIgnoreMaxSeconds = std::max(TetherIgnoreSeconds, count("Playerbots.Bg.Tether.IgnoreMaxSeconds", 60, 1, 600));
+    TetherRetaliateSeconds = count("Playerbots.Bg.Tether.RetaliateSeconds", 6, 0, 60);
+    TetherRetaliateBudgetSeconds = count("Playerbots.Bg.Tether.RetaliateBudgetSeconds", 10, 0, 120);
 
     ThreatResponse = sConfigMgr->GetBoolDefault("Playerbots.Bg.ThreatResponse", false);
     RetakeTimers = sConfigMgr->GetBoolDefault("Playerbots.Bg.RetakeTimers", false);
