@@ -17,6 +17,7 @@
 
 #include "Battleground/BgPlay.h"
 #include "Battleground/BgConfig.h"
+#include "Battleground/BgCoordinator.h"
 #include "Battleground/BgPlanner.h"
 #include "Battleground/BgReact.h"
 #include "Battleground/BgReactRules.h"
@@ -592,6 +593,9 @@ bool PlayPush(Player* bot, PlayerbotAI& ai, BgPlan const& plan, Assignment const
     Position const& rally = plan.Objectives[row.Rally].Pos;
     bool healer = ai.GetRole() == BotRole::Healer;
     RallyState state = teamPlan.RallyObjective == job.Objective ? teamPlan.Rally.State : RallyState::Gathering;
+    ObjectGuid puller = teamPlan.Puller;
+    // a coordinated captain squad runs its own push (BgCoordinator.h); else the team's, as before
+    Coordinator::SquadPush(plan, TeamOf(bot), job.Objective, state, puller);
 
     auto atRally = [&]
     {
@@ -607,7 +611,7 @@ bool PlayPush(Player* bot, PlayerbotAI& ai, BgPlan const& plan, Assignment const
     switch (state)
     {
         case RallyState::Charging:
-            if (bot->GetGUID() != teamPlan.Puller)
+            if (bot->GetGUID() != puller)
                 return atRally();
             [[fallthrough]];
         case RallyState::Fighting:
@@ -718,12 +722,15 @@ bool LeashOf(PlayerbotAI& ai, LeashView& out)
         return false;
     Assignment const& job = it->second;
     TeamPlan const& teamPlan = plan->Teams[team];
-    if (job.Base != Job::Attack || job.Objective == NoObjective || job.Objective != teamPlan.RallyObjective)
-        return false;
     using BgRules::RallyState;
     RallyState state = teamPlan.Rally.State;
+    ObjectGuid puller = teamPlan.Puller;
+    // a coordinated captain squad runs its own push (BgCoordinator.h)
+    bool squad = job.Objective != teamPlan.RallyObjective && Coordinator::SquadPush(*plan, team, job.Objective, state, puller);
+    if (job.Base != Job::Attack || job.Objective == NoObjective || (job.Objective != teamPlan.RallyObjective && !squad))
+        return false;
     // while the push charges only the puller is at the boss; the rest stay at the rally point and fight there
-    if (state != RallyState::Fighting && state != RallyState::Regroup && !(state == RallyState::Charging && bot->GetGUID() == teamPlan.Puller))
+    if (state != RallyState::Fighting && state != RallyState::Regroup && !(state == RallyState::Charging && bot->GetGUID() == puller))
         return false;
     NodeDef const* row = RowOf(*plan, job.Objective);
     Creature* boss = BossOf(*plan, bot->GetMap(), job.Objective);

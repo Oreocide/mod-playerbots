@@ -160,8 +160,25 @@ public:
                         out.push_back(task);
                     break;
                 }
+                case NodeKind::KillCaptain:
+                {
+                    // the enemy captain: a squad with a quota that stages at the rally row before its puller goes in (owner: on by
+                    // default, Playerbots.Bg.AV.Captain); its phase weights make it a mid-phase task
+                    if (!sBgConfig.AvCaptain || SideTeam(row.Side) != them || !objective.Alive || row.Rally < 0)
+                        break;
+                    task.Intent = TaskIntent::Squad;
+                    task.Value = RowValue(row, us) * weight;
+                    task.QuotaMax = row.AttackQuota ? row.AttackQuota : uint8(std::min<uint32>(sBgConfig.LaneTakeMax, 255));
+                    task.Staging.Row = row.Rally;
+                    task.Staging.Min = uint8(std::min<uint32>(std::max<uint32>(row.MinGroup, sBgConfig.SquadStageMin), 255));
+                    task.Staging.TimeoutMs = sBgConfig.SquadStageTimeoutSeconds * 1000;
+                    task.Combat = TetherRole::Puller;
+                    if (task.Value > 0.0f)
+                        out.push_back(task);
+                    break;
+                }
                 default:
-                    break;  // captains (Squad tasks) come with the squad staging; mines stay the #13 errand; rally and gate rows
+                    break;  // mines stay the #13 errand; rally and gate rows
             }
         }
     }

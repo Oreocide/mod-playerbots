@@ -122,6 +122,7 @@ struct FillParams
     float CommitMarginPct = 25.0f;      // Playerbots.Bg.CommitMarginPct
     float DeadWeight = 0.5f;            // Playerbots.Bg.Quota.DeadWeightPct / 100
     uint32 MinTake = 4;                 // Playerbots.Bg.Squad.MinTake
+    uint32 MinSquad = 8;                // a boss squad (a captain) smaller than this is dissolved (Playerbots.Bg.Squad.StageMin)
 };
 
 struct FillResult
@@ -169,8 +170,8 @@ inline int32 MainPush(std::vector<TaskView> const& tasks, std::vector<FillBot> c
 /// - pass 1: Hold tasks below their minimum take the nearest free living bots
 /// - pass 2: the other free bots, in key order, take their best task (counting live); one that already has a task moves only past the
 ///   commitment margin; one with nothing above 0 joins the main push (MainPush, counted as a fallback)
-/// - pass 3: a Take task whose weighted count is above 0 and below MinTake is closed and its bots fill again; repeated until none
-///   is left
+/// - pass 3: a Take task whose weighted count is above 0 and below MinTake, or a boss Squad below MinSquad, is closed and its bots
+///   fill again; repeated until none is left
 inline FillResult FillTasks(std::vector<TaskView>& tasks, std::vector<FillBot>& bots, uint32 nowMs, ScoreParams const& sp, FillParams const& fp)
 {
     FillResult result;
@@ -306,7 +307,8 @@ inline FillResult FillTasks(std::vector<TaskView>& tasks, std::vector<FillBot>& 
     {
         int32 smallest = -1;
         for (size_t t = 0; t < tasks.size(); ++t)
-            if (Offered(tasks[t]) && tasks[t].Intent == TaskIntent::Take && count[t] > 0.0f && count[t] < float(fp.MinTake)
+            if (Offered(tasks[t]) && count[t] > 0.0f
+                && ((tasks[t].Intent == TaskIntent::Take && count[t] < float(fp.MinTake)) || (tasks[t].Intent == TaskIntent::Squad && count[t] < float(fp.MinSquad)))
                 && (smallest < 0 || count[t] < count[smallest]))
                 smallest = int32(t);
         if (smallest < 0)

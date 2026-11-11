@@ -741,7 +741,11 @@ Every item is one commit in `Oreocide/mod-playerbots`, behind a key that default
 - **Baseline rule (owner):** with `Bg.Coordinator = 0`, behaviour stays identical to today through every item, so arm A is a true baseline.
   - The coordinator path is purely additive: new types, modes and adapters sit beside the old code, and the Lane mode gets its own copy of what it needs.
   - These stay unchanged until the owner switches to the coordinator, and are deleted only after that: `PlanTeam`, `PlanValleyTeam`, `StepRally`, `Discover`, `ReadState`, `ReadValley`, `PlaceDefenders`, `SplitTeam`, `PassOver`, the `Play*` functions, `FlagInfo`, the MoveOn cap.
-  - **Identity check, at source level:** the diff of those functions is empty except for one `if (sBgConfig.Coordinator)` dispatch line in `Plan` and one in `Bg::Play`, and the unit tests pass. A headless match cannot prove identity, because matches differ in timing and positions even with a shared seed.
+  - **Identity check, at source level:** the diff of those functions is empty except for the dispatch lines, and the unit tests pass. A headless match cannot prove identity, because matches differ in timing and positions even with a shared seed.
+  - **Dispatch lines as built:**
+    - `Plan` and `Update` in `BgPlanner.cpp`;
+    - `PlayPush` and `LeashOf` in `BgPlay.cpp` (W6b: a coordinated captain squad's own rally state and puller).
+    - With the key off, `Coordinator::SquadPush` returns false and leaves the team's state as it was.
   - W0's metrics and plan logging only read state.
 - **Commits:** no attribution lines. The owner waived showing the messages first for these work items (2026-11-10); nothing is pushed without approval.
 - **New files:** a new `.cpp` needs `cmake .` run with no other build going (`modules/CLAUDE.md`).
@@ -779,7 +783,7 @@ Order: W-1, W0, W1, W3 (pure, so it can come before W2), W2, W4, W5, W6, W7, W8.
 
 - All of them are live, keys off, since boot 20 (2026-11-10 16:09, binary d18a9f2ae528).
 - Open:
-  - **W6b:** the captain Squad task with its staging point and its own rally per squad. Owner: captains on by default as a mid-phase squad.
+  - **W6b (built, see the commit after 2b1958d):** the captain Squad task with its staging point and its own rally per squad. Owner: captains on by default as a mid-phase squad. Staging N = max(`min_group`, `Squad.StageMin` 8), because `min_group` stays 5 for the old path. A squad under N is dissolved and offered again after 60 s.
   - **W5:** tether and retaliation.
   - **W8:** the A/C/B runs.
 - Arm C can run once W6b is in; arm B once W5 is in.

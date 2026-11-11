@@ -937,6 +937,23 @@ void TestTaskRejoin()
         CHECK(bot.Task == 1);
 }
 
+void TestTaskMinSquad()
+{
+    // a captain squad of 5 is dissolved under the minimum of 8; one of 9 stays
+    ScoreParams sp;
+    FillParams fp;
+    std::vector<TaskView> tasks = { TaskAt(TaskIntent::Squad, 8.0f, 0.0f, 0.0f, 12), TaskAt(TaskIntent::Take, 5.0f, 200.0f, 0.0f, 12) };
+    std::vector<FillBot> bots = BotsAt(8, 1000, 5, 0.0f, 0.0f);
+    FillResult result = FillTasks(tasks, bots, 100000, sp, fp);
+    std::vector<uint32> n = Counts(tasks, bots);
+    CHECK(n[0] == 0 && n[1] == 5 && result.Closed == 1 && tasks[0].Closed);
+    tasks = { TaskAt(TaskIntent::Squad, 8.0f, 0.0f, 0.0f, 12), TaskAt(TaskIntent::Take, 5.0f, 200.0f, 0.0f, 12) };
+    bots = BotsAt(8, 1100, 9, 0.0f, 0.0f);
+    FillTasks(tasks, bots, 100000, sp, fp);
+    n = Counts(tasks, bots);
+    CHECK(n[0] == 9 && n[1] == 0);
+}
+
 void TestStage()
 {
     CHECK(StepStage(SquadStage::Staging, 7, 8, 0, 60000, 59000) == SquadStage::Staging);
@@ -1089,6 +1106,7 @@ int main()
     TestCommitMargin();
     TestTaskDeadWeight();
     TestTaskRejoin();
+    TestTaskMinSquad();
     TestStage();
     TestPushGate();
     TestTetherRules();

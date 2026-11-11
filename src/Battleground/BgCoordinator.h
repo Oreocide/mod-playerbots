@@ -46,6 +46,9 @@ public:
     static void Close(BgPlan const& plan);
     /// .bot bg squads: per team the phase, the general's push gate, the fallback share and every task with its bots
     static std::vector<std::string> Report(BgPlan const& plan);
+    /// A coordinated captain squad's own push on that boss (§3.3): its rally state and puller. False when the boss has none (the bot side
+    /// then reads the team's push as before)
+    static bool SquadPush(BgPlan const& plan, uint32 team, int8 boss, BgRules::RallyState& state, ObjectGuid& puller);
     /// Bots that took the fallback task, and all assignments, since the match began (Playerbots.Bg.Metrics)
     static void FallbackCounts(BgPlan const& plan, uint32 team, uint32& fallbacks, uint32& assignments);
 };

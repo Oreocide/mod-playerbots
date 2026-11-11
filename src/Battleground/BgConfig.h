@@ -74,6 +74,10 @@ struct Config
     uint32 LanePushMarginPct = 20;                          // the general's push: its value beats the best other by this much
     uint32 LanePushHoldSeconds = 10;                        // for this long
     uint32 LanePushDropSeconds = 30;                        // a gathering push is dropped after both conditions failed this long
+    bool AvCaptain = true;                                  // Alterac Valley: the enemy captain is a mid-phase squad task
+    uint32 SquadStageMin = 8;                               // a captain squad waits at its staging point for this many (and is
+                                                            // dissolved below it)
+    uint32 SquadStageTimeoutSeconds = 60;                   // or this long, then it moves
 
     // the reactive behaviours (phase 4, BG_PLAN.md §4), each off by default
     bool ThreatResponse = false;                            // #1 a node of ours under attack pulls the nearest defenders and 2 attackers

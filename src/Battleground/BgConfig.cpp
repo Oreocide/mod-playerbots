@@ -93,6 +93,9 @@ void Config::Load()
     LanePushMarginPct = count("Playerbots.Bg.Lane.PushMarginPct", 20, 0, 500);
     LanePushHoldSeconds = count("Playerbots.Bg.Lane.PushHoldSeconds", 10, 0, 600);
     LanePushDropSeconds = count("Playerbots.Bg.Lane.PushDropSeconds", 30, 0, 600);
+    AvCaptain = sConfigMgr->GetBoolDefault("Playerbots.Bg.AV.Captain", true);
+    SquadStageMin = count("Playerbots.Bg.Squad.StageMin", 8, 1, 40);
+    SquadStageTimeoutSeconds = count("Playerbots.Bg.Squad.StageTimeoutSeconds", 60, 5, 600);
 
     ThreatResponse = sConfigMgr->GetBoolDefault("Playerbots.Bg.ThreatResponse", false);
     RetakeTimers = sConfigMgr->GetBoolDefault("Playerbots.Bg.RetakeTimers", false);

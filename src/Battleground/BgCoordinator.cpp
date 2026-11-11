@@ -23,6 +23,8 @@
 #include "PlayerbotAI.h"
 #include "PlayerbotMgr.h"
 #include "Battleground.h"
+#include "Creature.h"
+#include "GameTime.h"
 #include "Log.h"
 #include "Map.h"
 #include "Player.h"
@@ -46,6 +48,14 @@ struct BotRecord
     bool Fallback = false;
 };
 
+/// A captain squad (§2.4, §3.3): its own push on the boss, the planner's rally rules run for this squad alone
+struct SquadRecord
+{
+    BgRules::Rally Rally;
+    ObjectGuid Puller;
+    uint32 CooldownUntilMs = 0;             // dissolved for being too small: not offered again before this (no churn)
+};
+
 struct TeamRecord
 {
     TaskPhase Phase = TaskPhase::Early;
@@ -55,6 +65,7 @@ struct TeamRecord
     std::vector<Task> Tasks;                // the last plan's tasks, for .bot bg squads
     std::vector<uint32> Living;             // their living bots
     std::vector<uint32> Dead;
+    std::map<int8, SquadRecord> Squads;     // by boss objective
 };
 
 struct Match
@@ -117,6 +128,89 @@ bool Charged(BgRules::RallyState state)
 {
     return state == BgRules::RallyState::Charging || state == BgRules::RallyState::Fighting || state == BgRules::RallyState::Regroup;
 }
+
+constexpr uint32 SquadCooldownMs = 60000;   // a squad dissolved for being too small is not offered again this long
+constexpr uint32 SquadAbandonMs = 120000;   // a captain push given up is not the team's task again this long (as the planner's)
+
+/// One plan of a captain squad's push: gather at the staging row until the floor is present or the timeout, then the puller goes
+/// in (BgRules::RallyStep, the planner's rules, run for this squad); a push given up blocks the captain for a while
+void StepSquad(BgPlan& plan, Map* map, uint32 team, Task const& task, uint32 onPush, std::vector<Player*> const& members,
+    std::vector<Player*> const& bots, SquadRecord& squad, uint32 now)
+{
+    int8 boss = task.Objective;
+    if (boss < 0 || size_t(boss) >= plan.Objectives.size() || task.Staging.Row < 0 || size_t(task.Staging.Row) >= plan.Objectives.size())
+        return;
+    if (squad.Rally.State == BgRules::RallyState::Idle || squad.Rally.State == BgRules::RallyState::Done
+        || squad.Rally.State == BgRules::RallyState::Abandoned)
+    {
+        BgRules::RallyStart(squad.Rally, now);
+        squad.Puller.Clear();
+    }
+    Position const& stage = plan.Objectives[task.Staging.Row].Pos;
+    float radius = RallyRadiusOf(plan, boss);
+    BgRules::RallyView view;
+    view.OnPush = onPush;
+    for (Player* player : members)
+        if (player->IsAlive() && player->GetExactDist2d(stage) <= radius)
+            ++view.Present;
+    Objective& objective = plan.Objectives[boss];
+    view.BossAlive = objective.Alive;
+    Creature* creature = BossOf(plan, map, boss);
+    if (creature)
+    {
+        view.BossInCombat = creature->IsInCombat();
+        view.BossEvading = creature->IsInEvadeMode();
+    }
+    BgRules::RallyParams params;
+    params.Floor = task.Staging.Min;
+    params.Pct = sBgConfig.RallyPct;
+    params.TimeoutMs = task.Staging.TimeoutMs;
+    params.TimeoutChargePct = sBgConfig.RallyTimeoutChargePct;
+    params.WipePct = sBgConfig.RallyWipePct;
+    params.MaxRestarts = sBgConfig.RallyMaxRestarts;
+    params.PullDefenders = false;           // the squad is its own: nobody else is called in
+    BgRules::RallyState before = squad.Rally.State;
+    BgRules::RallyState state = BgRules::RallyStep(squad.Rally, view, params, now);
+
+    // the puller: a tank of the squad nearest the boss, else the nearest melee, else the nearest ranged; never a healer
+    if (state == BgRules::RallyState::Charging && before != BgRules::RallyState::Charging)
+    {
+        Position bossPos = creature ? creature->GetPosition() : objective.Pos;
+        Player* best = nullptr;
+        int bestRank = 0;
+        float bestDist = 0.0f;
+        for (Player* bot : bots)
+        {
+            Assignment const& job = plan.Jobs[bot->GetGUID()];
+            PlayerbotAI* ai = sPlayerbotMgr->GetAI(bot);
+            if (!ai || !bot->IsAlive() || job.Base != Job::Attack || job.Objective != boss || ai->GetRole() == BotRole::Healer)
+                continue;
+            int rank = ai->GetRole() == BotRole::Tank ? 0 : ai->GetRole() == BotRole::MeleeDps ? 1 : 2;
+            float dist = bot->GetExactDist2d(bossPos);
+            if (!best || rank < bestRank || (rank == bestRank && dist < bestDist))
+            {
+                best = bot;
+                bestRank = rank;
+                bestDist = dist;
+            }
+        }
+        squad.Puller = best ? best->GetGUID() : ObjectGuid::Empty;
+    }
+    if (state != before)
+        TC_LOG_DEBUG("server.playerbots", "Playerbots: {} instance {} team {} captain squad on {}: {} (present {}, on the push {})", plan.Def->Name,
+            plan.InstanceId, team, objective.Name, BgRules::RallyStateName(state), view.Present, view.OnPush);
+    if (state == BgRules::RallyState::Abandoned)
+    {
+        objective.BlockedUntilMs[team] = now + SquadAbandonMs;
+        squad.Rally = BgRules::Rally();
+        squad.Puller.Clear();
+    }
+    else if (state == BgRules::RallyState::Done)
+    {
+        squad.Rally = BgRules::Rally();
+        squad.Puller.Clear();
+    }
+}
 }
 
 bool Coordinator::Coordinates(BgPlan const& plan)
@@ -158,6 +252,7 @@ void Coordinator::Plan(Planner& planner, BgPlan& plan, Battleground* bg, Map* ma
     fillParams.CommitMarginPct = float(sBgConfig.CommitMarginPct);
     fillParams.DeadWeight = float(sBgConfig.DeadWeightPct) / 100.0f;
     fillParams.MinTake = sBgConfig.SquadMinTake;
+    fillParams.MinSquad = sBgConfig.SquadStageMin;
     BgRules::PushGateParams gateParams;
     gateParams.MarginPct = float(sBgConfig.LanePushMarginPct);
     gateParams.HoldMs = sBgConfig.LanePushHoldSeconds * 1000;
@@ -189,6 +284,12 @@ void Coordinator::Plan(Planner& planner, BgPlan& plan, Battleground* bg, Map* ma
         std::vector<Task> tasks;
         for (Mode const* mode : profile->Modes)
             mode->Offer(plan, context, team, record.Phase, tasks);
+        // a captain squad dissolved for being too small waits out its cooldown
+        std::erase_if(tasks, [&](Task const& task)
+        {
+            auto squad = record.Squads.find(task.Objective);
+            return task.Intent == TaskIntent::Squad && squad != record.Squads.end() && int32(squad->second.CooldownUntilMs - now) > 0;
+        });
 
         // the general's push: all or nothing behind its gate (§3.3); guards and the defenders stay
         int32 push = -1;
@@ -290,6 +391,13 @@ void Coordinator::Plan(Planner& planner, BgPlan& plan, Battleground* bg, Map* ma
             fill.push_back(entry);
         }
         BgRules::FillResult result = BgRules::FillTasks(views, fill, now, scoreParams, fillParams);
+        for (size_t t = 0; t < tasks.size(); ++t)
+            if (tasks[t].Intent == TaskIntent::Squad && views[t].Closed)
+            {
+                SquadRecord& squad = record.Squads[tasks[t].Objective];
+                squad = SquadRecord();
+                squad.CooldownUntilMs = now + SquadCooldownMs;
+            }
 
         // the jobs the bot side reads: an attack intent attacks its objective, a hold or a retake defends it. PlayValley does the
         // banners (one capper, the others guard), PlayPush the general's push
@@ -337,6 +445,9 @@ void Coordinator::Plan(Planner& planner, BgPlan& plan, Battleground* bg, Map* ma
         {
             if (!record.Living[t] && !record.Dead[t])
                 continue;
+            // a captain squad runs its own push: in AttackTargets StepRally would take the captain for the team's push
+            if (tasks[t].Intent == TaskIntent::Squad)
+                continue;
             std::vector<int8>& list = BgRules::AttackIntent(tasks[t].Intent) && tasks[t].Intent != TaskIntent::Retake ? teamPlan.AttackTargets
                 : teamPlan.DefendTargets;
             if (std::find(list.begin(), list.end(), tasks[t].Objective) == list.end())
@@ -350,6 +461,26 @@ void Coordinator::Plan(Planner& planner, BgPlan& plan, Battleground* bg, Map* ma
         uint32 rallyChanged = 0;
         planner.StepRally(plan, map, team, members[team], bots, rallyChanged, rallyEvent, now);
         // deaths and resurrections (Bg.Rebuff and the rejoin time read them) and the overlays, which stay off with their keys
+        // the captain squads' own pushes, and the records of squads no longer offered
+        for (size_t t = 0; t < tasks.size(); ++t)
+        {
+            if (tasks[t].Intent != TaskIntent::Squad)
+                continue;
+            SquadRecord& squad = record.Squads[tasks[t].Objective];
+            if (!record.Living[t] && !record.Dead[t])
+            {
+                squad.Rally = BgRules::Rally();
+                squad.Puller.Clear();
+                continue;
+            }
+            StepSquad(plan, map, team, tasks[t], record.Living[t], members[team], bots, squad, now);
+        }
+        std::erase_if(record.Squads, [&](auto const& entry)
+        {
+            bool offered = std::any_of(tasks.begin(), tasks.end(), [&](Task const& task) { return task.Intent == TaskIntent::Squad && task.Objective == entry.first; });
+            return !offered && int32(entry.second.CooldownUntilMs - now) <= 0;
+        });
+
         std::string reactReason;
         uint32 reacted = ReactTeam(plan, team, bots, reactReason, now);
 
@@ -387,6 +518,9 @@ std::vector<std::string> Coordinator::Report(BgPlan const& plan)
         lines.push_back(Trinity::StringFormat("{}: phase {}, general's push {}, fallbacks {} of {} assignments ({}%), defend share {}",
             team == TEAM_ALLIANCE ? "Alliance" : "Horde", PhaseName(record.Phase), record.Gate.On ? "on" : "off", record.Fallbacks,
             record.Assignments, record.Assignments ? record.Fallbacks * 100 / record.Assignments : 0, teamPlan.WantDefenders));
+        for (auto const& [boss, squad] : record.Squads)
+            lines.push_back(Trinity::StringFormat("  captain squad on {}: {}{}", ObjectiveName(plan, boss), BgRules::RallyStateName(squad.Rally.State),
+                int32(squad.CooldownUntilMs - GameTime::GetGameTimeMS()) > 0 ? " (cooling down)" : ""));
         for (size_t t = 0; t < record.Tasks.size(); ++t)
         {
             Task const& task = record.Tasks[t];
@@ -398,6 +532,21 @@ std::vector<std::string> Coordinator::Report(BgPlan const& plan)
         }
     }
     return lines;
+}
+
+bool Coordinator::SquadPush(BgPlan const& plan, uint32 team, int8 boss, BgRules::RallyState& state, ObjectGuid& puller)
+{
+    if (team > 1)
+        return false;
+    auto it = Matches.find({ plan.MapId, plan.InstanceId });
+    if (it == Matches.end() || !it->second.Coordinated)
+        return false;
+    auto squad = it->second.Teams[team].Squads.find(boss);
+    if (squad == it->second.Teams[team].Squads.end() || squad->second.Rally.State == BgRules::RallyState::Idle)
+        return false;
+    state = squad->second.Rally.State;
+    puller = squad->second.Puller;
+    return true;
 }
 
 void Coordinator::FallbackCounts(BgPlan const& plan, uint32 team, uint32& fallbacks, uint32& assignments)
