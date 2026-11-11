@@ -206,7 +206,9 @@ Each objective is a generic `Objective` (`BgPlanner.h`). A mode keeps any extra 
 
 ### 2.7 Leash and combat (the fix for cause C)
 - New combat trigger and action `bg tether`, at `Priority::Attack + 3` on the same "pvp" strategy line (`GenericStrategies.cpp:2051`). `bg leash` keeps its boss-room rule.
-- **Path:** the bot's current mesh leg, from leg start to leg end as `Go` / `NextMeshLeg` planned it (`BgPlay.cpp:111-127`). It is stored per bot when the leg is planned; with no leg, it is the straight segment to the anchor. On AV's bent roads the straight start-to-anchor line runs far from the road.
+- **Path:** the bot's current mesh leg, from leg start to leg end as `Go` / `NextMeshLeg` planned it (`BgPlay.cpp:111-127`), stored per bot when the leg is planned. On AV's bent roads the straight start-to-anchor line runs far from the road.
+  - With no leg in the last 15 s (b006f28), the path is the straight way from where the bot stood when it got its task to the anchor, so a defender that got its task at its node has only the objective's circle.
+  - It is never the line from where the bot stands now: that line always contains the bot, so a bot chasing an enemy away from its task would keep the enemy in its zone (found in review before the first run).
 - **Zone per role:**
 
 | Role | Zone |
@@ -783,8 +785,8 @@ Order: W-1, W0, W1, W3 (pure, so it can come before W2), W2, W4, W5, W6, W7, W8.
 
 - All of them are live, keys off, since boot 20 (2026-11-10 16:09, binary d18a9f2ae528).
 - Open:
-  - **W6b (built, see the commit after 2b1958d):** the captain Squad task with its staging point and its own rally per squad. Owner: captains on by default as a mid-phase squad. Staging N = max(`min_group`, `Squad.StageMin` 8), because `min_group` stays 5 for the old path. A squad under N is dissolved and offered again after 60 s.
-  - **W5:** tether and retaliation.
+  - **W6b (built: d289a97):** the captain Squad task with its staging point and its own rally per squad. Owner: captains on by default as a mid-phase squad. Staging N = max(`min_group`, `Squad.StageMin` 8), because `min_group` stays 5 for the old path. A squad under N is dissolved and offered again after 60 s.
+  - **W5 (built: b5f962d, path fix b006f28):** tether and retaliation.
   - **W8:** the A/C/B runs.
 - Arm C can run once W6b is in; arm B once W5 is in.
 
