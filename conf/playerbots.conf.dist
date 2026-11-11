@@ -1056,6 +1056,15 @@ Playerbots.Bg.Trace.Ms = 1000
 Playerbots.Bg.Travel.IgnoreAssist = 1
 Playerbots.Bg.Travel.Yards = 60
 
+# Captain squads first (coordinator on; docs/design/BG_COORDINATOR.md 5.3a): an offered captain squad below its minimum
+# (Squad.StageMin) takes the nearest free bots before the Take tasks fill, when enough of them are free to reach the minimum;
+# otherwise it takes none. Off: the old order, where Take tasks could take every attacker and the squad was dissolved over and over.
+Playerbots.Bg.Squad.FillFirst = 1
+
+# Balanced test matches (.bot bg test): neither team gets more bots than the other can field (in the match, queued, or idle in the
+# bracket), so test arms are compared on even teams. Real matches are not affected.
+Playerbots.Bg.Test.Balance = 1
+
 # Battleground coordinator (planner on; docs/design/BG_COORDINATOR.md): on a map that has a coordinator profile, tasks with
 # quotas, phases and squads plan the teams instead of the planner's attack/defend split. The path of a match is fixed at its first
 # plan, so a reload in the middle of a match does not switch it. No map has a profile yet: with the key on, every match still plays

@@ -310,6 +310,7 @@ void Coordinator::Plan(Planner& planner, BgPlan& plan, Battleground* bg, Map* ma
     fillParams.DeadWeight = float(sBgConfig.DeadWeightPct) / 100.0f;
     fillParams.MinTake = sBgConfig.SquadMinTake;
     fillParams.MinSquad = sBgConfig.SquadStageMin;
+    fillParams.SquadFirst = sBgConfig.SquadFillFirst;
     BgRules::PushGateParams gateParams;
     gateParams.MarginPct = float(sBgConfig.LanePushMarginPct);
     gateParams.HoldMs = sBgConfig.LanePushHoldSeconds * 1000;

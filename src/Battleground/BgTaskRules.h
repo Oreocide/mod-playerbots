@@ -123,6 +123,7 @@ struct FillParams
     float DeadWeight = 0.5f;            // Playerbots.Bg.Quota.DeadWeightPct / 100
     uint32 MinTake = 4;                 // Playerbots.Bg.Squad.MinTake
     uint32 MinSquad = 8;                // a boss squad (a captain) smaller than this is dissolved (Playerbots.Bg.Squad.StageMin)
+    bool SquadFirst = true;             // Playerbots.Bg.Squad.FillFirst: pass 1b staffs a boss squad to MinSquad before pass 2
 };
 
 struct FillResult
@@ -168,6 +169,8 @@ inline int32 MainPush(std::vector<TaskView> const& tasks, std::vector<FillBot> c
 ///   A living bot counts 1 toward its task's quota, a dead one DeadWeight. Past a task's max, the most recently assigned living bots
 ///   that are not rejoining are released first
 /// - pass 1: Hold tasks below their minimum take the nearest free living bots
+/// - pass 1b (SquadFirst): a boss Squad below MinSquad takes the nearest free living bots that score it above 0, but only when there
+///   are enough of them to reach MinSquad (a squad that cannot form would be closed by pass 3 anyway, so it then takes nobody)
 /// - pass 2: the other free bots, in key order, take their best task (counting live); one that already has a task moves only past the
 ///   commitment margin; one with nothing above 0 joins the main push (MainPush, counted as a fallback)
 /// - pass 3: a Take task whose weighted count is above 0 and below MinTake, or a boss Squad below MinSquad, is closed and its bots
@@ -257,6 +260,30 @@ inline FillResult FillTasks(std::vector<TaskView>& tasks, std::vector<FillBot>& 
                 break;
             assign(size_t(nearest), int32(t));
             isFree[nearest] = false;
+        }
+    }
+
+    // pass 1b: boss squads to their minimum first. Without it the Take tasks took every attacker in pass 2, the squad stayed under
+    // MinSquad, pass 3 closed it, and after its cooldown the same happened again all match (2026-11-11 travel window, match 3)
+    for (size_t t = 0; fp.SquadFirst && t < tasks.size(); ++t)
+    {
+        TaskView const& task = tasks[t];
+        if (!Offered(task) || task.Intent != TaskIntent::Squad || count[t] >= float(fp.MinSquad))
+            continue;
+        std::vector<std::pair<float, size_t>> candidates;
+        for (size_t i = 0; i < bots.size(); ++i)
+            if (isFree[i] && bots[i].Alive && bots[i].Task != int32(t) && TaskScore(task, bots[i].X, bots[i].Y, count[t], sp) > 0.0f)
+                candidates.emplace_back(std::hypot(task.X - bots[i].X, task.Y - bots[i].Y), i);
+        if (float(candidates.size()) < float(fp.MinSquad) - count[t])
+            continue;
+        std::sort(candidates.begin(), candidates.end());
+        for (auto const& [distance, i] : candidates)
+        {
+            if (count[t] >= float(fp.MinSquad))
+                break;
+            assign(i, int32(t));
+            bots[i].Fallback = false;
+            isFree[i] = false;
         }
     }
 

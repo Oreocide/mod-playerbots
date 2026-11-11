@@ -977,6 +977,37 @@ void TestTaskMinSquad()
     CHECK(n[0] == 9 && n[1] == 0);
 }
 
+void TestSquadFirst()
+{
+    // the 2026-11-11 match 3 shape: two Take tasks worth as much draw every attacker in pass 2, and the captain squad closes
+    ScoreParams sp;
+    FillParams fp;
+    fp.SquadFirst = false;
+    auto shape = []
+    {
+        return std::vector<TaskView>{ TaskAt(TaskIntent::Take, 8.0f, 0.0f, 0.0f, 12), TaskAt(TaskIntent::Take, 8.0f, 0.0f, 50.0f, 12),
+            TaskAt(TaskIntent::Squad, 8.0f, 600.0f, 0.0f, 12) };
+    };
+    std::vector<TaskView> tasks = shape();
+    std::vector<FillBot> bots = BotsAt(20, 2000, 20, 0.0f, 0.0f);
+    FillTasks(tasks, bots, 100000, sp, fp);
+    std::vector<uint32> n = Counts(tasks, bots);
+    CHECK(n[2] == 0);     // starved: 12 + 8 on the Take tasks, none left for the squad
+    // pass 1b: the squad takes its 8 first, the rest fill the Take tasks
+    fp.SquadFirst = true;
+    tasks = shape();
+    bots = BotsAt(20, 2100, 20, 0.0f, 0.0f);
+    FillTasks(tasks, bots, 100000, sp, fp);
+    n = Counts(tasks, bots);
+    CHECK(n[2] == 8 && !tasks[2].Closed && n[0] + n[1] == 12);
+    // too few free bots to reach 8: the squad takes nobody, the Take tasks keep them
+    tasks = shape();
+    bots = BotsAt(20, 2200, 6, 0.0f, 0.0f);
+    FillTasks(tasks, bots, 100000, sp, fp);
+    n = Counts(tasks, bots);
+    CHECK(n[2] == 0 && n[0] + n[1] == 6);
+}
+
 void TestStage()
 {
     CHECK(StepStage(SquadStage::Staging, 7, 8, 0, 60000, 59000) == SquadStage::Staging);
@@ -1149,6 +1180,7 @@ int main()
     TestTetherRules();
     TestLanePhase();
     TestTravelIgnoresAssist();
+    TestSquadFirst();
 
     if (Failures)
     {

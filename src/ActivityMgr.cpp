@@ -623,6 +623,24 @@ void ActivityMgr::FillBattlegrounds(std::vector<Player*> const& humans, std::vec
 {
     uint32 now = _clock.load();
 
+    // idle bots of a team that could join this bracket now (the joining loops below skip the same ones)
+    auto eligible = [&](TeamId team, BattlegroundTemplate const* bgTemplate, BattlegroundBracketId bracketId)
+    {
+        uint32 n = 0;
+        for (BotRef const& ref : bots)
+        {
+            Player* bot = ref.Bot;
+            if (bot->GetTeamId() != team || !IsIdle(bot) || bot->GetLevel() < bgTemplate->GetMinLevel() || bot->GetLevel() > bgTemplate->GetMaxLevel())
+                continue;
+            if (auto backoff = _backoff.find(bot->GetGUID()); backoff != _backoff.end() && backoff->second > now)
+                continue;
+            PVPDifficultyEntry const* botBracket = DB2Manager::GetBattlegroundBracketByLevel(bgTemplate->MapIDs.front(), bot->GetLevel());
+            if (botBracket && botBracket->GetBracketId() == bracketId)
+                ++n;
+        }
+        return n;
+    };
+
     // Playerbots.Bg.FillToMax: a match with a real player inside keeps taking bots until each team is full. The core invites
     // them from the queue into its free slots (BattlegroundQueue::FillPlayersToBG): up to a whole team at once during the
     // preparation, one per team per queue update after the gates open, so only a few bots per team wait in the queue.
@@ -652,6 +670,11 @@ void ActivityMgr::FillBattlegrounds(std::vector<Player*> const& humans, std::vec
             CountQueued(queue, bg->GetBracketId(), queued[TEAM_ALLIANCE], queued[TEAM_HORDE], groups);
 
             uint32 cap = FillCap(bg->GetMaxPlayersPerTeam(), bg->GetMinPlayersPerTeam());
+            // Playerbots.Bg.Test.Balance: a test match gets no more bots per team than the smaller team can field (in it, queued,
+            // or idle in the bracket), so arm comparisons are not 47 against 28 (2026-11-11 windows)
+            if (sBgConfig.TestBalance && bg->GetInstanceID() == _bgTest.InstanceId)
+                cap = std::min(cap, std::min(bg->GetInvitedCount(ALLIANCE) + queued[TEAM_ALLIANCE] + eligible(TEAM_ALLIANCE, bgTemplate, bg->GetBracketId()),
+                    bg->GetInvitedCount(HORDE) + queued[TEAM_HORDE] + eligible(TEAM_HORDE, bgTemplate, bg->GetBracketId())));
             uint32 ahead = bg->GetStatus() == STATUS_WAIT_JOIN ? MaxBgBotsPerScan / 2 : RunningFillAhead;
             uint32 added = 0;
             for (TeamId team : { TEAM_ALLIANCE, TEAM_HORDE })
@@ -709,6 +732,10 @@ void ActivityMgr::FillBattlegrounds(std::vector<Player*> const& humans, std::vec
         uint32 cap = std::max<uint32>(bgTemplate->GetMaxPlayersPerTeam(), 1);
         if (sBgConfig.FillToMax)
             cap = FillCap(bgTemplate->GetMaxPlayersPerTeam(), bgTemplate->GetMinPlayersPerTeam());
+        // Playerbots.Bg.Test.Balance: the test queue too (queued plus idle in the bracket, per team)
+        if (sBgConfig.TestBalance && _bgTest.Active() && queueId.GetPacked() == _bgTest.Queue)
+            cap = std::min(cap, std::min(counts[TEAM_ALLIANCE] + eligible(TEAM_ALLIANCE, bgTemplate, bracketId),
+                counts[TEAM_HORDE] + eligible(TEAM_HORDE, bgTemplate, bracketId)));
         uint32 added = 0;
         for (TeamId team : { TEAM_ALLIANCE, TEAM_HORDE })
         {

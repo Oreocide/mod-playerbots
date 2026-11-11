@@ -116,6 +116,8 @@ struct Config
     // option a (BG_COORDINATOR.md §5.3a): coordinated matches only
     bool TravelIgnoreAssist = true;                         // Travel.IgnoreAssist: on the way to an attacking task, no group fights
     float TravelYards = 60.0f;                              // Travel.Yards: closer than this to the task's objective, the old rules
+    bool SquadFillFirst = true;                             // Squad.FillFirst: a captain squad is staffed to its minimum before Take tasks
+    bool TestBalance = true;                                // Test.Balance: a .bot bg test match gets as many bots per team as the smaller can field
 
     void Load();
     /// Any reactive behaviour is on: the planner builds its picture of the match every plan
