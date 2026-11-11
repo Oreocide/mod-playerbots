@@ -831,6 +831,46 @@ Defenders (Hold tasks, `BgRules::Spread` over the hold values) at the seeded sha
     - the forced target and the chosen target, with their distances;
     - squad staging and the team rally.
     It tests the `Engage` lead (`BgPlay.cpp:694`) without changing behaviour. The cause is reported from it before any fix, and the 18% fallback share waits until arrival works.
+- **Trace window, 2026-11-11 08:52-09:19 CST** (`trinitycore-tracking/tools/bg/runs/2026-11-11_0852_av_CB_trace`, seed 301, trace on `tower_point`, metrics every 15 s).
+  - **Matches:**
+    - Match 1 (arm C) ran its opening.
+    - Match 2 (arm B) never started: the server crashed at 09:04:18, about 60 s after the stop. That is #36; its cause is below.
+    - The runner read the log twice around the crash; `bgmatch_analyze.py` now skips repeated lines.
+  - **Criteria, match 1:**
+    - Criterion 1: both teams pass.
+    - Criterion 2: the Horde's Stonehearth Bunker squad arrived at 210 s (6 of 10), the first arrival by 240 s and so the first criterion 2 pass (window 2's arm B Alliance reached Tower Point only at 480 s). The Alliance had nobody at Tower Point or Iceblood Tower (0 of 12). Present counts any teammate within 40 yd, not only the squad.
+  - **What the trace shows** (Alliance Tower Point squad: Hamchija, Itshebum, Imdademon and Besnaglista from 3 s, then 13 replacements; 1 line per second):
+    - **Travel works.** All four left at once and walked mesh legs at about 6-7 yd/s (Hamchija 1,569 to 689 yd by 154 s; Itshebum faster). Go ran about once a second with 0 no-paths, and no spline was restarted while travelling.
+    - **The far forced target is not the cause (refuted for this sample).** From about 78 s every bot held a forced target 700-1,100 yd away, a Horde player at the tower, set by `Engage` (`BgPlay.cpp:694`). Yet the combat target the AI picks stayed none, and the bots kept walking.
+    - **No waiting, for this squad.** The Take task has no staging, Tower Point has `min_group` 0, and there was no team rally. The squad spread out: Itshebum was about 400 yd ahead by 120 s.
+      - The captain squads, which do stage (rally row, `Squad.StageMin` 8), were not traced. They also had nobody present: Galvangar 0 of 11-12 and Balinda 0 of 12 at 360-420 s.
+      - Whether they wait at staging is still open. Next window: `--trace galvangar` (squad tasks are written back as attack jobs, so the trace picks them).
+    - **First contact stops them.** At 154-185 s each bot switched from `pvp` to `attack` and to chase on a nearby enemy player 20-58 yd away, while it was not yet in combat. Examples: Hamchija on Virasdruid at 58 yd, 590 yd short of the tower; Besnaglista on Larceny at 20 yd.
+    - **Where the pick comes from (code facts High; which branch made each pick, Medium):**
+      - `Combat.ChaseDistance` does not apply to bots without a master: `withinChase` returns true for them (`PlayerbotAI.cpp:1205`), and battleground random bots have none.
+      - With `Combat.RoleTargeting` on, `GroupCombat::PickTarget` picks by role from the group's `attackers` value (`PlayerbotAI.cpp:1252-1256`).
+      - The group branch returns any raid member's attacker on the map (`PlayerbotAI.cpp:1295-1306`).
+      - The `has combat target` trigger then fires `attack` (`GenericStrategies.cpp:2034`) out of combat too, and it outranks `pvp`.
+      - So a bot joins whatever fight a raid member is in near it, which is Step 0's cause C.
+    - **The tether cannot prevent that first pick.** It runs only in the combat state (`GenericStrategies.cpp:2056`), so it drops targets after the fight has started. That fits arm B not changing arrival in window 2.
+    - **Path resets happen in the chase, not in travel.** While chasing, the spline restarted every world tick to the same spot (20-60 launches a second).
+    - **Outcome by bot:**
+      - Hamchija and Besnaglista fought 560-600 yd out for minutes.
+      - Imdademon died 235 yd out at 200 s and came back from a graveyard 852 yd away.
+      - Itshebum, alone, fought tower guards 163-165 yd out for about 60 s. It reached 4-19 yd at 260-295 s, killed the defender and died to the tower archers by 322 s.
+  - **Cause (Medium-High, one match):** the squad travels fine. Nearby enemies are picked up before the bot is in combat, the attack action outranks `pvp`, and the opposing army keeps coming the other way, so the fights never end. Each death sends a bot about 850 yd back. This is cause C (§1) seen at the bot level. No code is changed yet: the fix direction is the owner's call.
+- **#36 cause, from the 09:04 core:**
+  - `spell_pri_holy_10_1_class_set_4pc_aura::HandleOnRemove` (Prayer of Mending 41635, core `scripts/Spells/spell_priest.cpp:3937`) calls `GetCaster()->HasAura` with no null check.
+  - Its sibling `spell_pri_holy_10_1_class_set_4pc::HandleEffectDummy` (PoM jump 155793, `:3914-3915`) does the same with `GetOriginalCaster()`, which is null when PoM bounces after its priest left. The guard must cover both.
+  - The other PoM caster reads (`:1353`, `:2095`) are `SpellScript::GetCaster()`, the unit casting the spell, so they cannot be null.
+  - The aura expires on a teammate after the priest bot has left the battleground, so `GetCaster()` is null.
+  - It is on the map thread, from `Unit::_UpdateSpells`. Upstream master has the same code.
+  - A two-line guard waits for the owner's yes. Playerbots code and the caps are not on the stack.
+- **Runner:**
+  - It now stops a match after 60 s of play with no new death or capture, counted from 150 s of play on, so the earliest stop is 210 s (the owner's rule; the 150 s grace is this design's choice; `--keep-stalled` turns it off).
+    - Replayed over every match of windows 1-2 and today, it stops none.
+    - A first version, counting from the last event before the grace, would have stopped today's match 1 at 150 s, before the armies met.
+  - It ends the run on a new worldserver segfault in dmesg. Writing an 11 GB core keeps the dying process "running" for about 9 minutes.
 - **Sample:** arm A 4 matches, arm C 4, arm B 1. No pass or fail is claimed.
 
 ### 5.4 Unit tests (`tests/bg_rules_test.cpp`, run by `tests/run_engine_test.sh`; both exist)
