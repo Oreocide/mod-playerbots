@@ -736,8 +736,74 @@ Defenders (Hold tasks, `BgRules::Spread` over the hold values) at the seeded sha
 - **The towers were not reached:**
   - The tower squads never got there: at most 2 present at a push-path tower in 7 minutes.
   - The armies met mid-map instead; half of each team's attackers first massed at Iceblood Graveyard at about 460 s.
-  - That is cause C, which the tether (arm B) addresses. Arm B needs boot 23 (`5ddc3c91bf99`: b5f962d, b006f28, 9da1462).
+  - It looked like cause C, which the tether (arm B) addresses. Window 2 tested that, and the tether did not change arrival (below): the cause is open.
 - **Sample:** 2 matches per arm of the 10 needed. No pass or fail is claimed.
+
+**Window 2, 2026-11-10 21:19-22:05 CST** (run dir `trinitycore-tracking/tools/bg/runs/2026-11-10_2119_av_ACB`).
+- **Setup:**
+  - 4 opening-only matches, arms A, C, B, A, on seeds 201, 201, 201, 202. Matches 5 and 6 were skipped for time.
+  - Binary of the 21:02 boot (installed 20:49, rev 132023350214+), with the tether (b5f962d, b006f28) and 9da1462.
+  - Teams were uneven: Alliance 40 against Horde 28.
+- **The crash:**
+  - The worldserver crashed at 22:04:28, about 10 s after `bot bg test stop` ended match 4 (arm A).
+  - The fault: `Unit::GetAuraApplication` called on a null Unit, on a map thread (Oreocide/mod-playerbots#36).
+  - That match's metrics lines were lost with Server.log. Its two samples in `results.txt` (242 s and 362 s) are used instead.
+  - The BG windows are paused until a stack is caught.
+
+| Criterion | Arm A (today's planner) | Arm C (coordinator, no tether) | Arm B (coordinator + tether) |
+|---|---|---|---|
+| 1 Snowfall after the rush | 1 / 4 team-matches (Horde 17 assigned in match 1; match 4 Horde 2 assigned but 20 present at 242 s, most likely the Balinda push passing through) | 2 / 2 (Alliance and Horde 4 at most) | 2 / 2 (Alliance 1 at most, Horde 0) |
+| 2 Main force at a push-path tower by 4:00 | 0 / 4 (no tower targeted: the whole push went to the captains, 19-20 present) | 0 / 2 | 0 / 2 |
+| 6 Fallback share | 0% (no coordinator) | Alliance 7%, Horde 2% | **Alliance 18%, over the 15% flag**; Horde 0% |
+| Tether drops / retaliations / same enemy again | - | - | Alliance 201 / 24 / 20, Horde 638 / 42 / 106 |
+
+- **Both windows together:**
+  - Criterion 1: arm A 3 of 8 team-matches, arm C 6 of 6, arm B 2 of 2.
+  - Criterion 6: window 1's arm C figures (290%, 19%) come from the counter before 9da1462 and are left out.
+  - Arm A fails criterion 1 on the assigned half: its Snowfall presence was 5 or fewer in most samples (the 17-19 Horde assigned there were mostly elsewhere). The coordinator removes that assignment. "The coordinator fixes camping" overstates it.
+- **The split works, but the squads still do not arrive:**
+  - The assignments matched §2. Alliance: Iceblood Tower 11-13, Tower Point 11-12. Horde: Stonehearth Bunker 2-12, Icewing 4-12.
+  - That held through 480 s, except B moved Iceblood Tower's squad to the graveyards from 240 s (0-3 left).
+  - Few of the assigned were dead: 1-4 dead in 10 of the push-tower samples, none in the rest.
+  - Tower Point was assigned 11-12 with nobody present in both matches until 420 s (B: 6 present at 480 s). Icewing had nobody present all match in both.
+  - Iceblood Tower peaked at 3 present (C) and 6 (B). Stonehearth Bunker peaked at 2.
+  - The mid-phase captain squad (Galvangar, 9-13 assigned) never had anyone present.
+  - The same non-arrival shows in arm A: the Horde's 9-18 Snowfall-assigned bots had 0 present all through window 2's match 1. Only the old path's captain rally groups arrived (Galvangar 19, Balinda 20).
+- **The tether did not change arrival:**
+  - Arm B made 638 Horde drops, yet the Horde presence at Stonehearth and Icewing stayed where arm C had it.
+  - 106 of the 638 dropped the same enemy again, so a dropped enemy is often picked again.
+  - One match, Medium.
+- **The navmesh is connected. The mover is not ruled out:**
+  - `trinitycore-tracking/tools/bg/navcheck.cpp` is an offline Detour query on `docker/data/mmaps`. It mirrors the core's player filter and poly search (`PathGenerator.cpp:141-152`, `:650-673`).
+  - Map 30 has 28 tiles. From each team's gate and graveyards, Iceblood Tower, Tower Point, both captains, the rally points and Snowfall route complete.
+  - All four Alliance bunkers route partially from everywhere, but each path ends 13-18 yd from the anchor in 2D, inside the 40 yd presence circle (`BgMetrics.cpp:34`, `:147`).
+  - The movement target and the presence point are the same: both come from `ObjectivePosition` (`BgPlay.cpp:440`, `BgMetrics.cpp:114`).
+  - These routes are 700-2400 yd long. The core's smooth path gives up at 74 points, about 300 yd (`PathGenerator.cpp:951`). The bots get past that only through `Bg.LegYards` legs, which is 180 in the live conf. So navcheck shows the mesh is connected, not that the bots' mover gets there.
+- **A lead, not yet the cause (Medium-Low):**
+  - `PlayValley` calls `Engage(bot, ai, pos, GuardRange)` before `Go` at any distance (`BgPlay.cpp:684-685`).
+  - `Engage` makes the enemy player nearest the *objective* a forced target, however far away the bot is (`BgPlay.cpp:144-164`).
+  - With `Combat.RoleTargeting = 1` (live), a forced target comes first and skips the chase-distance check (`PlayerbotAI.cpp:1244-1246`; compare `withinChase` at `:1215`).
+  - So a tower squad member anywhere on the map can take a defender at its tower as its target.
+  - **What fits:**
+    - The tasks `PlayValley` runs never fill: the arm A Horde Snowfall assignees, and the C/B tower squads.
+    - The captain pushes do arrive: `PlayPush` engages only around its rally point, and the rallies stand away from hostile spawns (`BgPlay.cpp:610-613`).
+  - **What does not fit yet:**
+    - The C/B captain squads also go through `PlayPush`, yet nobody reached their rally. Maybe they were taken from parked tower squads still holding the old forced target; this is unchecked.
+  - **The check:** `bot state` (position, combat target, last action) on tower-squad members during a window.
+- **Criterion 2 as defined cannot pass with the approved split:**
+  - `BgMetrics.cpp:183` counts a tower as massed only when the bots at one objective, doubled, reach the team's living attackers.
+  - The opening sends 12 + 11 of 27 Alliance attackers to two towers: 24 < 27 even with full arrival. Horde Icewing: 14 < 18.
+  - **Open decision (user):** either keep the definition and change the split, or measure arrival per push-path tower. Proposed per-tower measure: at least half of the tower's own squad within 40 yd, and at least 4 (`Squad.MinTake`). A pair-wide measure is the alternative: the team's two push-path towers together hold half the living attackers.
+  - Window 2 under each, best value by 300 s:
+    - Per squad: C Alliance 25%, Horde 2 of a shrunken squad of 2 (fails the 4 floor); B Alliance 46% (6 of 13 at 180 s), Horde 18%.
+    - Pair-wide: C 11% / 12%, B 24% / 12%.
+  - No arm passes either.
+- **Next:**
+  - A position diagnostic for assigned bots that are not present. It needs no build:
+    - `bgmatch.sh --states`, with the sampled names taken from the tower squads (`.bot bg squads`, `.bot bg roles`), not the first three attackers;
+    - `Logger.server.playerbots.stuck=2` for the window, the 11-07 method, which shows the no-path lines.
+  - Then catch the #36 stack. Only then more windows.
+- **Sample:** arm A 4 matches, arm C 4, arm B 1. No pass or fail is claimed.
 
 ### 5.4 Unit tests (`tests/bg_rules_test.cpp`, run by `tests/run_engine_test.sh`; both exist)
 - **Score and fill:**
@@ -808,8 +874,8 @@ Order: W-1, W0, W1, W3 (pure, so it can come before W2), W2, W4, W5, W6, W7, W8.
 - Open:
   - **W6b (built: d289a97):** the captain Squad task with its staging point and its own rally per squad. Owner: captains on by default as a mid-phase squad. Staging N = max(`min_group`, `Squad.StageMin` 8), because `min_group` stays 5 for the old path. A squad under N is dissolved and offered again after 60 s.
   - **W5 (built: b5f962d, path fix b006f28):** tether and retaliation.
-  - **W8:** the A/C/B runs.
-- Arm C can run once W6b is in; arm B once W5 is in.
+  - **W8:** the A/C/B runs. Windows 1 and 2 are done (§5.3a). Paused for #36, the crash after `bot bg test stop`. Next comes a position diagnostic for assigned bots that are not present, then the criterion 2 decision.
+- W6b and W5 are live since the 21:02 boot of 2026-11-10 (binary installed 20:49, rev 132023350214+), keys off.
 
 **Backlog (other maps, after AV):**
 - B1 Node mode, with the AB and BFG profiles: `HoldTarget`, guards, retake in time (§3.1, §3.5).
