@@ -110,6 +110,7 @@ struct TetherState
     std::unordered_map<ObjectGuid, uint32> Drops;   // enemies dropped since the bot's last death or task change
     int8 Objective = NoObjective;
     TaskIntent Intent = TaskIntent::Take;
+    Position TripFrom;                      // where the bot stood when it got its task: with no recent leg the path runs from here
     ObjectGuid Pending;                     // the trigger found this target to drop; the action takes it
 };
 
@@ -497,11 +498,14 @@ void Coordinator::Plan(Planner& planner, BgPlan& plan, Battleground* bg, Map* ma
                 auto [tether, created] = Tethers.try_emplace(bots[i]->GetGUID());
                 if (created)
                     tether->second.Budget.LeftMs = sBgConfig.TetherRetaliateBudgetSeconds * 1000;
-                if (!entry.Alive || tether->second.Objective != bot0.Objective || tether->second.Intent != bot0.Intent)
-                {
+                bool newTask = tether->second.Objective != bot0.Objective || tether->second.Intent != bot0.Intent;
+                if (!entry.Alive || newTask)
                     tether->second.Drops.clear();
+                if (newTask || created)
+                {
                     tether->second.Objective = bot0.Objective;
                     tether->second.Intent = bot0.Intent;
+                    tether->second.TripFrom = bots[i]->GetPosition();
                 }
             }
         }
@@ -680,14 +684,15 @@ bool Coordinator::TetherWants(PlayerbotAI& ai)
     check.TargetY = victim->GetPositionY();
     check.AnchorX = anchor.GetPositionX();
     check.AnchorY = anchor.GetPositionY();
-    if (tether.LegMs && now - tether.LegMs < 15000)
-    {
-        check.HasLeg = true;
-        check.LegAX = tether.LegFrom.GetPositionX();
-        check.LegAY = tether.LegFrom.GetPositionY();
-        check.LegBX = tether.LegTo.GetPositionX();
-        check.LegBY = tether.LegTo.GetPositionY();
-    }
+    // the path: the mesh leg the bot walks, else the straight way from where it got its task (a defender that got it at its node has
+    // only the objective's circle). Never the line from where it stands now: that would follow a bot chasing away from its task
+    check.HasLeg = true;
+    Position const& from = tether.LegMs && now - tether.LegMs < 15000 ? tether.LegFrom : tether.TripFrom;
+    Position const& to = tether.LegMs && now - tether.LegMs < 15000 ? tether.LegTo : anchor;
+    check.LegAX = from.GetPositionX();
+    check.LegAY = from.GetPositionY();
+    check.LegBX = to.GetPositionX();
+    check.LegBY = to.GetPositionY();
     check.HitUsRecently = HitRecently(bot->GetGUID(), victim->GetGUID(), now);
     // a long calm (the trigger only runs in combat) fills the retaliation budget again
     uint32 budgetMs = sBgConfig.TetherRetaliateBudgetSeconds * 1000;
