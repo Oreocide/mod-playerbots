@@ -112,7 +112,7 @@ struct FillBot
     int32 Task = -1;                    // in: the current task (-1 none); out: the task after the fill
     uint32 SinceMs = 0;                 // when it got the current task (set to now when the fill changes it)
     uint32 RejoinUntilMs = 0;           // back from a graveyard: not rescored and not released before this
-    bool Fallback = false;              // out: this fill gave it the fallback task
+    bool Fallback = false;              // in/out: it is on its task by the fallback rule (over its quota on purpose)
 };
 
 struct FillParams
@@ -128,7 +128,7 @@ struct FillParams
 struct FillResult
 {
     uint32 Changed = 0;                 // bots whose task changed
-    uint32 Fallbacks = 0;               // bots that took the fallback task in this fill
+    uint32 Fallbacks = 0;               // bots this fill moved onto a task by the fallback rule
     uint32 Closed = 0;                  // Take tasks dissolved under the minimum squad
 };
 
@@ -186,10 +186,10 @@ inline FillResult FillTasks(std::vector<TaskView>& tasks, std::vector<FillBot>& 
     {
         FillBot& bot = bots[i];
         before[i] = bot.Task;
-        bot.Fallback = false;
         if (!valid(bot.Task))
         {
             bot.Task = -1;
+            bot.Fallback = false;
             isFree[i] = bot.Alive;
             continue;
         }
@@ -198,22 +198,28 @@ inline FillResult FillTasks(std::vector<TaskView>& tasks, std::vector<FillBot>& 
         isFree[i] = !committed;
     }
 
-    // over quota (the dead came back): the latest assigned living bots that are not rejoining leave first
+    // over quota (the dead came back): the latest assigned living bots that are not rejoining leave first. Bots there by the fallback
+    // rule are over the quota on purpose: they neither count here nor leave (else they would leave and fall back every plan)
     for (size_t t = 0; t < tasks.size(); ++t)
     {
-        if (!tasks[t].QuotaMax || count[t] <= float(tasks[t].QuotaMax))
+        float regular = count[t];
+        for (FillBot const& bot : bots)
+            if (bot.Task == int32(t) && bot.Fallback)
+                regular -= weight(bot);
+        if (!tasks[t].QuotaMax || regular <= float(tasks[t].QuotaMax))
             continue;
         std::vector<size_t> members;
         for (size_t i = 0; i < bots.size(); ++i)
-            if (bots[i].Task == int32(t) && bots[i].Alive && !rejoining(bots[i]))
+            if (bots[i].Task == int32(t) && bots[i].Alive && !bots[i].Fallback && !rejoining(bots[i]))
                 members.push_back(i);
         std::sort(members.begin(), members.end(), [&](size_t a, size_t b) { return bots[a].SinceMs > bots[b].SinceMs; });
         for (size_t i : members)
         {
-            if (count[t] <= float(tasks[t].QuotaMax))
+            if (regular <= float(tasks[t].QuotaMax))
                 break;
             bots[i].Task = -1;
             count[t] -= 1.0f;
+            regular -= 1.0f;
             isFree[i] = true;
         }
     }
@@ -280,16 +286,21 @@ inline FillResult FillTasks(std::vector<TaskView>& tasks, std::vector<FillBot>& 
             if (bot.Task >= 0)
             {
                 if (best >= 0 && best != bot.Task && CommitMarginMet(bestScore, currentScore, fp))
+                {
                     assign(i, best);
+                    bot.Fallback = false;
+                }
                 continue;
             }
             if (best >= 0 && bestScore > 0.0f)
+            {
                 assign(i, best);
+                bot.Fallback = false;
+            }
             else if (int32 push = MainPush(tasks, bots); push >= 0)
             {
                 assign(i, push);
                 bot.Fallback = true;
-                ++result.Fallbacks;
             }
         }
     };
@@ -321,15 +332,9 @@ inline FillResult FillTasks(std::vector<TaskView>& tasks, std::vector<FillBot>& 
             if (bots[i].Task != smallest)
                 continue;
             assign(i, -1);
+            bots[i].Fallback = false;
             if (bots[i].Alive)
-            {
-                if (bots[i].Fallback)
-                {
-                    bots[i].Fallback = false;
-                    --result.Fallbacks;
-                }
                 released.push_back(i);
-            }
         }
         std::sort(released.begin(), released.end(), [&](size_t a, size_t b) { return bots[a].Key < bots[b].Key; });
         pick(released);
@@ -340,6 +345,8 @@ inline FillResult FillTasks(std::vector<TaskView>& tasks, std::vector<FillBot>& 
         {
             bots[i].SinceMs = nowMs;
             ++result.Changed;
+            if (bots[i].Fallback)
+                ++result.Fallbacks;     // counted only when the fallback moved the bot (it stays there, not counted again)
         }
     return result;
 }

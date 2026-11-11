@@ -871,6 +871,29 @@ void TestTaskFallback()
     CHECK(MainPush(tasks, bots) == 1);
 }
 
+void TestTaskFallbackStable()
+{
+    // 32 attackers for 28 slots (the 2026-11-10 Alliance): the 4 extra fall back once and stay; the next plan moves nobody and counts
+    // no new fallback (they were released and counted again every plan before)
+    ScoreParams sp;
+    FillParams fp;
+    std::vector<TaskView> tasks = { TaskAt(TaskIntent::Take, 8.0f, -571.9f, -262.8f, 12), TaskAt(TaskIntent::Take, 8.0f, -768.1f, -362.7f, 12),
+        TaskAt(TaskIntent::Take, 3.0f, -202.6f, -112.8f, 4), TaskAt(TaskIntent::Take, 1.8f, -612.7f, -396.7f, 8) };
+    std::vector<FillBot> bots = BotsAt(11, 1200, 32, 794.6f, -493.5f);
+    FillResult first = FillTasks(tasks, bots, 100000, sp, fp);
+    uint32 fallen = 0;
+    for (FillBot const& bot : bots)
+        fallen += bot.Fallback ? 1 : 0;
+    CHECK(first.Fallbacks == 4 && fallen == 4 && first.Changed == 32);
+    for (uint32 tick = 1; tick <= 40; ++tick)
+    {
+        FillResult next = FillTasks(tasks, bots, 100000 + tick * 1000, sp, fp);
+        CHECK(next.Fallbacks == 0 && next.Changed == 0);
+    }
+    std::vector<uint32> n = Counts(tasks, bots);
+    CHECK(n[2] == 4 && n[0] + n[1] == 28);
+}
+
 void TestCommitMargin()
 {
     FillParams fp;
@@ -1103,6 +1126,7 @@ int main()
     TestTaskFalloffNegative();
     TestTaskNotOffered();
     TestTaskFallback();
+    TestTaskFallbackStable();
     TestCommitMargin();
     TestTaskDeadWeight();
     TestTaskRejoin();

@@ -445,6 +445,7 @@ void Coordinator::Plan(Planner& planner, BgPlan& plan, Battleground* bg, Map* ma
                     entry.Task = int32(t);
             entry.SinceMs = bot0.SinceMs;
             entry.RejoinUntilMs = job.RezMs ? job.RezMs + sBgConfig.RejoinSeconds * 1000 : 0;
+            entry.Fallback = entry.Task >= 0 && bot0.Fallback;
             fill.push_back(entry);
         }
         BgRules::FillResult result = BgRules::FillTasks(views, fill, now, scoreParams, fillParams);
