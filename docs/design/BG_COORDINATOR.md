@@ -892,6 +892,34 @@ Defenders (Hold tasks, `BgRules::Spread` over the hold values) at the seeded sha
     - Arms C (option a) and N (control: the coordinator with `Travel.IgnoreAssist 0`) on paired seeds.
     - `--trace tower_point,galvangar`: the first pair traces the Tower Point squad, the second the Galvangar captain squad, which answers the staging question.
     - Metrics every 15 s, with the stall stop on its change signal.
+- **Option a window, 2026-11-11 10:32-11:39 CST** (`trinitycore-tracking/tools/bg/runs/2026-11-11_1032_av_CN_travel`):
+  - **Setup:**
+    - Binary 9370c27774eb: the PoM fix, 8c0d9f0.
+    - 4 matches, C, N, C, N, on seeds 401, 401, 402, 402. Openings to about 550 s of play.
+    - Alliance 47-48 against Horde 28.
+  - **No crash** in 4 test stops. Before the PoM fix, 2 of about 10 stops crashed.
+  - **Criterion 2:**
+    - **Arm C (option a): 2 of 4 team-matches.**
+      - Alliance Tower Point arrived at 180 s and 345 s; Iceblood Tower at 525 s in match 3, never in match 1.
+      - Horde Stonehearth Bunker arrived at 555 s and 210 s; Icewing at 510 s in match 3, never in match 1.
+    - **Arm N (control): 0 of 4.** Alliance Iceblood arrived at 495 s and 450 s; Tower Point and both Horde towers never did.
+    - Two matches per arm, so Medium. The direction matches the trace.
+  - **Trace, match 1 (C, Tower Point squad):**
+    - All four traced bots had `travel yes` for 4-4.5 minutes and took no player fight on the way.
+    - Their first targets came at 137-149 s, at the tower itself: Frostwolf Guardian and Legionnaire NPCs 24-58 yd from them, 55-180 yd from the banner. That is the creature-pull path, which is not part of option a.
+    - Three of the four were within 40 yd at 166-167 s; the fourth at 270 s.
+  - **Staging (trace, match 4, N, the Galvangar captain squad):**
+    - The squad formed at about 360 s and stages at the Galvangar rally, 104 yd from the boss (`min 8`, `timeout 60 s`).
+    - Its bots walked up to 1,221 yd to the rally and waited there 48-68 s ("gathering need 8"). It charged at about 520 s (5 of 11 at the boss at 525 s), then regrouped after a death and gathered again.
+    - So captain squads do wait at the existing rally and min values.
+    - Match 3's trace (C) covers only 361-392 s: the squad was no longer offered after 390 s, cause not yet read.
+    - Captain squads at the boss: C match 1 reached 7-8, N match 4 reached 5, the other two reached 0. No clear effect of option a on them (Low).
+  - **Open:**
+    - the Horde side (Icewing, and Stonehearth before 240 s in match 1);
+    - why match 3's captain squad dropped;
+    - the creature pulls at the towers;
+    - the fallback share, which waits.
+    - More pairs are needed before any pass is claimed (8 of 10 per team).
   - It ends the run on a new worldserver segfault in dmesg. Writing an 11 GB core keeps the dying process "running" for about 9 minutes.
 - **Sample:** arm A 4 matches, arm C 4, arm B 1. No pass or fail is claimed.
 
