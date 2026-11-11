@@ -808,6 +808,26 @@ void Coordinator::FallbackCounts(BgPlan const& plan, uint32 team, uint32& fallba
     assignments = it->second.Teams[team].Assignments;
 }
 
+bool Coordinator::Travelling(Player const* bot)
+{
+    if (!sBgConfig.Coordinator || !sBgConfig.TravelIgnoreAssist || !bot->IsInWorld())
+        return false;
+    Map const* map = bot->GetMap();
+    if (!map || !map->IsBattleground())
+        return false;
+    BgPlan const* plan = sBgPlanner.Find(bot->GetMapId(), bot->GetInstanceId());
+    auto mit = plan ? Matches.find({ plan->MapId, plan->InstanceId }) : Matches.end();
+    if (mit == Matches.end() || !mit->second.Coordinated)
+        return false;
+    auto bit = mit->second.Bots.find(bot->GetGUID());
+    if (bit == mit->second.Bots.end() || bit->second.Objective == NoObjective)
+        return false;
+    Position anchor;
+    if (!ObjectivePosition(*plan, bit->second.Objective, anchor))
+        return false;
+    return TravelIgnoresAssist(bit->second.Intent, bot->GetExactDist2d(anchor), sBgConfig.TravelYards);
+}
+
 std::string Coordinator::TraceTask(BgPlan const& plan, uint32 team, ObjectGuid bot, uint32 now)
 {
     auto it = Matches.find({ plan.MapId, plan.InstanceId });

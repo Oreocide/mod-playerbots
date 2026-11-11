@@ -508,6 +508,13 @@ inline TetherVerdict JudgeTether(TetherCheck const& check, TetherZone const& zon
     return TetherVerdict::Drop;
 }
 
+/// Option a (BG_COORDINATOR.md §5.3a, owner's pick 2026-11-11): a bot on its way to an attacking task takes none of its group's fights
+/// (the role pick, raid members' attackers) until it is within travelYards of the task's objective. What hits it, it still fights
+inline bool TravelIgnoresAssist(TaskIntent intent, float distanceToObjective, float travelYards)
+{
+    return (intent == TaskIntent::Take || intent == TaskIntent::Squad || intent == TaskIntent::Push) && distanceToObjective > travelYards;
+}
+
 /// How long a dropped enemy is ignored: the base, doubled for each earlier drop of the same enemy, at most the cap (the counter
 /// resets when the bot dies or its task changes)
 inline uint32 TetherIgnoreMs(uint32 earlierDrops, uint32 baseMs = 8000, uint32 maxMs = 60000)

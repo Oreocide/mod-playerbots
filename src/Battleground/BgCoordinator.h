@@ -72,6 +72,10 @@ public:
     /// Playerbots.Bg.Trace: the bot's task as the last plan left it (intent, objective, since; the offered task's quota, its living and
     /// dead, its staging; a captain squad's rally state), "" when the match is not coordinated
     static std::string TraceTask(BgPlan const& plan, uint32 team, ObjectGuid bot, uint32 now);
+    /// Playerbots.Bg.Travel.IgnoreAssist (option a): the bot is in a coordinated match, on an attacking task (Take, Squad, Push), and
+    /// farther than Travel.Yards from its objective. False at once off battleground maps, so it is safe from a map thread (the AI of
+    /// bots on continent maps); battleground bots' AI, which reaches the tables, runs on the world thread
+    static bool Travelling(Player const* bot);
 };
 }
 

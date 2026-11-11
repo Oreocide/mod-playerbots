@@ -252,11 +252,12 @@ void WriteTrace(BgPlan const& plan, Battleground* bg, int8 objective, Player* bo
     std::string rally = teamPlan && teamPlan->RallyObjective != NoObjective ? Trinity::StringFormat("{} {} need {}", ObjectiveName(plan, teamPlan->RallyObjective),
         BgRules::RallyStateName(teamPlan->Rally.State), teamPlan->Rally.Need) : std::string("none");
     TC_LOG_INFO("server.playerbots.bg", "Playerbots: bg trace map {} instance {} play {} s {} ({}): {} | job {}{}{} | at ({:.0f}, {:.0f}, {:.0f}) {:.0f} yd from {} "
-        "| action {} | move {} spline {}, launched {} restarted {} same spot {} | {} | forced {} | pick {} | victim {} | team rally {}",
+        "| action {} | move {} spline {}, launched {} restarted {} same spot {} | {} | forced {} | pick {} | victim {} | team rally {} | travel {}",
         plan.MapId, plan.InstanceId, uint32(bg->GetInProgressDuration().count() / 1000), bot->GetName(), team < 2 ? TeamWord(team) : "none",
         !bot->IsAlive() ? "dead" : bot->IsInCombat() ? "alive, in combat" : "alive", jobText, task.empty() ? "" : " | ", task,
         bot->GetPositionX(), bot->GetPositionY(), bot->GetPositionZ(), toObjective, ObjectiveName(plan, objective), action, MotionName(motion),
-        splineText, state.Launches, state.Restarts, state.SameRestarts, goText, forced, pick, UnitText(bot, bot->GetVictim()), rally);
+        splineText, state.Launches, state.Restarts, state.SameRestarts, goText, forced, pick, UnitText(bot, bot->GetVictim()), rally,
+        Coordinator::Travelling(bot) ? "yes" : "no");
 }
 }
 

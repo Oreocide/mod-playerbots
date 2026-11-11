@@ -1049,6 +1049,13 @@ Playerbots.Bg.Trace =
 Playerbots.Bg.Trace.Bots = 4
 Playerbots.Bg.Trace.Ms = 1000
 
+# Battleground travel (coordinator on; docs/design/BG_COORDINATOR.md 5.3a, option a): a bot on its way to an attacking task (a
+# tower or node to take, a captain squad, the general push) takes none of its group's fights (the role pick, raid members'
+# attackers) until it is within Travel.Yards (10 to 300) of the task's objective. What hits it, it still fights, and an enemy near
+# its objective is unchanged. Coordinated matches only (Playerbots.Bg.Coordinator = 1).
+Playerbots.Bg.Travel.IgnoreAssist = 1
+Playerbots.Bg.Travel.Yards = 60
+
 # Battleground coordinator (planner on; docs/design/BG_COORDINATOR.md): on a map that has a coordinator profile, tasks with
 # quotas, phases and squads plan the teams instead of the planner's attack/defend split. The path of a match is fixed at its first
 # plan, so a reload in the middle of a match does not switch it. No map has a profile yet: with the key on, every match still plays

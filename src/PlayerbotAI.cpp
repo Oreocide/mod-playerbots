@@ -16,6 +16,7 @@
  */
 
 #include "PlayerbotAI.h"
+#include "Battleground/BgCoordinator.h"
 #include "Strategies/CustomStrategy.h"
 #include "Travel/PlayerJump.h"
 #include "Travel/StuckDiagnosis.h"
@@ -64,6 +65,7 @@
 #include "WorldSession.h"
 #include <algorithm>
 #include <cmath>
+#include <optional>
 
 namespace Playerbots
 {
@@ -1040,6 +1042,11 @@ Unit* PlayerbotAI::FindCombatTarget() const
     if (Unit* scripted = Dungeon::EncounterTarget(const_cast<PlayerbotAI&>(*this)))
         return scripted;
 
+    // Playerbots.Bg.Travel.IgnoreAssist (option a, mod-playerbots BG_COORDINATOR.md §5.3a): a coordinated battleground bot on its way
+    // to an attacking task takes none of the group's fights below (role pick, raid members' attackers); what hits it, it still fights
+    std::optional<bool> travelling;
+    auto onTheWay = [&] { if (!travelling) travelling = Bg::Coordinator::Travelling(_bot); return *travelling; };
+
     // Playerbots.Combat.RoleTargeting: in a group the fight is chosen by role (an explicit "attack" command still comes first)
     if (sPlayerbotsConfig.CombatRoleTargeting)
     {
@@ -1047,8 +1054,9 @@ Unit* PlayerbotAI::FindCombatTarget() const
             if (Unit* forced = ObjectAccessor::GetUnit(*_bot, _forcedTarget); IsValidEnemy(forced))
                 return forced;
 
-        if (Unit* byRole = GroupCombat::PickTarget(const_cast<PlayerbotAI&>(*this)))
-            return byRole;
+        if (!onTheWay())
+            if (Unit* byRole = GroupCombat::PickTarget(const_cast<PlayerbotAI&>(*this)))
+                return byRole;
     }
 
     // Who is hitting us always beats a goal, quest, or grind target.
@@ -1078,7 +1086,7 @@ Unit* PlayerbotAI::FindCombatTarget() const
         if (Unit* forced = ObjectAccessor::GetUnit(*_bot, _forcedTarget); IsValidEnemy(forced))
             return forced;
 
-    if (Group* group = _bot->GetGroup())
+    if (Group* group = _bot->GetGroup(); group && !onTheWay())
     {
         for (GroupReference const& ref : group->GetMembers())
         {

@@ -870,6 +870,28 @@ Defenders (Hold tasks, `BgRules::Spread` over the hold values) at the seeded sha
   - It now stops a match after 60 s of play with no new death or capture, counted from 150 s of play on, so the earliest stop is 210 s (the owner's rule; the 150 s grace is this design's choice; `--keep-stalled` turns it off).
     - Replayed over every match of windows 1-2 and today, it stops none.
     - A first version, counting from the last event before the grace, would have stopped today's match 1 at 150 s, before the armies met.
+    - **Activity signal:** any change in the two team lines (deaths, captures, who is assigned and present where), not deaths and captures alone.
+      - An assault moves no counter (`captures` counts owner changes only, `BgMetrics.cpp:347-348`).
+      - With option a the armies may pass each other, so deaths and captures could stay flat while the squads walk.
+      - Replayed, the lines never stayed the same for more than 30 s (15 s lines) or 60 s (60 s lines).
+- **Fixes, 2026-11-11 (owner: "1. approved, 3. a"):**
+  - **#36:** TC e12633ab (local-snapshot, local) guards both Prayer of Mending sites, the jump `GetOriginalCaster()` and the aura's remove handler `GetCaster()`. The crash cores stay on (the owner took the recommendation).
+  - **Option a, the travel rule:**
+    - **Keys:** `Playerbots.Bg.Travel.IgnoreAssist` (1) and `Travel.Yards` (60). Coordinated matches only; the old path is unchanged.
+    - **The check:** `Coordinator::Travelling` is true for a Take, Squad or Push task more than `Travel.Yards` from its objective (`BgRules::TravelIgnoresAssist`, unit-tested). It returns at once off battleground maps.
+    - **What it gates:** only the two group branches of `PlayerbotAI::FindCombatTarget`, the role pick and raid members' attackers.
+    - **What stays as it was:**
+      - what hits the bot (self-defense);
+      - the forced target from `Engage` (an enemy near the task's objective);
+      - masterless bots' creature pulls (`FindNearbyEnemy`), which would be option b's territory and are not taken.
+    - **What to watch in the next window:**
+      - **The forced target:** once a traveller sees its tower, it may chase a defender from 150 yd or more (trace: forced, pick, motion).
+      - **Creature pulls:** Itshebum's 60 s at the Frostwolf Guardians came from one of these two.
+      - **Captain squads:** one gathering at a rally more than 60 yd from its boss counts as travelling, so only `Engage` at the rally makes it fight there.
+  - **Next window:**
+    - Arms C (option a) and N (control: the coordinator with `Travel.IgnoreAssist 0`) on paired seeds.
+    - `--trace tower_point,galvangar`: the first pair traces the Tower Point squad, the second the Galvangar captain squad, which answers the staging question.
+    - Metrics every 15 s, with the stall stop on its change signal.
   - It ends the run on a new worldserver segfault in dmesg. Writing an 11 GB core keeps the dying process "running" for about 9 minutes.
 - **Sample:** arm A 4 matches, arm C 4, arm B 1. No pass or fail is claimed.
 

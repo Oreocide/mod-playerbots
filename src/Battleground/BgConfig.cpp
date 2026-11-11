@@ -132,6 +132,8 @@ void Config::Load()
     Trace = sConfigMgr->GetStringDefault("Playerbots.Bg.Trace", "");
     TraceBots = count("Playerbots.Bg.Trace.Bots", 4, 1, 8);
     TraceMs = count("Playerbots.Bg.Trace.Ms", 1000, 200, 10000);
+    TravelIgnoreAssist = sConfigMgr->GetBoolDefault("Playerbots.Bg.Travel.IgnoreAssist", true);
+    TravelYards = real("Playerbots.Bg.Travel.Yards", 60.0f, 10.0f, 300.0f);
 
     if (Planner && !sPlayerbotsConfig.BgObjectives)
         TC_LOG_WARN("server.playerbots", "Playerbots: Playerbots.Bg.Planner = 1 does nothing while Playerbots.Bg.Objectives = 0");

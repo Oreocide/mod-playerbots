@@ -1065,6 +1065,19 @@ void TestTetherRules()
     CHECK(budget.LeftMs == 10000);
 }
 
+void TestTravelIgnoresAssist()
+{
+    // attacking tasks on the way: no group fights; at the objective, and for defenders or other tasks, the old rules
+    CHECK(TravelIgnoresAssist(TaskIntent::Take, 590.0f, 60.0f));
+    CHECK(TravelIgnoresAssist(TaskIntent::Squad, 120.0f, 60.0f));
+    CHECK(TravelIgnoresAssist(TaskIntent::Push, 61.0f, 60.0f));
+    CHECK(!TravelIgnoresAssist(TaskIntent::Take, 60.0f, 60.0f));
+    CHECK(!TravelIgnoresAssist(TaskIntent::Take, 12.0f, 60.0f));
+    CHECK(!TravelIgnoresAssist(TaskIntent::Hold, 590.0f, 60.0f));
+    CHECK(!TravelIgnoresAssist(TaskIntent::Retake, 590.0f, 60.0f));
+    CHECK(!TravelIgnoresAssist(TaskIntent::Escort, 590.0f, 60.0f));
+}
+
 void TestLanePhase()
 {
     LanePhaseParams params;
@@ -1135,6 +1148,7 @@ int main()
     TestPushGate();
     TestTetherRules();
     TestLanePhase();
+    TestTravelIgnoresAssist();
 
     if (Failures)
     {
