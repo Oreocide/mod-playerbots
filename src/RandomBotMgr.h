@@ -167,11 +167,14 @@ private:
     void MaybeBeginCreate(uint32 diff);
     int64 _bgCreateTimer = 0;
     void PrepareWarm();
-    /// One step of Playerbots.Warm.Maps (create a map, or load its grid) per call; true while steps are left (bot logins wait)
-    bool RunWarmStep();
+    /// One step of Playerbots.Warm.Maps (create a map, or load its grid) per call; true while steps are left (bot logins wait).
+    /// diff is the world tick's: after a tick of Warm.SlowTickMs or more the next step waits Warm.BackoffMs (#37)
+    bool RunWarmStep(uint32 diff);
     struct WarmStep { uint32 MapId = 0; bool LoadGrid = false; float X = 0.0f; float Y = 0.0f; bool Pin = false; };
     void AppendExtraWarm();
     std::deque<WarmStep> _warmSteps;
+    uint32 _warmWaitMs = 0;            // world time left before the next warm step
+    uint32 _warmPauses = 0;            // pauses taken, for the "warm-up finished" line
 
     BotCharacter const* NextOfflineCharacter() const;
     bool WantAlliance() const;

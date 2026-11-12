@@ -345,7 +345,7 @@ void RandomBotMgr::Update(uint32 diff)
 
     _active = true;
 
-    if (RunWarmStep())
+    if (RunWarmStep(diff))
         return;    // bots log in once the maps are warm
 
     {
@@ -838,10 +838,27 @@ Map* WarmCreateMap(uint32 mapId)
 }
 }
 
-bool RandomBotMgr::RunWarmStep()
+bool RandomBotMgr::RunWarmStep(uint32 diff)
 {
     if (_warmSteps.empty())
         return false;
+
+    // #37: a step runs on the world thread, and creating a continent takes 18-31 s of disk reads on a quiet host (Eastern Kingdoms, 2026-11-11 boots).
+    // A long tick means a slow step or a busy disk: pause, so the world ticks and the disk serves others before the next read; a disk stall that
+    // stacks the steps up can otherwise hold one tick past MaxCoreStuckTime (the 16:47 abort, in a VMAP read)
+    if (_warmWaitMs)
+    {
+        _warmWaitMs = diff >= _warmWaitMs ? 0 : _warmWaitMs - diff;
+        return true;
+    }
+    if (sPlayerbotsConfig.WarmSlowTickMs && sPlayerbotsConfig.WarmBackoffMs && diff >= sPlayerbotsConfig.WarmSlowTickMs)
+    {
+        _warmWaitMs = sPlayerbotsConfig.WarmBackoffMs;
+        ++_warmPauses;
+        TC_LOG_INFO("server.playerbots", "Playerbots: warm-up: the last world tick took {} ms, the next step waits {} ms ({} steps left)", diff,
+            _warmWaitMs, _warmSteps.size());
+        return true;
+    }
 
     WarmStep step = _warmSteps.front();
     _warmSteps.pop_front();
@@ -866,7 +883,7 @@ bool RandomBotMgr::RunWarmStep()
         TC_LOG_INFO("server.playerbots", "Playerbots: warm-up: map {} grid at ({:.0f}, {:.0f}) loaded in {} ms{}", step.MapId, step.X, step.Y, GetMSTimeDiffToNow(start), step.Pin ? " (pinned)" : "");
     }
     if (_warmSteps.empty())
-        TC_LOG_INFO("server.playerbots", "Playerbots: warm-up finished");
+        TC_LOG_INFO("server.playerbots", "Playerbots: warm-up finished ({} pauses after a slow tick)", _warmPauses);
     return true;
 }
 

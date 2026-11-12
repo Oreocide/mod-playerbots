@@ -93,6 +93,8 @@ void Config::Load()
     WarmPlayerPositions = uint32(std::clamp(sConfigMgr->GetIntDefault("Playerbots.Warm.PlayerPositions", 0), 0, 50));
     WarmPin = sConfigMgr->GetBoolDefault("Playerbots.Warm.Pin", true);
     WarmRadius = std::clamp(sConfigMgr->GetFloatDefault("Playerbots.Warm.Radius", 120.0f), 30.0f, 400.0f);
+    WarmSlowTickMs = uint32(std::clamp(sConfigMgr->GetIntDefault("Playerbots.Warm.SlowTickMs", 10000), 0, 300000));
+    WarmBackoffMs = uint32(std::clamp(sConfigMgr->GetIntDefault("Playerbots.Warm.BackoffMs", 10000), 0, 300000));
     RandomCreateUpTo = uint32(std::clamp(sConfigMgr->GetIntDefault("Playerbots.Random.CreateUpTo", 0), 0, 10000));
     FarBotHeightNoGridLoad = sConfigMgr->GetBoolDefault("Playerbots.FarBotHeightNoGridLoad", false);
     FarBotNoVisibilityLoad = sConfigMgr->GetBoolDefault("Playerbots.FarBotNoVisibilityLoad", false);

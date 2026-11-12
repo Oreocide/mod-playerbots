@@ -88,6 +88,8 @@ struct Config
     uint32 WarmPlayerPositions = 0;    // ... and around the last positions of this many real (non-bot) characters, 0 = off
     bool WarmPin = true;               // keep the warmed grids loaded (no unloading after Grid cleanup delay)
     float WarmRadius = 120.0f;         // yards around each warm point whose grids are loaded (3x3 samples at this spacing)
+    uint32 WarmSlowTickMs = 10000;     // a world tick at least this long pauses the warm-up (#37), 0 = never
+    uint32 WarmBackoffMs = 10000;      // ... for this much world time before its next step
     uint32 RandomCreateUpTo = 0;       // keep creating characters in the background (one per Random.CreateDelay, whatever is online) until this many exist; 0 = only to reach Random.Count
     bool FarBotNoVisibilityLoad = false; // a far bot's pending visibility notify is dropped, so the core does not load the grids around it (LoadGridsInRange)
     bool NoVisibilityGridLoad = false; // bot sessions do not make the core load the grids around them for visibility (WorldSession::SetHeadlessLoadsVisibilityGrids)

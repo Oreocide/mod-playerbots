@@ -662,6 +662,17 @@ Playerbots.Warm.Hubs = 0
 Playerbots.Warm.PlayerPositions = 0
 Playerbots.Warm.Pin = 1
 Playerbots.Warm.Radius = 120
+
+#
+#    Playerbots.Warm.SlowTickMs
+#    Playerbots.Warm.BackoffMs
+#        Description: The warm-up runs on the world thread, and one step can take long: creating Eastern Kingdoms read the disk for 18-31 s on a quiet
+#                     host. After a world tick of SlowTickMs or more (a slow step, or a busy disk) the next step waits BackoffMs of world time, so
+#                     the world ticks and other disk users get their reads before the next one. Steps stacking up during a disk stall held one
+#                     tick past MaxCoreStuckTime and the freeze watchdog aborted the server (#37). 0 = never pause. Default: 10000 / 10000
+
+Playerbots.Warm.SlowTickMs = 10000
+Playerbots.Warm.BackoffMs = 10000
 Playerbots.ManagerSliceMs = 0
 Playerbots.SimVerdictCacheMs = 0
 Playerbots.FrozenTickMs = 0
