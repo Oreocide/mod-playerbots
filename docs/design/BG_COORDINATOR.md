@@ -912,16 +912,25 @@ Defenders (Hold tasks, `BgRules::Spread` over the hold values) at the seeded sha
     - The squad formed at about 360 s and stages at the Galvangar rally, 104 yd from the boss (`min 8`, `timeout 60 s`).
     - Its bots walked up to 1,221 yd to the rally and waited there 48-68 s ("gathering need 8"). It charged at about 520 s (5 of 11 at the boss at 525 s), then regrouped after a death and gathered again.
     - So captain squads do wait at the existing rally and min values.
-    - Match 3's trace (C) covers only 361-392 s: the squad was no longer offered after 390 s, cause not yet read.
+    - Match 3's trace (C) covers only 361-392 s: the squad was no longer offered after 390 s.
+    - **Why (read 2026-11-11):** the fill starved it. The Take tasks scored higher and took the free attackers first, so the squad stayed under `Squad.MinTake`; pass 3 dissolved it, and after its 60 s cooldown the same happened again. Fix 69c7fc4 (`Squad.FillFirst`, pass 1b in `BgTaskRules.h`): an offered squad gets its staging minimum from the nearest free bots before the Take tasks fill, or none when too few are free. `TestSquadFirst` reproduces the starvation (squad 0 without the pass, 8 with it). It is live since the 16:11 boot and not yet tested in a match.
     - Captain squads at the boss: C match 1 reached 7-8, N match 4 reached 5, the other two reached 0. No clear effect of option a on them (Low).
   - **Open:**
     - the Horde side (Icewing, and Stonehearth before 240 s in match 1);
-    - why match 3's captain squad dropped;
     - the creature pulls at the towers;
     - the fallback share, which waits.
     - More pairs are needed before any pass is claimed (8 of 10 per team).
   - It ends the run on a new worldserver segfault in dmesg. Writing an 11 GB core keeps the dying process "running" for about 9 minutes.
-- **Sample:** arm A 4 matches, arm C 4, arm B 1. No pass or fail is claimed.
+- **Captain-squad window (2026-11-11 17:50-18:32, `runs/2026-11-11_1751_av_C_squad`):** arm C, 2 matches of 12 min, seeds 501-502, trace Galvangar (match 1) and Balinda (match 2); the binary has 69c7fc4.
+  - **Even teams:** 28 against 28 in match 1 (19 + 9 Alliance, 21 + 7 Horde at 61 s), so `Test.Balance` caps at the smaller team.
+  - **The squads stay offered and staffed (the fix works):** Galvangar 8-13 assigned and Balinda 8-12 in every 60 s row from 360 s (300 s) to the end of both matches. Before 69c7fc4, match 3's squad dropped out of the offer after 390 s (above).
+  - **Each traced squad charged** (criterion 3's event; read from the 1 s trace, because the 60 s rows fall between the charges and show 0 at the boss):
+    - Galvangar, match 1: gathered at 360 s, restarted at about 435 s with too few present, formed again at 601 s, charged at about 730 s, and was within 18-25 yd of the boss at 735-748 s.
+    - Balinda, match 2: formed at 287 s, charged at 346 s, fought at 350-390 s (traced bots 25-40 yd from the boss), and had bots 34-40 yd from it again at 780-885 s.
+  - **Why few arrive:** the squad's bots come from all over the map (traced members 190-1,150 yd away at the charge), and some stop on the way. Horde squad bots Zargron (375-465 s) and Altherion stood 203 yd from Balinda at Stonehearth Bunker, `travel yes`, picking and attacking Commander Randolph 15 yd off without ever entering combat: the creature-pull path (`FindNearbyEnemy`), which option a leaves alone (the open "creature pulls at the towers" item).
+  - Criterion 2 met 1 of 4 team-matches here; captains are not scored by it.
+- **Runner speed (2026-11-11 18:40):** every console call used to run to `wscmd.py`'s 30 s cap, because 80 bots keep the console printing and its quiet-wait never ended. Samples were 80-99 s apart, a match took 96 s to stop and ran 59-66 s past its opening. `wscmd.py --done` ends each read at the console's answer to a marker command (0.7 s for three commands on an idle console; the loaded figure comes from the next window's sample spacing). The runner uses it, its start delay is now 20 s, and its start and drain loops are bounded by time (8 and 5 min), since tries got faster. What is measured does not change: play time is still the server's `GetInProgressDuration`, and the metrics are the same lines. One effect to note: the stop now lands within about 30 s of `--opening` instead of 59-66 s past it, so the same `--opening` gives about 50 s less play than the windows before. Match 1's Galvangar charge at about 730 s fell in that overshoot, so compare windows by play time, and use `--opening 14` for the next captain-squad run. The preparation was not shortened, because `GetInProgressDuration` subtracts the fixed 2 minutes (`Battleground.h:285`).
+- **Sample:** arm A 4 matches, arm C 6, arm B 1. No pass or fail is claimed.
 
 ### 5.4 Unit tests (`tests/bg_rules_test.cpp`, run by `tests/run_engine_test.sh`; both exist)
 - **Score and fill:**
