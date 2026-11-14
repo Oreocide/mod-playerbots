@@ -136,6 +136,7 @@ void Config::Load()
     TravelYards = real("Playerbots.Bg.Travel.Yards", 60.0f, 10.0f, 300.0f);
     SquadFillFirst = sConfigMgr->GetBoolDefault("Playerbots.Bg.Squad.FillFirst", true);
     TestBalance = sConfigMgr->GetBoolDefault("Playerbots.Bg.Test.Balance", true);
+    AdvanceUnplanned = sConfigMgr->GetBoolDefault("Playerbots.Bg.Advance.Unplanned", true);
 
     if (Planner && !sPlayerbotsConfig.BgObjectives)
         TC_LOG_WARN("server.playerbots", "Playerbots: Playerbots.Bg.Planner = 1 does nothing while Playerbots.Bg.Objectives = 0");

@@ -17,6 +17,7 @@
 
 #include "GenericStrategies.h"
 #include "Battleground/BgPlay.h"
+#include "Battleground/BgConfig.h"
 #include "Combat/GroupCombat.h"
 #include "Dungeon/EncounterKit.h"
 #include "Economy/PotionRules.h"
@@ -44,6 +45,7 @@
 #include "Map.h"
 #include "MotionMaster.h"
 #include "Battleground.h"
+#include "ObjectMgr.h"
 #include "GameObject.h"
 #include "Travel/AirFollow.h"
 #include "World/WorldActionQueue.h"
@@ -1331,6 +1333,41 @@ bool PlayObjective(Player* bot, PlayerbotAI& ai)
     return PlayCapturePoints(bot, ai, ArathiNodes, 5, 3);
 }
 
+/// Playerbots.Bg.Advance.Unplanned: a battleground the planner does not play (Isle of Conquest's keeps stand ~860 yd apart, beyond
+/// the 533 yd battleground visibility, so neither team ever sees the other). With no enemy in sight the bot heads for the middle
+/// between the two start positions, where the teams meet, as a player new to the map follows the crowd to mid; each bot its own spot
+/// within ~20 yd of it. Arrived, it waits there for an enemy to come into sight (FindPvpEnemy)
+bool AdvanceUnplanned(Player* bot)
+{
+    if (!sBgConfig.AdvanceUnplanned || Bg::Plays(bot) || IsObjectiveMap(bot->GetMapId()) || bot->GetTransport() || bot->IsInFlight())
+        return false;
+    // Isle of Conquest (628) and Strand of the Ancients (607) start a team behind closed gameobject gates that the navmesh does not
+    // know: a straight mesh path to the middle would walk through a shut gate, which no player can. Those maps get their own plan
+    if (bot->GetMapId() == 628 || bot->GetMapId() == 607)
+        return false;
+    Battleground* bg = bot->GetBattleground();
+    if (!bg || !bg->isBattleground() || bg->GetStatus() != STATUS_IN_PROGRESS)
+        return false;
+    WorldSafeLocsEntry const* alliance = bg->GetTeamStartPosition(TEAM_ALLIANCE);
+    WorldSafeLocsEntry const* horde = bg->GetTeamStartPosition(TEAM_HORDE);
+    if (!alliance || !horde || alliance->Loc.GetMapId() != bot->GetMapId() || horde->Loc.GetMapId() != bot->GetMapId())
+        return false;
+
+    uint64 const counter = bot->GetGUID().GetCounter();
+    float const angle = float(counter % 360) * float(M_PI) / 180.0f;
+    float const radius = 5.0f + float(counter % 16);
+    float const x = (alliance->Loc.GetPositionX() + horde->Loc.GetPositionX()) / 2.0f + radius * std::cos(angle);
+    float const y = (alliance->Loc.GetPositionY() + horde->Loc.GetPositionY()) / 2.0f + radius * std::sin(angle);
+    float const top = std::max(alliance->Loc.GetPositionZ(), horde->Loc.GetPositionZ()) + 50.0f;
+    float const ground = bot->GetMap()->GetHeight(bot->GetPhaseShift(), x, y, top, true, 200.0f);
+    if (ground <= INVALID_HEIGHT)
+        return false;
+    Position const spot(x, y, ground);
+    if (bot->GetExactDist2d(spot) < 15.0f)
+        return false;
+    return PathTo(bot, spot, 10.0f);
+}
+
 class PvpAction : public Action
 {
 public:
@@ -1344,7 +1381,7 @@ public:
 
         Player* enemy = FindPvpEnemy(bot);
         if (!enemy)
-            return false;
+            return AdvanceUnplanned(bot);
 
         BotRole role = ai.GetRole();
         ai.Chase(enemy, role == BotRole::RangedDps || role == BotRole::Healer);

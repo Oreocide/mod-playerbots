@@ -1032,6 +1032,12 @@ Playerbots.Bg.LegYards = 0
 # consumable.
 Playerbots.Bg.Rebuff = 0
 
+# A battleground the planner does not play (not in Playerbots.Bg.Planner.Maps: Temple of Kotmogu, Silvershard Mines, Seething Shore,
+# Deephaul Ravine): a bot with no enemy in sight heads for the middle of the map between the two start positions, where the teams
+# meet, and fights from there, instead of standing at its spawn. Isle of Conquest and Strand of the Ancients never do (a team starts
+# behind closed gates the navmesh does not know). 0 = stand (the old way).
+Playerbots.Bg.Advance.Unplanned = 1
+
 # Move on (planner on). Players do not stand around a node their team is already taking: a capture of ours that is running (Alterac
 # Valley Snowfall while its 4 minute timer runs, an Arathi Basin base under our assault) keeps MoveOn.Guards defenders, and the
 # others who would have stayed there go on to the next objective (after Snowfall, Galvangar). A push whose target stays hopeless

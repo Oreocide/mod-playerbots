@@ -118,6 +118,7 @@ struct Config
     float TravelYards = 60.0f;                              // Travel.Yards: closer than this to the task's objective, the old rules
     bool SquadFillFirst = true;                             // Squad.FillFirst: a captain squad is staffed to its minimum before Take tasks
     bool TestBalance = true;                                // Test.Balance: a .bot bg test match gets as many bots per team as the smaller can field
+    bool AdvanceUnplanned = true;                           // Advance.Unplanned: on a map nobody plans, no enemy in sight: head for the middle
 
     void Load();
     /// Any reactive behaviour is on: the planner builds its picture of the match every plan
