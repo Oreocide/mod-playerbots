@@ -271,10 +271,24 @@ bool DoneBy(BgPlan const& plan, std::string const& key, TeamId team)
             case NodeKind::Burn: return objective.Destroyed && objective.Owner == team;
             case NodeKind::KillCaptain:
             case NodeKind::KillGeneral: return !objective.Alive;
+            case NodeKind::Wall: return objective.Destroyed;
             default: return false;
         }
     }
     return false;
+}
+
+/// A row's "requires" for this team (always met without one). Isle of Conquest's keeps list their own three gates with "1:": the keep
+/// banner can be clicked, and so is worth attacking or holding, only once one of those gates is down (battleground_isle_of_conquest.cpp
+/// OnGateDestroyed takes NOT_SELECTABLE off the banner)
+bool RequiresMet(BgPlan const& plan, NodeDef const& row, TeamId team)
+{
+    if (row.Requires.Keys.empty())
+        return true;
+    uint32 done = 0;
+    for (std::string const& key : row.Requires.Keys)
+        done += DoneBy(plan, key, team) ? 1 : 0;
+    return BgRules::RequirementMet(row.Requires, done);
 }
 
 bool Pushing(BgRules::RallyState state)
@@ -1093,6 +1107,14 @@ void Planner::ReadValley(BgPlan& plan, Map* map, uint32 now)
             objective.Alive = !row.WsAlive || set(row.WsAlive);
             lookup |= objective.Alive && (objective.Boss.IsEmpty() || !map->GetCreature(objective.Boss));
         }
+        else if (row.IsWall())
+        {
+            // Isle of Conquest: a keep gate stands while its "closed" world state is set (isle_of_conquest.h BG_IC_GATE_*_WS_CLOSED);
+            // it belongs to the keep's side
+            objective.Owner = TeamId(BgRules::TeamOfSide(row.Side));
+            objective.Alive = set(row.WsAlive);
+            objective.Destroyed = !objective.Alive;
+        }
         else if (row.IsMine())
         {
             // #13: the owner from its control world states; its boss is the owner's (the mine's own while neutral)
@@ -1163,7 +1185,7 @@ void Planner::PlanValleyTeam(BgPlan& plan, Battleground* bg, Map* map, uint32 te
     {
         NodeDef const& row = rows[i];
         Objective const& objective = plan.Objectives[i];
-        if (!row.IsNode() || objective.Destroyed || row.Weights[team] <= 0.0f)
+        if (!row.IsNode() || objective.Destroyed || row.Weights[team] <= 0.0f || !RequiresMet(plan, row, us))
             continue;
         if (objective.Owner == us || objective.Assaulting == us)
         {
@@ -1220,7 +1242,7 @@ void Planner::PlanValleyTeam(BgPlan& plan, Battleground* bg, Map* map, uint32 te
         switch (row.Kind)
         {
             case NodeKind::Capture:
-                attack = objective.Owner != us && objective.Assaulting != us;
+                attack = objective.Owner != us && objective.Assaulting != us && RequiresMet(plan, row, us);
                 break;
             case NodeKind::Burn:
                 attack = objective.Owner == them && !objective.Destroyed && objective.Assaulting != us;
@@ -1231,10 +1253,17 @@ void Planner::PlanValleyTeam(BgPlan& plan, Battleground* bg, Map* map, uint32 te
                 if (BgRules::TeamOfSide(row.Side) != uint8(them) || !objective.Alive || row.Rally < 0 || force < row.MinGroup)
                     break;
                 uint32 done = 0;
+                bool walled = false;
                 for (std::string const& key : row.Requires.Keys)
+                {
                     done += DoneBy(plan, key, us) ? 1 : 0;
-                // a player who calls the boss leads: the towers need not be down first (#10)
-                attack = softGate || BgRules::RequirementMet(row.Requires, done) || (order && order->Objective == int8(i));
+                    for (NodeDef const& other : rows)
+                        walled |= other.Key == key && other.IsWall();
+                }
+                // a player who calls the boss leads: the towers need not be down first (#10). A boss behind walls (Isle of Conquest:
+                // it only spawns once a gate of its keep is down) waits for the walls whatever the clock or a call says
+                bool met = BgRules::RequirementMet(row.Requires, done);
+                attack = walled ? met : softGate || met || (order && order->Objective == int8(i));
                 break;
             }
             default:

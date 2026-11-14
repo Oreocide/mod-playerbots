@@ -36,7 +36,7 @@ void Config::Load()
     Planner = sConfigMgr->GetBoolDefault("Playerbots.Bg.Planner", false);
 
     PlannerMaps.clear();
-    std::string maps = sConfigMgr->GetStringDefault("Playerbots.Bg.Planner.Maps", "2106,726,2107,761,566,30");
+    std::string maps = sConfigMgr->GetStringDefault("Playerbots.Bg.Planner.Maps", "2106,726,2107,761,566,30,628");
     for (std::string_view token : Trinity::Tokenize(maps, ',', false))
         if (Optional<uint32> map = Trinity::StringTo<uint32>(token))
             PlannerMaps.push_back(*map);
@@ -137,6 +137,7 @@ void Config::Load()
     SquadFillFirst = sConfigMgr->GetBoolDefault("Playerbots.Bg.Squad.FillFirst", true);
     TestBalance = sConfigMgr->GetBoolDefault("Playerbots.Bg.Test.Balance", true);
     AdvanceUnplanned = sConfigMgr->GetBoolDefault("Playerbots.Bg.Advance.Unplanned", true);
+    IsleDrivers = uint32(std::clamp(sConfigMgr->GetIntDefault("Playerbots.Bg.Isle.Drivers", 4), 0, 8));
 
     if (Planner && !sPlayerbotsConfig.BgObjectives)
         TC_LOG_WARN("server.playerbots", "Playerbots: Playerbots.Bg.Planner = 1 does nothing while Playerbots.Bg.Objectives = 0");

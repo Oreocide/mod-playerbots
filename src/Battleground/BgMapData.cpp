@@ -28,7 +28,9 @@ namespace
 // entries from the battleground scripts (battleground_arathi_basin.cpp:116-120, battleground_battle_for_gilneas.cpp:31-33,
 // battleground_eye_of_the_storm.cpp:93-96, battleground_twin_peaks.cpp:50-51); the win scores from the same scripts. Alterac
 // Valley's nodes come from playerbots_bg_node (LoadNodes); its score is the reinforcements (battleground_alterac_valley.cpp
-// AV_WS_ALLIANCE_REINFORCEMENTS 3127, AV_WS_HORDE_REINFORCEMENTS 3128, AV_WS_MAX_REINFORCEMENTS 3136)
+// AV_WS_ALLIANCE_REINFORCEMENTS 3127, AV_WS_HORDE_REINFORCEMENTS 3128, AV_WS_MAX_REINFORCEMENTS 3136). Isle of Conquest plays the same
+// way from its rows: reinforcements 4226/4227, the starting count in 17377 (isle_of_conquest.h BG_IC_ALLIANCE/HORDE_REINFORCEMENTS,
+// BG_IC_MAX_REINFORCEMENTS)
 std::vector<MapDef> Maps =
 {
     { 2106, "Warsong Gulch", MapKind::Flag, {}, { 227741, 227740 }, 3 },
@@ -55,6 +57,7 @@ std::vector<MapDef> Maps =
             { 184083, "Draenei Ruins", 1.0f },
         }, { 208977, 208977 }, 1500 },
     { 30, "Alterac Valley", MapKind::Valley, {}, { 0, 0 }, 0, { 3127, 3128 }, 3136 },
+    { 628, "Isle of Conquest", MapKind::Valley, {}, { 0, 0 }, 0, { 4226, 4227 }, 17377 },
 };
 
 MapDef* Lookup(uint32 mapId)
@@ -71,6 +74,7 @@ bool ParseKind(std::string const& text, NodeKind& kind)
     {
         { "capture", NodeKind::Capture }, { "burn", NodeKind::Burn }, { "kill_captain", NodeKind::KillCaptain },
         { "kill_general", NodeKind::KillGeneral }, { "rally", NodeKind::Rally }, { "gate", NodeKind::Gate }, { "mine", NodeKind::Mine },
+        { "wall", NodeKind::Wall },
     };
     for (auto const& [name, value] : Kinds)
         if (text == name)
@@ -93,6 +97,7 @@ char const* NodeKindName(NodeKind kind)
         case NodeKind::Rally: return "rally";
         case NodeKind::Gate: return "gate";
         case NodeKind::Mine: return "mine";
+        case NodeKind::Wall: return "wall";
     }
     return "?";
 }
@@ -145,7 +150,7 @@ uint32 LoadNodes()
         coordinatorColumns ? ", attack_quota, guards, w_early, w_mid, w_late, ally_value, horde_value" : "").c_str());
     if (!result)
     {
-        TC_LOG_INFO("server.playerbots", "Playerbots: playerbots_bg_node is empty, Alterac Valley is not planned");
+        TC_LOG_INFO("server.playerbots", "Playerbots: playerbots_bg_node is empty, Alterac Valley and Isle of Conquest are not planned");
         return 0;
     }
 

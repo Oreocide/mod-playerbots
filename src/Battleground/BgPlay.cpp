@@ -18,6 +18,7 @@
 #include "Battleground/BgPlay.h"
 #include "Battleground/BgConfig.h"
 #include "Battleground/BgCoordinator.h"
+#include "Battleground/BgIsle.h"
 #include "Battleground/BgMetrics.h"
 #include "Battleground/BgPlanner.h"
 #include "Battleground/BgReact.h"
@@ -114,6 +115,29 @@ static bool GoAlongMesh(Player* bot, Position const& where, float arrive, int8 o
 
 bool Go(Player* bot, Position const& where, float arrive, int8 objective)
 {
+    // Isle of Conquest: the navmesh runs through shut keep gates; out of a sealed keep by its teleporter, in through a broken gate,
+    // round a keep in the way (BgIsle.h)
+    if (bot->GetMapId() == Isle::MapId)
+    {
+        Position waypoint;
+        switch (Isle::Next(bot, where, waypoint))
+        {
+            case Isle::Step::Portal:
+                return true;
+            case Isle::Step::Blocked:
+                if (objective != NoObjective)
+                    sBgPlanner.NoteNoPath(bot, objective);
+                return false;
+            case Isle::Step::Waypoint:
+            {
+                bool moved = GoAlongMesh(bot, waypoint, 1.5f, NoObjective);
+                Metrics::NoteGo(bot, waypoint, !moved);
+                return moved;
+            }
+            default:
+                break;
+        }
+    }
     bool moved = GoAlongMesh(bot, where, arrive, objective);
     Metrics::NoteGo(bot, where, !moved);    // Playerbots.Bg.Trace counts the calls (key off: nothing)
     return moved;
@@ -572,7 +596,8 @@ bool IsBanner(GameObject const* go)
     if (it == banners.end())
     {
         std::string const& script = sObjectMgr->GetScriptName(go->GetScriptId());
-        it = banners.emplace(go->GetEntry(), script == "go_av_capturable_object" || script == "go_av_contested_object").first;
+        it = banners.emplace(go->GetEntry(), script == "go_av_capturable_object" || script == "go_av_contested_object"
+            || script == "go_ioc_capturable_object" || script == "go_ioc_contested_object").first;
     }
     return it->second;
 }
@@ -1270,6 +1295,7 @@ void Register(AiRegistry& registry)
     registry.AddAction<CarrierAction>("bg carrier");
     registry.AddTrigger("bg tether", 0, TetherTrigger);
     registry.AddAction<TetherAction>("bg tether");
+    Isle::Register(registry);
 }
 
 bool Plays(Player const* bot)
@@ -1401,6 +1427,23 @@ bool Play(Player* bot, PlayerbotAI& ai)
         && (job.Style == BgRules::Archetype::Brawler || job.Style == BgRules::Archetype::RoadFighter)
         && Engage(bot, ai, bot->GetPosition(), job.Style == BgRules::Archetype::RoadFighter ? RoadFighterRange : BrawlerRange))
         return true;
+
+    // Isle of Conquest siege (BgIsle.h): an attacker of the team holding the Workshop may drive a Demolisher to the enemy front gate
+    if (bot->GetMapId() == Isle::MapId)
+    {
+        Position walkTo;
+        switch (Isle::Drive(bot, ai, *plan, job, walkTo))
+        {
+            case Isle::DriveStep::Busy:
+                return true;
+            case Isle::DriveStep::Walk:
+                ai.ClearForcedTarget();
+                Go(bot, walkTo, 3.0f, NoObjective);
+                return true;
+            default:
+                break;
+        }
+    }
 
     switch (plan->Def->Kind)
     {

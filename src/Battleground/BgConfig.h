@@ -31,7 +31,7 @@ namespace Playerbots::Bg
 struct Config
 {
     bool Planner = false;                                   // Playerbots.Bg.Planner: the team planner plays the maps below
-    std::vector<uint32> PlannerMaps = { 2106, 726, 2107, 761, 566, 30 };
+    std::vector<uint32> PlannerMaps = { 2106, 726, 2107, 761, 566, 30, 628 };
     uint32 TickMs = 3000;                                   // how often each match is planned again
     uint32 DefendMinPct = 20;                               // each team rolls its defence share in this range per match
     uint32 DefendMaxPct = 40;
@@ -119,6 +119,7 @@ struct Config
     bool SquadFillFirst = true;                             // Squad.FillFirst: a captain squad is staffed to its minimum before Take tasks
     bool TestBalance = true;                                // Test.Balance: a .bot bg test match gets as many bots per team as the smaller can field
     bool AdvanceUnplanned = true;                           // Advance.Unplanned: on a map nobody plans, no enemy in sight: head for the middle
+    uint32 IsleDrivers = 4;                                 // Isle.Drivers: Isle of Conquest Demolisher drivers per team (0: none)
 
     void Load();
     /// Any reactive behaviour is on: the planner builds its picture of the match every plan
