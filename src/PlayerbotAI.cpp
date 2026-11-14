@@ -16,6 +16,7 @@
  */
 
 #include "PlayerbotAI.h"
+#include "Cmd/PartyOrders.h"
 #include "Battleground/BgCoordinator.h"
 #include "Strategies/CustomStrategy.h"
 #include "Travel/PlayerJump.h"
@@ -157,6 +158,13 @@ void PlayerbotAI::RestoreState()
     static constexpr std::string_view Infrastructure[] = { "threat", "wait for attack", "group events" };
     if (std::ranges::none_of(Infrastructure, [this](std::string_view name) { return _engine.HasStrategy(name); }))
         for (std::string_view name : Infrastructure)
+            if (std::unique_ptr<Strategy> strategy = CreateStrategy(name))
+                _engine.AddStrategy(std::move(strategy));
+
+    // the same for the AC parity strategies (mod-playerbots#38): a list saved before they existed gets them all
+    static constexpr std::string_view AcParity[] = { "party quests", "quest items", "party orders", "transports", "social" };
+    if (std::ranges::none_of(AcParity, [this](std::string_view name) { return _engine.HasStrategy(name); }))
+        for (std::string_view name : AcParity)
             if (std::unique_ptr<Strategy> strategy = CreateStrategy(name))
                 _engine.AddStrategy(std::move(strategy));
 }
@@ -1290,7 +1298,7 @@ void PlayerbotAI::Chase(Unit* target, bool ranged)
 
     _bot->GetMotionMaster()->Clear();
     if (ranged)
-        _bot->GetMotionMaster()->MoveChase(target, ChaseRange(0.0f, sPlayerbotsConfig.RangedDistance));
+        _bot->GetMotionMaster()->MoveChase(target, ChaseRange(0.0f, PartyOrders::RangedDistance(*this, sPlayerbotsConfig.RangedDistance)));
     else
         _bot->GetMotionMaster()->MoveChase(target);
     _chaseTarget = target->GetGUID();

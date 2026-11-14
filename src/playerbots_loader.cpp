@@ -20,6 +20,9 @@ void AddSC_playerbots_commandscript();
 void AddSC_playerbots_hotspot();
 void AddSC_playerbots_elevator_sleep();
 void AddSC_playerbots_bg();
+void AddSC_playerbots_acparity();
+void AddSC_playerbots_professions();
+void AddSC_playerbots_social();
 
 void Addmod_playerbotsScripts()
 {
@@ -28,4 +31,7 @@ void Addmod_playerbotsScripts()
     AddSC_playerbots_hotspot();
     AddSC_playerbots_elevator_sleep();
     AddSC_playerbots_bg();
+    AddSC_playerbots_acparity();
+    AddSC_playerbots_professions();
+    AddSC_playerbots_social();
 }

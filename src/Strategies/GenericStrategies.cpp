@@ -48,6 +48,13 @@
 #include "ObjectMgr.h"
 #include "GameObject.h"
 #include "Travel/AirFollow.h"
+#include "Cmd/PartyOrders.h"
+#include "Loot/BotLoot.h"
+#include "Quest/PartyQuests.h"
+#include "Quest/QuestItems.h"
+#include "Travel/BotTransports.h"
+#include "Economy/ProfessionsAi.h"
+#include "Social/SocialAi.h"
 #include "World/WorldActionQueue.h"
 #include "ObjectAccessor.h"
 #include "Player.h"
@@ -809,7 +816,7 @@ public:
         if (!bot->isMoving())
             bot->SetOrientation(bot->GetAbsoluteAngle(target));
 
-        if (role != BotRole::Healer || bot->GetPowerPct(POWER_MANA) > HealerDamageMinMana)
+        if (role != BotRole::Healer || bot->GetPowerPct(POWER_MANA) > PartyOrders::DamageMinMana(ai, HealerDamageMinMana))
         {
             if (useRotation)
             {
@@ -825,6 +832,7 @@ public:
     }
 };
 
+// Replaced by Loot/BotLoot.cpp, which registers its own "loot", "corpse to loot" and "nearest corpse" after these (mod-playerbots#38)
 class LootAction : public Action
 {
 public:
@@ -1788,6 +1796,15 @@ void RegisterGenericAi()
     r.AddStrategy("quest", [](std::string const&) { return CreateQuestStrategy(); });
 
     RegisterChatCommands();
+
+    // AC parity (mod-playerbots#38): after the generic ones, BotLooting replaces "loot", "corpse to loot" and "nearest corpse"
+    BotLooting::Register(r);
+    PartyQuests::Register(r);
+    QuestItems::Register(r);
+    PartyOrders::Register(r);
+    BotTransports::Register(r);
+    Prof::RegisterProfessionsAi(r);
+    Social::RegisterSocialAi(r);
 }
 }
 

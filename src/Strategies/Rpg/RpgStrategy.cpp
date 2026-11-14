@@ -6,7 +6,10 @@
 #include "DBCEnums.h"
 #include "Economy/BotProfessions.h"
 #include "Goal/GoalStore.h"
+#include "Economy/BotCrafting.h"
+#include "Economy/BotGathering.h"
 #include "Economy/GatherNodes.h"
+#include "Economy/ProfessionsConfig.h"
 #include "Engine.h"
 #include "GameObject.h"
 #include "GameTime.h"
@@ -131,7 +134,7 @@ RpgStatus ChooseStatus(PlayerbotAI& ai, uint32 excluded, bool abstractMode)
             return;
         if (status == RpgStatus::Gather && (bot->GetLevel() < 10 || !GatherNodes::Count() || !BotProfessions::CanGather(bot)))
             return;
-        if (status == RpgStatus::Craft && (!InCapital(bot) || !bot->HasSkill(SKILL_BLACKSMITHING)))
+        if (status == RpgStatus::Craft && (sProfConfig.CraftAny ? !Prof::WantsToCraft(bot) : (!InCapital(bot) || !bot->HasSkill(SKILL_BLACKSMITHING))))
             return;
         if (status == RpgStatus::TravelFlight)
         {
@@ -456,7 +459,7 @@ public:
             case RpgStatus::Gather:
                 return DoGather(ai, now);
             case RpgStatus::Craft:
-                return DoCraft(ai, now);
+                return sProfConfig.CraftAny ? Prof::DoCraftAny(ai, now) : DoCraft(ai, now);
             case RpgStatus::DoQuest:
                 return DoQuest(ai, now);
         }
@@ -570,6 +573,27 @@ private:
             bot->CancelMountAura();
         bot->StopMoving();
         bot->SetFacingTo(bot->GetAbsoluteAngle(rpg.Dest.GetPositionX(), rpg.Dest.GetPositionY()));
+
+        // Playerbots.Rpg.GatherReal (Economy/BotGathering, mod-playerbots#38): the node's gathering spell and its loot instead of
+        // the scenery below
+        if (Playerbots::BotGathering::GetConfig().Real)
+        {
+            uint32 castMs = 0;
+            switch (Playerbots::BotGathering::TryGather(bot, rpg.NodeSpawn, castMs))
+            {
+                case Playerbots::BotGathering::GatherResult::Casting:
+                    rpg.Working = true;
+                    rpg.WaitUntil = now + castMs + urand(1500, 3000);
+                    return true;
+                case Playerbots::BotGathering::GatherResult::Gone:
+                    remember(rpg.NodeSpawn);
+                    rpg.HasDest = false;
+                    return true;
+                default:
+                    break;
+            }
+        }
+
         bool herb = bot->HasSkill(SKILL_HERBALISM) && (!bot->HasSkill(SKILL_MINING) || urand(0, 1));
         bot->SetEmoteState(herb ? EMOTE_STATE_KNEEL : EMOTE_STATE_WORK_MINING);
         rpg.Working = true;

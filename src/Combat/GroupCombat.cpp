@@ -29,6 +29,7 @@
 #include "PlayerbotsConfig.h"
 #include "ThreatManager.h"
 #include "Travel/BotMover.h"
+#include "Cmd/PartyOrders.h"
 #include <algorithm>
 #include <cmath>
 #include <unordered_set>
@@ -473,7 +474,7 @@ bool PositionStep(PlayerbotAI& ai, Unit* target)
             }
         }
 
-        float range = std::min(sPlayerbotsConfig.RangedDistance, 30.0f) * 0.9f;
+        float range = std::min(PartyOrders::RangedDistance(ai, sPlayerbotsConfig.RangedDistance), 30.0f) * 0.9f;
         if (stacked && distance <= range + 5.0f)
         {
             int slot = 0, count = 0;

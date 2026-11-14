@@ -16,6 +16,7 @@
  */
 
 #include "RotationRunner.h"
+#include "Cmd/PartyOrders.h"
 #include "DB2Stores.h"
 #include "Group.h"
 #include "CellImpl.h"
@@ -247,6 +248,10 @@ Unit* RotationRunner::ResolveTarget(PlayerbotAI& ai, std::string const& what, Un
                     best = member;
                 return;
             }
+
+            // "focus heal" (Cmd/PartyOrders): a healer told whom to heal leaves the others
+            if (what == "lowest_ally" && !PartyOrders::MayHeal(ai, member))
+                return;
 
             if (!best || member->GetHealthPct() < best->GetHealthPct())
                 best = member;

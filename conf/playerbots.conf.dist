@@ -1533,3 +1533,431 @@ Playerbots.Combat.EscapeUnseen = 0
 #        Default:     0
 
 Playerbots.Dungeon.Enable = 0
+
+###################################################################################################
+# PROFESSIONS, BAGS AND FISHING (AC parity group D, Economy/ProfessionsConfig.h)
+#
+#    Everything here is done only by bots a player can see. Each switch is off by default.
+#
+
+#
+#    Playerbots.Craft.AnyProfession
+#        Description: The rpg "craft" activity uses every production profession the bot has (alchemy,
+#                     blacksmithing, enchanting, engineering, inscription, jewelcrafting, leatherworking,
+#                     tailoring, cooking): it picks a recipe its bags pay for, walks to the station the recipe
+#                     needs (forge, anvil, cooking fire...) or puts down one it can make (a cooking fire), and
+#                     makes it a few times. A blacksmith in a capital with nothing to make still works at a
+#                     forge for show. Off: the old blacksmith-only visit.
+#        Default:     0
+
+Playerbots.Craft.AnyProfession = 0
+
+#
+#    Playerbots.Craft.StationYards
+#        Description: How far a crafting station may be from the bot.
+#        Default:     80
+
+Playerbots.Craft.StationYards = 80
+
+#
+#    Playerbots.Craft.MaxCasts
+#        Description: Items made per crafting visit at most (fewer when the reagents run out).
+#        Default:     3
+
+Playerbots.Craft.MaxCasts = 3
+
+#
+#    Playerbots.Disenchant.Enable
+#        Description: Enchanters disenchant soulbound weapons and armor of uncommon quality or better that they cannot
+#                     use or that are no upgrade over what they wear, and take the materials. Items of an outfit
+#                     (Playerbots.Outfits.Enable) are kept.
+#        Default:     0
+
+Playerbots.Disenchant.Enable = 0
+
+#
+#    Playerbots.Disenchant.IntervalMs
+#        Description: How often a bot looks for something to disenchant.
+#        Default:     60000
+
+Playerbots.Disenchant.IntervalMs = 60000
+
+#
+#    Playerbots.Disenchant.MaxQuality
+#        Description: The best quality a bot disenchants: 2 uncommon, 3 rare, 4 epic.
+#        Default:     4
+
+Playerbots.Disenchant.MaxQuality = 4
+
+#
+#    Playerbots.Enchant.Enable
+#        Description: Enchanters put an enchant they know, and carry the reagents for, on a piece of their own gear
+#                     that has none.
+#        Default:     0
+
+Playerbots.Enchant.Enable = 0
+
+#
+#    Playerbots.Enchant.IntervalMs
+#        Description: How often a bot looks for an enchant to apply.
+#        Default:     300000
+
+Playerbots.Enchant.IntervalMs = 300000
+
+#
+#    Playerbots.Recipes.Enable
+#        Description: A bot that carries a recipe it can learn uses it.
+#        Default:     0
+
+Playerbots.Recipes.Enable = 0
+
+#
+#    Playerbots.Recipes.IntervalMs
+#        Description: How often a bot looks at its bags for recipes.
+#        Default:     60000
+
+Playerbots.Recipes.IntervalMs = 60000
+
+#
+#    Playerbots.Outfits.Enable
+#        Description: The "outfit" order: "outfit save <name>" keeps what the bot wears, "outfit <name>" puts it
+#                     back on (through the game's equipment set handler), "outfit delete <name>", "outfit show
+#                     <name>", "outfit" lists them. Stored per bot in playerbots_db_store.
+#        Default:     0
+
+Playerbots.Outfits.Enable = 0
+
+#
+#    Playerbots.Outfits.Max
+#        Description: Outfits a bot keeps at most (the client's equipment set limit is 20).
+#        Default:     20
+
+Playerbots.Outfits.Max = 20
+
+#
+#    Playerbots.Lockbox.Enable
+#        Description: Lockboxes, clams and other bag items with loot are opened out of combat and their loot taken;
+#                     a rogue picks a locked one first. Also the "open" order.
+#        Default:     0
+
+Playerbots.Lockbox.Enable = 0
+
+#
+#    Playerbots.Lockbox.IntervalMs
+#        Description: How often a bot looks for something to open.
+#        Default:     30000
+
+Playerbots.Lockbox.IntervalMs = 30000
+
+#
+#    Playerbots.Fishing.Enable
+#        Description: A bot with fishing that has an idle moment (resting, wandering, at camp) near water walks to a
+#                     shore, faces the water and fishes a few casts, looting what it catches (pools too). Also the
+#                     "fish" order ("fish stop" ends it).
+#        Default:     0
+
+Playerbots.Fishing.Enable = 0
+
+#
+#    Playerbots.Fishing.WithMaster
+#        Description: A party bot with fishing fishes next to its master while the master fishes.
+#        Default:     0
+
+Playerbots.Fishing.WithMaster = 0
+
+#
+#    Playerbots.Fishing.CheckMs
+#        Description: How often an idle bot considers fishing.
+#        Default:     30000
+
+Playerbots.Fishing.CheckMs = 30000
+
+#
+#    Playerbots.Fishing.ChancePct
+#        Description: The chance that it starts then (when there is a shore near).
+#        Default:     10
+
+Playerbots.Fishing.ChancePct = 10
+
+#
+#    Playerbots.Fishing.SearchYards
+#        Description: How far a bot walks to a shore to fish.
+#        Default:     30
+
+Playerbots.Fishing.SearchYards = 30
+
+#
+#    Playerbots.Fishing.CastsMin
+#    Playerbots.Fishing.CastsMax
+#        Description: Casts per fishing stop of a random bot.
+#        Default:     3, 8
+
+Playerbots.Fishing.CastsMin = 3
+Playerbots.Fishing.CastsMax = 8
+
+###################################################################################################
+# AC PARITY: LOOTING AND PARTY QUESTS (mod-playerbots#38)
+#
+#    Playerbots.Loot.Visible
+#        Description: Loot like a player: walk to the corpse, keep the loot window open for a moment (the
+#                     kneel shows; retail holds it a median 1.0 s), then take the loot and close every loot
+#                     the open put in view (area loot opens all corpses within 30 yards).
+#                     0 = loot from where the bot stands (up to 25 yards), at once.
+#        Default:     0
+
+Playerbots.Loot.Visible = 0
+
+#    Playerbots.Loot.HoldMinMs
+#    Playerbots.Loot.HoldMaxMs
+#        Description: How long the loot window stays open, in milliseconds (rolled between the two).
+#        Default:     500, 2000
+
+Playerbots.Loot.HoldMinMs = 500
+Playerbots.Loot.HoldMaxMs = 2000
+
+#    Playerbots.Loot.InstantPct
+#        Description: Percentage of loots taken at once, like auto loot (retail: about 1 in 10).
+#        Default:     10
+
+Playerbots.Loot.InstantPct = 10
+
+#    Playerbots.Loot.Skin
+#        Description: After looting, skin the corpse (or gather from it with herbalism or mining when the
+#                     creature needs that) if the bot has the skill and knows the spell. Real loot.
+#        Default:     0
+
+Playerbots.Loot.Skin = 0
+
+#    Playerbots.Loot.Chests
+#        Description: Open chests in the open world, shared ones too (a bot can take a chest before a player).
+#                     Never in dungeons or raids, never boss chests. Locked chests: "Opening" for unskilled
+#                     locks, Pick Lock for rogues, the key if the bot carries it.
+#        Default:     0
+
+Playerbots.Loot.Chests = 0
+
+#    Playerbots.Loot.MasterLeash
+#        Description: A party bot leaves loot that lies farther than this many yards from its master.
+#        Default:     30
+
+Playerbots.Loot.MasterLeash = 30
+
+#    Playerbots.Party.QuestSync
+#        Description: Party bots copy their master's quests: when the master takes a quest from an NPC, bots
+#                     near that NPC take it too; when the master hands one in, bots that finished it hand it in
+#                     there (best reward, or the one asked for with "reward <item>"); while the master talks to
+#                     a quest NPC, bots hand in what they finished for it.
+#        Default:     0
+
+Playerbots.Party.QuestSync = 0
+
+#    Playerbots.Party.QuestShare
+#        Description: A bot in a group shares a shareable quest once per group with members near it who do not
+#                     have it and can take it (one quest at a time). The "share" order shares at once.
+#        Default:     0
+
+Playerbots.Party.QuestShare = 0
+
+#    Playerbots.Party.QuestRange
+#        Description: Yards a bot may be from the quest NPC (or the member it shares with).
+#        Default:     30
+
+Playerbots.Party.QuestRange = 30
+
+#    Playerbots.Quest.UseItems
+#        Description: A bot with an unfinished quest uses quest items from its bags on creatures or objects near
+#                     it that the item's spell accepts (AC "use random quest item"); in a fight only on its own
+#                     enemy. Items for self, an area or the ground are never guessed.
+#        Default:     0
+
+Playerbots.Quest.UseItems = 0
+
+#    Playerbots.Transport.Board
+#        Description: Party bots ride along on their master's boat, zeppelin, elevator or tram. Boats and zeppelins
+#                     are boarded only while they wait at the dock: the bot walks the navmesh to the dock edge and
+#                     takes one straight step onto the deck (the allowed exception to mesh-only movement). Aboard it
+#                     stands still; when the master steps off, it steps off too. The "board" order boards at once.
+#        Default:     0
+
+Playerbots.Transport.Board = 0
+###################################################################################################
+# SOCIAL (AzerothCore parity, group C: src/Social/Social*.cpp, docs/design/AC_PARITY.md)
+#
+#    Every behaviour below is off until its Enable key is 1. They run only for bots a player can see
+#    (the "near" tier). The tuning values are AzerothCore's own; each comment names the AC setting.
+#    The orders "trade", "bank", "gb", "mail", "sendmail" and "lfg" are always available to a master.
+#
+#    Playerbots.Social.Channel.Enable
+#        Description: A free random bot posts in General, Trade or LookingForGroup now and then, only while
+#                     a player is in its zone and in that channel: "anyone for [quest]", "LFM <dungeon>",
+#                     "WTS [item] for 3g" (AC SuggestWhatToDoAction, SuggestDungeonAction, SuggestTradeAction).
+#        Default:     0
+#
+#    Playerbots.Social.Channel.CheckMs / .OneIn
+#        Description: The "often" roll: every CheckMs a bot posts with a chance of 1 in OneIn
+#                     (AC AiPlayerbot.RepeatDelay 2000 and the "often" RandomTrigger probability 5).
+#        Default:     2000, 5
+#
+#    Playerbots.Social.Channel.MinGapSec / .ExtraGapSec
+#        Description: After a post the bot waits MinGapSec plus 1..ExtraGapSec seconds (AC: 30 s, urand(1, 60)).
+#        Default:     30, 60
+#
+#    Playerbots.Social.Channel.ChanceQuest / .ChanceSomething / .ChanceInstance / .ChanceSell
+#        Description: Chance of each kind of line out of 30000 (AC AiPlayerbot.BroadcastChanceSuggestQuest,
+#                     ...SuggestSomething, ...SuggestInstance, ...SuggestSell).
+#        Default:     10000, 30000, 5000, 300
+#
+#    Playerbots.Social.Channel.Dungeons
+#        Description: Dungeon lines may be posted (AC AiPlayerbot.RandomBotSuggestDungeons).
+#        Default:     1
+#
+#    Playerbots.Social.Channel.ZoneMinGapMs
+#        Description: At most one bot post per zone, all three channels together, this often (not in AC; 20 s by
+#                     the user's choice of 2026-11-13). 0 = no cap, as AC (each bot posts about every 1-1.5 minutes).
+#        Default:     20000
+#
+#    Playerbots.Social.Channel.Replies
+#        Description: Bots answer a player's "LFG/LFM [quest links]" and "WTB [item links]" lines when they have the
+#                     quest or the item, in the channel or by whisper (AC ChatReplyAction).
+#        Default:     0
+#
+#    Playerbots.Social.Channel.ReplyMaxBots / .ReplyMinDelayMs / .ReplyMaxDelayMs
+#        Description: Bots that answer one line (0 = every bot with a match, as AC) and the typing delay (AC answers at once).
+#        Default:     0, 2000, 8000
+#
+#    Playerbots.Social.Invite.Enable
+#        Description: A free random bot invites a player near it of its level to a group; when the player joins, the bot
+#                     hands over the lead and follows (AC AiPlayerbot.RandomBotGroupNearby + RandomBotInvitePlayer).
+#        Default:     0
+#
+#    Playerbots.Social.Invite.CheckMs / .OneIn / .LevelGap / .Range
+#        Description: AC "often" (2000 ms, 1 in 5), at most 2 levels apart, AiPlayerbot.SightDistance 100.
+#        Default:     2000, 5, 2, 100
+#
+#    Playerbots.Social.Invite.HumanCooldownMs
+#        Description: The same player is invited by any bot at most this often (not in AC; 30 minutes by the
+#                     user's choice of 2026-11-13). 0 = no cooldown, as AC.
+#        Default:     1800000
+#
+#    Playerbots.Social.Invite.Chat
+#        Description: Whisper "Hey <name>, do you want join my group?" with the invite (AC AiPlayerbot.InviteChat).
+#        Default:     0
+#
+#    Playerbots.Social.Invite.PassLead
+#        Description: The bot hands the lead to the player who joined its group.
+#        Default:     1
+#
+#    Playerbots.Social.Duel.Enable
+#        Description: A quarter of the free random bots (StarterPct) challenge players and bots near them where
+#                     duels are allowed; both sides fight the duel to its end (AC "start duel", RpgDuelTrigger).
+#        Default:     0
+#
+#    Playerbots.Social.Duel.CheckMs / .StarterPct / .ChallengePct / .Range / .HumanCooldownMs
+#        Description: AC AiPlayerbot.RpgDelay 10000, "let 25% of free bots start duels", a challenge chance per check
+#                     (AC has none: the duel is one rpg action among many), the search range, a per-player cooldown
+#                     (not in AC; 30 minutes by the user's choice of 2026-11-13; 0 = none, as AC).
+#        Default:     10000, 25, 10, 20, 1800000
+#
+#    Playerbots.Social.Duel.AcceptAnywhere
+#        Description: Accept a duel anywhere at 90% health or more, decline below (AC AcceptDuelAction). With 0 only
+#                     challenges from bots are answered here; the "world" strategy accepts in capitals.
+#        Default:     0
+#
+#    Playerbots.Social.WarMode.Enable
+#        Description: About one bot in OneIn (by guid, level MinLevel or more) turns War Mode on; a bot in a player's
+#                     party mirrors that player. Near a player, a free bot in active War Mode attacks a hostile player
+#                     in active War Mode within Range yards and LevelGap levels.
+#        Default:     0
+#
+#    Playerbots.Social.WarMode.OneIn / .MinLevel / .LevelGap / .Range
+#        Default:     3, 20, 10, 30
+#
+#    Playerbots.Social.Trade.Gift
+#        Description: In a capital, a free bot hands an item it cannot use to a bot near it for which it is an upgrade
+#                     (AC "rpg trade useful"), through a real trade.
+#        Default:     0
+#
+#    Playerbots.Social.Trade.GiftCheckMs / .GiftPct / .GiftRange
+#        Default:     30000, 20, 10
+#
+#    Playerbots.Social.Bank.Enable
+#        Description: A free bot standing at a banker in a capital stores the reagents and trade goods it carries.
+#        Default:     0
+#
+#    Playerbots.Social.Bank.CooldownMs / .BuyTab
+#        Description: Wait between two deposits; buy the first character bank tab when the bot can pay for it.
+#        Default:     600000, 0
+#
+#    Playerbots.Social.GuildBank.Enable
+#        Description: A guilded free bot next to a guild vault in a capital puts DepositPct of its gold over
+#                     KeepCopper in the guild bank.
+#        Default:     0
+#
+#    Playerbots.Social.GuildBank.KeepCopper / .DepositPct
+#        Default:     1000000, 10
+#
+#    Playerbots.Social.MageRefreshments
+#        Description: A mage without food conjures some; in a group with someone near who has none it puts down a
+#                     Refreshment Table, and group members without food take from it (AC "give food" / "give water").
+#        Default:     0
+#
+#    Playerbots.Social.MageRefreshments.CheckMs / .TableRange
+#        Default:     5000, 30
+#
+
+Playerbots.Social.Channel.Enable = 0
+Playerbots.Social.Channel.CheckMs = 2000
+Playerbots.Social.Channel.OneIn = 5
+Playerbots.Social.Channel.MinGapSec = 30
+Playerbots.Social.Channel.ExtraGapSec = 60
+Playerbots.Social.Channel.ChanceQuest = 10000
+Playerbots.Social.Channel.ChanceSomething = 30000
+Playerbots.Social.Channel.ChanceInstance = 5000
+Playerbots.Social.Channel.ChanceSell = 300
+Playerbots.Social.Channel.Dungeons = 1
+Playerbots.Social.Channel.ZoneMinGapMs = 20000
+Playerbots.Social.Channel.Replies = 0
+Playerbots.Social.Channel.ReplyMaxBots = 0
+Playerbots.Social.Channel.ReplyMinDelayMs = 2000
+Playerbots.Social.Channel.ReplyMaxDelayMs = 8000
+Playerbots.Social.Invite.Enable = 0
+Playerbots.Social.Invite.CheckMs = 2000
+Playerbots.Social.Invite.OneIn = 5
+Playerbots.Social.Invite.LevelGap = 2
+Playerbots.Social.Invite.Range = 100
+Playerbots.Social.Invite.HumanCooldownMs = 1800000
+Playerbots.Social.Invite.Chat = 0
+Playerbots.Social.Invite.PassLead = 1
+Playerbots.Social.Duel.Enable = 0
+Playerbots.Social.Duel.CheckMs = 10000
+Playerbots.Social.Duel.StarterPct = 25
+Playerbots.Social.Duel.ChallengePct = 10
+Playerbots.Social.Duel.Range = 20
+Playerbots.Social.Duel.HumanCooldownMs = 1800000
+Playerbots.Social.Duel.AcceptAnywhere = 0
+Playerbots.Social.WarMode.Enable = 0
+Playerbots.Social.WarMode.OneIn = 3
+Playerbots.Social.WarMode.MinLevel = 20
+Playerbots.Social.WarMode.LevelGap = 10
+Playerbots.Social.WarMode.Range = 30
+Playerbots.Social.Trade.Gift = 0
+Playerbots.Social.Trade.GiftCheckMs = 30000
+Playerbots.Social.Trade.GiftPct = 20
+Playerbots.Social.Trade.GiftRange = 10
+Playerbots.Social.Bank.Enable = 0
+Playerbots.Social.Bank.CooldownMs = 600000
+Playerbots.Social.Bank.BuyTab = 0
+Playerbots.Social.GuildBank.Enable = 0
+Playerbots.Social.GuildBank.KeepCopper = 1000000
+Playerbots.Social.GuildBank.DepositPct = 10
+Playerbots.Social.MageRefreshments = 0
+Playerbots.Social.MageRefreshments.CheckMs = 5000
+Playerbots.Social.MageRefreshments.TableRange = 30
+
+#    Playerbots.Rpg.GatherReal
+#        Description: The rpg gather step gathers for real: at the herb or ore node the bot casts the gathering spell and
+#                     takes the loot (modern nodes give every player their own loot up to the node's cap; older ones
+#                     are taken whole, so a bot can take a node before a player). 0 = the bot kneels or mines for show.
+#        Default:     0
+
+Playerbots.Rpg.GatherReal = 0
