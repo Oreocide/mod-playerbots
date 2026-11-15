@@ -19,6 +19,7 @@
 #include "Battleground/BgConfig.h"
 #include "Battleground/BgCoordinator.h"
 #include "Battleground/BgIsle.h"
+#include "Battleground/BgOrbs.h"
 #include "Battleground/BgMetrics.h"
 #include "Battleground/BgPlanner.h"
 #include "Battleground/BgReact.h"
@@ -721,6 +722,30 @@ bool PlayValley(Player* bot, PlayerbotAI& ai, BgPlan const& plan, Assignment con
     return true;
 }
 
+/// Temple of Kotmogu (BgOrbs.h): take a free orb, carry it into the pit, escort our carriers, hunt theirs
+bool PlayOrbs(Player* bot, PlayerbotAI& ai, BgPlan const& plan, Assignment const& job)
+{
+    Orbs::Step step = Orbs::Decide(bot, ai, plan, job);
+    if (!step.Active)
+        return false;
+    if (step.Use)
+    {
+        if (Interact(bot, ai, step.Use))
+            return true;
+    }
+    // healers heal where the step goes (a carrier, the pit), they do not pick fights
+    if (ai.GetRole() == BotRole::Healer)
+        return PlayHealer(bot, plan, job, step.WalkTo);
+    if (!step.Target.IsEmpty())
+        ai.SetForcedTarget(step.Target);
+    else if (step.FightRange > 0.0f && EnemyNear(bot, step.FightAt, step.FightRange))
+        Engage(bot, ai, step.FightAt, step.FightRange);
+    // only the walk to a pedestal is a planner objective: a moving carrier or the pit that fails once must not block the orb
+    if (step.Arrive > 0.0f && bot->GetExactDist2d(step.WalkTo) > step.Arrive)
+        Go(bot, step.WalkTo, step.Arrive, step.ToPedestal ? job.Objective : NoObjective);
+    return true;
+}
+
 /// While the gates are closed: to the team's gate row (a map without one: the bot waits where it stands)
 void WaitAtGate(Player* bot)
 {
@@ -1246,6 +1271,20 @@ bool CarrierGoal(Player* bot, BgPlan const& plan, Position& out, float& arrive, 
 
 bool CarrierTrigger(PlayerbotAI& ai)
 {
+    // Temple of Kotmogu: an orb carrier pulled out of the pit by a fight walks back into it, and a bot sent for a free orb breaks off a
+    // fight away from its pedestal (BgOrbs.h)
+    if (Player* bot = ai.GetBot(); bot->GetMapId() == Orbs::MapId)
+    {
+        Position spot;
+        if (!bot->IsInCombat() || ai.GetMaster() || !Plays(bot))
+            return false;
+        if (Orbs::Carries(bot))
+            return Orbs::CarrierAway(bot, spot);
+        BgPlan const* plan = sBgPlanner.Find(bot->GetMapId(), bot->GetInstanceId());
+        Assignment const* job = CombatJob(ai);
+        GameObject* use = nullptr;
+        return plan && job && Orbs::TakerAway(bot, ai, *plan, *job, spot, use, false);
+    }
     if (!sBgConfig.CarrierPlay)
         return false;
     Assignment const* job = CombatJob(ai);
@@ -1267,6 +1306,27 @@ public:
     bool Execute(PlayerbotAI& ai) override
     {
         Player* bot = ai.GetBot();
+        if (bot->GetMapId() == Orbs::MapId)
+        {
+            Position spot;
+            if (Orbs::Carries(bot))
+            {
+                if (!Orbs::CarrierAway(bot, spot))
+                    return false;
+                ai.ClearForcedTarget();
+                return Go(bot, spot, 2.0f, NoObjective);
+            }
+            BgPlan const* plan = sBgPlanner.Find(bot->GetMapId(), bot->GetInstanceId());
+            Assignment const* job = CombatJob(ai);
+            GameObject* use = nullptr;
+            if (!plan || !job || !Orbs::TakerAway(bot, ai, *plan, *job, spot, use, true))
+                return false;
+            if (use)
+                return Interact(bot, ai, use);
+            ai.ClearForcedTarget();
+            bot->AttackStop();
+            return Go(bot, spot, 1.5f, job->Objective);
+        }
         BgPlan const* plan = sBgPlanner.Find(bot->GetMapId(), bot->GetInstanceId());
         Position goal;
         float arrive = 0.0f;
@@ -1329,6 +1389,9 @@ bool Play(Player* bot, PlayerbotAI& ai)
     // a capture cast is running: stand still, set no target
     if (IsOpening(bot))
         return true;
+    // Temple of Kotmogu: a carrier goes to the pit and stays, whatever the overlays below say (BgOrbs.h)
+    if (bot->GetMapId() == Orbs::MapId && Orbs::Carries(bot))
+        return PlayOrbs(bot, ai, *plan, job);
 
     uint32 now = GameTime::GetGameTimeMS();
     // Bg.Rebuff: back from a graveyard (dead on the last plan, or seen alive again a moment ago), a bot with buffs to give stands for
@@ -1451,6 +1514,7 @@ bool Play(Player* bot, PlayerbotAI& ai)
         case MapKind::Capture: return PlayNode(bot, ai, *plan, job);
         case MapKind::Eye: return PlayEye(bot, ai, *plan, job);
         case MapKind::Valley: return PlayValley(bot, ai, *plan, job);
+        case MapKind::Orbs: return PlayOrbs(bot, ai, *plan, job);
     }
     return false;
 }

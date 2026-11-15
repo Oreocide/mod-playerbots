@@ -285,6 +285,9 @@ void UpdateMountForTravel(Player* bot, float distanceToDest, float mountAtOverri
 {
     if (!bot || bot->IsInCombat() || bot->IsInFlight() || bot->IsBeingTeleported() || !bot->IsAlive())
         return;
+    // a mount would break something the bot carries (a battleground flag or orb, an escort's aura): players walk with it
+    if (!bot->IsMounted() && bot->HasNegativeAuraWithInterruptFlag(SpellAuraInterruptFlags::Mount))
+        return;
 
     // without riding skill a mount cast fails ("not here"); do not scan the spell book on every step for nothing
     if (!bot->IsMounted() && bot->GetSkillValue(SKILL_RIDING) == 0)

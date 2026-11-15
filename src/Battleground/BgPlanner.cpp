@@ -19,6 +19,7 @@
 #include "Battleground/BgConfig.h"
 #include "Battleground/BgCoordinator.h"
 #include "Battleground/BgMetrics.h"
+#include "Battleground/BgOrbs.h"
 #include "Battleground/BgReact.h"
 #include "ActivityMgr.h"
 #include "Battleground/BgTalk.h"
@@ -684,6 +685,9 @@ void Planner::Plan(BgPlan& plan, Battleground* bg, Map* map, uint32 now)
     {
         Discover(plan, map, now);
         ReadState(plan, map);
+        // Temple of Kotmogu: an orb's owner and place come from its world states and its carrier, carried or not (BgOrbs.h)
+        if (plan.Def->Kind == MapKind::Orbs)
+            Orbs::ReadState(plan, map);
     }
 
     std::vector<Player*> members[2];
@@ -914,12 +918,23 @@ void Planner::PlanTeam(BgPlan& plan, Map* map, uint32 team, std::vector<Player*>
             bool retakeA = oa.Owner == us && oa.Assaulting == them, retakeB = ob.Owner == us && ob.Assaulting == them;
             if (retakeA != retakeB)
                 return retakeA;
+            // Temple of Kotmogu: a free orb before one the enemy carries (taking scores, a chase into their escort costs bots)
+            if (kind == MapKind::Orbs && (oa.Owner == TEAM_NEUTRAL) != (ob.Owner == TEAM_NEUTRAL))
+                return oa.Owner == TEAM_NEUTRAL;
             if (allIn && oa.Near[them] != ob.Near[them])
                 return oa.Near[them] < ob.Near[them];
             return centre.GetExactDist2d(oa.Pos) < centre.GetExactDist2d(ob.Pos);
         });
         uint32 wanted = kind == MapKind::Flag ? 1 : std::clamp<uint32>(uint32(attackers.size() + 5) / 6, 1, 2);
         std::vector<int8> picked(candidates.begin(), candidates.begin() + std::min<size_t>(wanted, candidates.size()));
+        // Temple of Kotmogu: two targets are one orb to take and one enemy carrier to hunt, when both exist
+        if (kind == MapKind::Orbs && picked.size() == 2 && plan.Objectives[picked[1]].Owner == TEAM_NEUTRAL)
+            for (int8 candidate : candidates)
+                if (plan.Objectives[candidate].Owner == them)
+                {
+                    picked[1] = candidate;
+                    break;
+                }
         if (picked != teamPlan.AttackTargets)
             ++changed;
         teamPlan.AttackTargets = std::move(picked);

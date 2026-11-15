@@ -984,9 +984,9 @@ Playerbots.World.Reactions = 0
 # Off: the pilot objective code plays these maps as before. ".bot bg" shows the plan.
 # Planner.Maps: Warsong Gulch 2106, Twin Peaks 726, Arathi Basin 2107, Battle for Gilneas 761, Eye of the Storm 566,
 # Alterac Valley 30, Isle of Conquest 628 (their objective graphs are the world table playerbots_bg_node; without rows a map is not
-# planned).
+# planned), Temple of Kotmogu 998 (its four orbs, Battleground/BgOrbs.cpp).
 Playerbots.Bg.Planner = 0
-Playerbots.Bg.Planner.Maps = 2106,726,2107,761,566,30,628
+Playerbots.Bg.Planner.Maps = 2106,726,2107,761,566,30,628,998
 Playerbots.Bg.Planner.TickMs = 3000
 Playerbots.Bg.DefendMinPct = 20
 Playerbots.Bg.DefendMaxPct = 40
@@ -1033,7 +1033,7 @@ Playerbots.Bg.LegYards = 0
 # consumable.
 Playerbots.Bg.Rebuff = 0
 
-# A battleground the planner does not play (not in Playerbots.Bg.Planner.Maps: Temple of Kotmogu, Silvershard Mines, Seething Shore,
+# A battleground the planner does not play (not in Playerbots.Bg.Planner.Maps: Silvershard Mines, Seething Shore,
 # Deephaul Ravine): a bot with no enemy in sight heads for the middle of the map between the two start positions, where the teams
 # meet, and fights from there, instead of standing at its spawn. Isle of Conquest and Strand of the Ancients never do (a team starts
 # behind closed gates the navmesh does not know). 0 = stand (the old way).

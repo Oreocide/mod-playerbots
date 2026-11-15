@@ -56,6 +56,14 @@ std::vector<MapDef> Maps =
             { 184082, "Mage Tower", 1.0f },
             { 184083, "Draenei Ruins", 1.0f },
         }, { 208977, 208977 }, 1500 },
+    // the orbs as code-table nodes: an orb belongs to the team carrying it (BgOrbs.cpp reads its world states and carrier)
+    { 998, "Temple of Kotmogu", MapKind::Orbs,
+        {
+            { 212091, "Blue Orb", 1.0f },
+            { 212094, "Orange Orb", 1.0f },
+            { 212093, "Green Orb", 1.0f },
+            { 212092, "Purple Orb", 1.0f },
+        }, { 0, 0 }, 1500 },
     { 30, "Alterac Valley", MapKind::Valley, {}, { 0, 0 }, 0, { 3127, 3128 }, 3136 },
     { 628, "Isle of Conquest", MapKind::Valley, {}, { 0, 0 }, 0, { 4226, 4227 }, 17377 },
 };
