@@ -15,6 +15,7 @@
  * with this program. If not, see <http://www.gnu.org/licenses/>.
  */
 
+#include "Cmd/PartyOrders.h"
 #include "Economy/BotGathering.h"
 #include "Loot/BotLoot.h"
 #include "Quest/PartyQuests.h"
@@ -36,6 +37,7 @@ public:
         Playerbots::PartyQuests::LoadConfig();
         Playerbots::QuestItems::LoadConfig();
         Playerbots::BotTransports::LoadConfig();
+        Playerbots::PartyOrders::LoadConfig();
         Playerbots::BotGathering::LoadConfig();
     }
 
@@ -43,6 +45,7 @@ public:
     {
         Playerbots::BotLooting::OnStartup();
         Playerbots::BotGathering::OnStartup();
+        Playerbots::BotTransports::OnStartup();
     }
 };
 

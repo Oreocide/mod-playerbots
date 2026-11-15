@@ -17,6 +17,8 @@
 
 #include "PlayerbotAI.h"
 #include "Cmd/PartyOrders.h"
+#include "Loot/BotLoot.h"
+#include "Travel/BotTransports.h"
 #include "Battleground/BgCoordinator.h"
 #include "Strategies/CustomStrategy.h"
 #include "Travel/PlayerJump.h"
@@ -105,6 +107,7 @@ PlayerbotAI::~PlayerbotAI()
 {
     GoalStore::Forget(_botGuid);
     AirFollow::Forget(_botGuid);
+    BotTransports::ForgetRide(_botGuid);
     SaveState();
 }
 
@@ -129,6 +132,10 @@ void PlayerbotAI::RestoreState()
 {
     if (_master.IsEmpty())
         return;
+
+    // the "ll" loot filter and the party orders are kept the same way (AC parity, mod-playerbots#38)
+    BotLooting::RestoreState(*this);
+    PartyOrders::RestoreState(*this);
 
     Optional<std::string> saved = sPlayerbotRepository->GetValue(_botGuid, "strategies");
     if (!saved)

@@ -38,6 +38,7 @@
 #include "MoveSplineInit.h"
 #include "NavSnap.h"
 #include "TravelMgr.h"
+#include "Travel/BotTransports.h"
 #include <algorithm>
 #include <cmath>
 
@@ -498,11 +499,29 @@ RouteStatus RouteFollower::StepTransport(PlayerbotAI& ai, RouteLeg const& leg)
 
     if (!_waitUntil)
     {
-        if (bot->GetMapId() != dock.Map || bot->GetExactDist2d(Position(dock.X, dock.Y, dock.Z)) > NodeArrive)
+        bool atDock = bot->GetMapId() == dock.Map && bot->GetExactDist2d(Position(dock.X, dock.Y, dock.Z)) <= NodeArrive;
+        float seconds = std::clamp(leg.Seconds, 15.0f, float(sPlayerbotsConfig.TravelHopMaxSeconds));
+
+        // Playerbots.Transport.RideAlone: a bot a human can see rides the boat for real (Travel/BotTransports); NotMine = the dock wait
+        if (atDock || BotTransports::IsRiding(bot->GetGUID()))
+        {
+            WorldLocation from(dock.Map, dock.X, dock.Y, dock.Z);
+            WorldLocation to(other.Map, other.X, other.Y, other.Z);
+            switch (BotTransports::RideAlone(ai, leg.Ref, from, to, uint32(seconds * 1000.0f)))
+            {
+                case BotTransports::RideStep::Running:
+                    return RouteStatus::Running;
+                case BotTransports::RideStep::Arrived:
+                    return RouteStatus::Arrived;
+                case BotTransports::RideStep::NotMine:
+                    break;
+            }
+        }
+
+        if (!atDock)
             return WalkTo(ai, { dock.Map, dock.X, dock.Y, dock.Z }, NodeArrive - 2.0f, false);
 
         // at the dock: the trip takes as long as the transport does, within the hop limits
-        float seconds = std::clamp(leg.Seconds, 15.0f, float(sPlayerbotsConfig.TravelHopMaxSeconds));
         _waitUntil = now + uint32(seconds * 1000.0f);
         bot->GetMotionMaster()->Clear();
         bot->StopMoving();

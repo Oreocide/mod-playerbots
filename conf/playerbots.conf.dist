@@ -1813,6 +1813,32 @@ Playerbots.Quest.UseItems = 0
 #        Default:     0
 
 Playerbots.Transport.Board = 0
+
+#    Playerbots.Party.KeepOrders
+#        Description: A player's bot keeps its party orders (formation, range, rti, focus heal, save mana, named
+#                     spots) and its "ll" loot filter across logouts, like its strategies (AC keeps them too, in
+#                     playerbots_db_store). Holding a spot and a pending taxi are not kept. Off: they last until the
+#                     bot logs out. Random bots never keep them.
+#        Default:     0
+
+Playerbots.Party.KeepOrders = 0
+
+#    Playerbots.Transport.RideAlone
+#        Description: A random bot whose route crosses a boat or zeppelin rides it for real while a human can see it
+#                     (not in AC): it waits on the pier by the transport's stop, walks to it while the transport is
+#                     docked there and takes one straight step onto the deck, and at the far dock one straight step
+#                     back to the pier (each at most 30 yd, the only moves off the navmesh), then walks on. Off, and
+#                     for far bots, the route waits out the trip at the dock and puts the bot at the other dock.
+#        Default:     0
+
+Playerbots.Transport.RideAlone = 0
+
+#    Playerbots.Transport.RideTestBots
+#        Description: Test knob: comma-separated bot names that ride alone even with no human near (headless checks,
+#                     with ".bot air fly <name> <node id>" to send one over the sea). Every ride step logs a line.
+#        Default:     "" (none)
+
+Playerbots.Transport.RideTestBots = ""
 ###################################################################################################
 # SOCIAL (AzerothCore parity, group C: src/Social/Social*.cpp, docs/design/AC_PARITY.md)
 #

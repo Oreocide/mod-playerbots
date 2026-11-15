@@ -21,9 +21,11 @@
 #include "Cmd/ChatCommands.h"
 #include "Cmd/ChatParser.h"
 #include "Cmd/CommandText.h"
+#include "Cmd/PartyOrders.h"
 #include "Config.h"
 #include "Creature.h"
 #include "DB2Stores.h"
+#include "Db/PlayerbotRepository.h"
 #include "GameObject.h"
 #include "GameTime.h"
 #include "GridNotifiersImpl.h"
@@ -41,6 +43,8 @@
 #include "Random.h"
 #include "SpellInfo.h"
 #include "SpellMgr.h"
+#include "StringConvert.h"
+#include "Util.h"
 #include "Travel/MoveToward.h"
 #include "World/WorldActionQueue.h"
 #include "WorldSession.h"
@@ -762,6 +766,59 @@ public:
 
 // ---- "ll" order ----
 
+// A player's bot keeps its loot filter across logouts like its strategies, in playerbots_db_store "loot filter" =
+// "mode;always ids;never ids". The value holds 255 characters: past that the oldest ids are left out of the stored copy
+constexpr size_t MaxStoreValue = 255;
+
+std::string PrefsText(LootPrefs const& prefs)
+{
+    if (prefs.Mode == FilterMode::All && prefs.Always.empty() && prefs.Never.empty())
+        return {};
+    std::string text = std::to_string(uint32(prefs.Mode));
+    size_t budget = MaxStoreValue - text.size() - 2;
+    // the newest ids first into the budget, then written in their own order
+    auto join = [&budget](std::vector<uint32> const& ids)
+    {
+        std::vector<std::string> kept;
+        for (auto itr = ids.rbegin(); itr != ids.rend(); ++itr)
+        {
+            std::string id = std::to_string(*itr);
+            size_t cost = id.size() + (kept.empty() ? 0 : 1);
+            if (cost > budget)
+                break;
+            budget -= cost;
+            kept.push_back(std::move(id));
+        }
+        std::string out;
+        for (auto itr = kept.rbegin(); itr != kept.rend(); ++itr)
+            out += (out.empty() ? "" : ",") + *itr;
+        return out;
+    };
+    std::string always = join(prefs.Always);
+    std::string never = join(prefs.Never);
+    return text + ";" + always + ";" + never;
+}
+
+void PersistPrefs(PlayerbotAI& ai, LootPrefs const& prefs)
+{
+    if (!PartyOrders::KeepAcrossLogout() || ai.GetMasterGuid().IsEmpty())
+        return;
+    std::string text = PrefsText(prefs);
+    if (text.empty())
+        sPlayerbotRepository->EraseValue(ai.GetBot()->GetGUID(), "loot filter");
+    else
+        sPlayerbotRepository->SetValue(ai.GetBot()->GetGUID(), "loot filter", text);
+}
+
+std::vector<uint32> ParseIds(std::string_view text)
+{
+    std::vector<uint32> ids;
+    for (std::string_view part : Trinity::Tokenize(text, ',', false))
+        if (Optional<uint32> id = Trinity::StringTo<uint32>(part); id && *id)
+            ids.push_back(*id);
+    return ids;
+}
+
 std::string DescribePrefs(LootPrefs const& prefs)
 {
     std::string text = std::string("Loot: ") + ModeName(prefs.Mode);
@@ -823,6 +880,7 @@ bool LootListCommand(PlayerbotAI& ai, std::string const& param)
     }
 
     value->Set(prefs);
+    PersistPrefs(ai, prefs);
     ai.TellMaster(DescribePrefs(prefs));
     return true;
 }
@@ -856,6 +914,26 @@ void AddOrder(AiRegistry& registry, char const* name, char const* help, OrderAct
 Config const& GetConfig()
 {
     return sConfig;
+}
+
+void RestoreState(PlayerbotAI& ai)
+{
+    if (!PartyOrders::KeepAcrossLogout() || ai.GetMasterGuid().IsEmpty())
+        return;
+    Optional<std::string> text = sPlayerbotRepository->GetValue(ai.GetBot()->GetGUID(), "loot filter");
+    if (!text)
+        return;
+    std::vector<std::string_view> parts = Trinity::Tokenize(*text, ';', true);
+    Optional<uint32> mode = parts.empty() ? Optional<uint32>{} : Trinity::StringTo<uint32>(parts[0]);
+    if (!mode || *mode > uint32(FilterMode::Skill))
+        return;
+    LootPrefs prefs;
+    prefs.Mode = FilterMode(*mode);
+    if (parts.size() > 1)
+        prefs.Always = ParseIds(parts[1]);
+    if (parts.size() > 2)
+        prefs.Never = ParseIds(parts[2]);
+    ai.GetContext().SetValue<LootPrefs>("loot prefs", std::move(prefs));
 }
 
 void LoadConfig()

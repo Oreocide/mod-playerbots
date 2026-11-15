@@ -30,8 +30,8 @@ class PlayerbotAI;
 
 /// Orders a master gives party bots in chat (AC parity, mod-playerbots#38): formation, range, rti, focus heal, save mana, position
 /// (AC "rtsc": spots are taken from where the master stands, not from a click), taxi, los, reputation. Each order is per bot and
-/// lasts until changed or the bot logs out. The hooks below are what the follow, chase and heal code ask; every one returns the
-/// unchanged default while no order was given.
+/// lasts until changed; with Playerbots.Party.KeepOrders a player's bot keeps them across logouts (RestoreState). The hooks
+/// below are what the follow, chase and heal code ask; every one returns the unchanged default while no order was given.
 namespace Playerbots::PartyOrders
 {
 /// PlayerbotAI::Follow: the standoff and angle for this bot's place in the formation. false = the default spread
@@ -46,6 +46,12 @@ float HealThreshold(PlayerbotAI& ai, float configured);
 float DamageMinMana(PlayerbotAI& ai, float configured);
 /// Raid icon mask from "rti <icons>" (RaidIconRules bit = icon index), 0 = the Playerbots.Combat.Icon.* default
 uint32 RtiMask(PlayerbotAI& ai);
+/// PlayerbotAI::RestoreState: a player's bot gets back the formation, range, rti, focus heal, save mana and named spots it
+/// had at its last logout (AC keeps them in playerbots_db_store too). Holding a spot and a pending taxi are not kept
+void RestoreState(PlayerbotAI& ai);
+/// Playerbots.Party.KeepOrders: orders and the "ll" loot filter are kept across logouts (off: they last until the logout)
+bool KeepAcrossLogout();
+void LoadConfig();
 
 void Register(AiRegistry& registry);
 }

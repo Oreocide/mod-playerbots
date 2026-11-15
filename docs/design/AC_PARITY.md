@@ -67,7 +67,26 @@ reagent-free spell of that lock type) and the loot watcher takes the loot; a nod
 `Social.Invite.*` + `lfg`, `Social.Duel.*`, `Social.WarMode.*`, `Social.Trade.Gift` + `trade`, `Social.Bank.*` + `bank`,
 `Social.GuildBank.*` + `gb`, `mail`/`sendmail`, `Social.MageRefreshments`. AC sources of each rate are in the conf block.
 
+## Added after the first commit (2026-11-14, both keys default 0)
+
+- `Party.KeepOrders`: a player's bot keeps its party orders (formation, range, rti, focus heal, save mana, named spots)
+  and its `ll` loot filter across logouts, in `playerbots_db_store` (keys `orders`, `spots`, `spot:<name>`,
+  `loot filter`; 255-character values, so very long item lists keep their newest ids). Holding a spot and a pending
+  taxi are not kept.
+- `Transport.RideAlone`: a random bot whose route crosses a boat or zeppelin rides it for real while a human can see it
+  (`BotTransports::RideAlone`, called from `RouteFollower::StepTransport`). It waits on the pier by the transport's stop
+  (the nearest ground navmesh point within 30 yd; the stops and their pauses come from the transport's path, because
+  `Transport::IsStopped` is set only for transports that can be told to stop). While the transport is paused there, the
+  bot walks the mesh to that pier point and takes one straight step onto the deck (the hull floor under the transport's
+  position). It stands still aboard (the `ride transport` action), and at the far dock it takes one straight step back to
+  the nearest pier point and walks on along the mesh. These two steps, at most 30 yd, are the only moves off the
+  navmesh. With no pier point within reach it swims the mesh to the hull instead. Far bots, a transport that does not
+  come within the trip's time, and a boarding with no path keep the dock wait (that transport is declined for twice the
+  trip). It never teleports in front of a human. Verified headless on Stormwind's Pride (Stormwind Harbor to Valiance
+  Keep and back, 2026-11-15).
+- The same pause check now decides when a party bot may board with its master (`Playerbots.Transport.Board`): it used
+  `IsStopped`, so boats and zeppelins never counted as docked.
+
 ## Not covered
 
-Master loot, random bots riding boats outside a party, loot filter and
-order settings kept across logouts.
+Master loot: the 12.1 client has personal loot only.

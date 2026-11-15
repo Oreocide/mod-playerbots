@@ -23,6 +23,7 @@
 namespace Playerbots
 {
 class AiRegistry;
+class PlayerbotAI;
 }
 
 /// Looting like a player (AC parity, mod-playerbots#38): walk to the corpse, keep the loot window open for a moment so the
@@ -46,6 +47,9 @@ Config const& GetConfig();
 void LoadConfig();
 /// World thread, after the spell store is loaded: finds the spells that open unskilled locks ("Opening")
 void OnStartup();
+
+/// PlayerbotAI::RestoreState: a player's bot gets back the "ll" loot filter it had at its last logout (playerbots_db_store)
+void RestoreState(PlayerbotAI& ai);
 
 void Register(AiRegistry& registry);
 }

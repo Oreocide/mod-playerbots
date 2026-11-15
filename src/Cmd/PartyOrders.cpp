@@ -21,7 +21,9 @@
 #include "Cmd/ChatCommands.h"
 #include "Cmd/ChatParser.h"
 #include "Cmd/CommandText.h"
+#include "Config.h"
 #include "Creature.h"
+#include "Db/PlayerbotRepository.h"
 #include "DB2Stores.h"
 #include "GameObject.h"
 #include "GameTime.h"
@@ -32,6 +34,7 @@
 #include "Player.h"
 #include "PlayerbotAI.h"
 #include "ReputationMgr.h"
+#include "StringConvert.h"
 #include "StringFormat.h"
 #include "Strategies/GenericStrategies.h"
 #include "Travel/MoveToward.h"
@@ -117,12 +120,113 @@ Settings GetSettings(PlayerbotAI& ai)
     return value ? value->Ref() : Settings{};
 }
 
+// ---- kept across logouts ----
+// A player's bot keeps its orders like its strategies (PlayerbotAI::SaveState), in playerbots_db_store: "orders" =
+// "formation,range,save mana,rti;focus heal player counters", "spots" = the spot names, "spot:<name>" = "map x y z o".
+// The key column holds 32 characters and the value 255: a longer spot name, or a spot past what "spots" can list, stays
+// for this session only.
+constexpr size_t MaxSpotName = 27;      // "spot:" + name
+constexpr size_t MaxStoreValue = 255;
+
+bool sKeepOrders = false;  // Playerbots.Party.KeepOrders
+
+bool KeepsOrders(PlayerbotAI const& ai)
+{
+    return sKeepOrders && !ai.GetMasterGuid().IsEmpty();
+}
+
+std::string OrdersText(Settings const& settings)
+{
+    if (settings.Form == Formation::Near && settings.Range <= 0.0f && settings.FocusHeal.empty() && !settings.SaveMana && !settings.Rti)
+        return {};
+    std::string text = Trinity::StringFormat("{},{:.1f},{},{};", uint32(settings.Form), settings.Range, uint32(settings.SaveMana), settings.Rti);
+    bool first = true;
+    for (ObjectGuid guid : settings.FocusHeal)
+    {
+        if (!guid.IsPlayer())
+            continue;
+        std::string next = (first ? "" : ",") + std::to_string(guid.GetCounter());
+        if (text.size() + next.size() > MaxStoreValue)
+            break;
+        text += next;
+        first = false;
+    }
+    return text;
+}
+
+/// The spots that are kept: a short enough name, as many as the "spots" value lists
+std::vector<std::string> KeptSpots(Settings const& settings)
+{
+    std::vector<std::string> names;
+    size_t length = 0;
+    for (auto const& [name, spot] : settings.Spots)
+    {
+        if (name.empty() || name.size() > MaxSpotName || name.find(',') != std::string::npos)
+            continue;
+        if (length + name.size() + (names.empty() ? 0 : 1) > MaxStoreValue)
+            break;
+        length += name.size() + (names.empty() ? 0 : 1);
+        names.push_back(name);
+    }
+    return names;
+}
+
+std::string SpotText(NamedSpot const& spot)
+{
+    return Trinity::StringFormat("{} {:.3f} {:.3f} {:.3f} {:.3f}", spot.MapId, spot.Pos.GetPositionX(), spot.Pos.GetPositionY(),
+        spot.Pos.GetPositionZ(), spot.Pos.GetOrientation());
+}
+
+/// Writes what changed between two settings of a player's bot (the stores are asynchronous)
+void Persist(PlayerbotAI& ai, Settings const& before, Settings const& now)
+{
+    if (!KeepsOrders(ai))
+        return;
+    ObjectGuid bot = ai.GetBot()->GetGUID();
+
+    std::string orders = OrdersText(now);
+    if (orders != OrdersText(before))
+    {
+        if (orders.empty())
+            sPlayerbotRepository->EraseValue(bot, "orders");
+        else
+            sPlayerbotRepository->SetValue(bot, "orders", orders);
+    }
+
+    std::vector<std::string> keptBefore = KeptSpots(before);
+    std::vector<std::string> keptNow = KeptSpots(now);
+    for (std::string const& name : keptBefore)
+        if (std::ranges::find(keptNow, name) == keptNow.end())
+            sPlayerbotRepository->EraseValue(bot, "spot:" + name);
+    for (std::string const& name : keptNow)
+    {
+        std::string text = SpotText(now.Spots.at(name));
+        auto old = before.Spots.find(name);
+        if (std::ranges::find(keptBefore, name) == keptBefore.end() || old == before.Spots.end() || SpotText(old->second) != text)
+            sPlayerbotRepository->SetValue(bot, "spot:" + name, text);
+    }
+    if (keptNow != keptBefore)
+    {
+        if (keptNow.empty())
+            sPlayerbotRepository->EraseValue(bot, "spots");
+        else
+        {
+            std::string index;
+            for (std::string const& name : keptNow)
+                index += (index.empty() ? "" : ",") + name;
+            sPlayerbotRepository->SetValue(bot, "spots", index);
+        }
+    }
+}
+
 void Store(PlayerbotAI& ai, Settings const& settings)
 {
     if (SettingsValue* value = FindSettings(ai))
     {
+        Settings before = KeepsOrders(ai) ? value->Ref() : Settings{};
         value->Set(settings);
         sAnyOrder.store(true, std::memory_order_relaxed);
+        Persist(ai, before, settings);
     }
 }
 
@@ -692,6 +796,77 @@ float DamageMinMana(PlayerbotAI& ai, float configured)
 uint32 RtiMask(PlayerbotAI& ai)
 {
     return Current(ai).Rti;
+}
+
+bool KeepAcrossLogout()
+{
+    return sKeepOrders;
+}
+
+void LoadConfig()
+{
+    sKeepOrders = sConfigMgr->GetBoolDefault("Playerbots.Party.KeepOrders", false);
+}
+
+void RestoreState(PlayerbotAI& ai)
+{
+    if (!KeepsOrders(ai))
+        return;
+    SettingsValue* value = FindSettings(ai);
+    if (!value)
+        return;
+
+    ObjectGuid bot = ai.GetBot()->GetGUID();
+    Settings settings;
+    bool any = false;
+    if (Optional<std::string> text = sPlayerbotRepository->GetValue(bot, "orders"))
+    {
+        std::vector<std::string_view> parts = Trinity::Tokenize(*text, ';', true);
+        std::vector<std::string_view> head = parts.empty() ? std::vector<std::string_view>{} : Trinity::Tokenize(parts[0], ',', false);
+        if (head.size() == 4)
+        {
+            Optional<uint32> form = Trinity::StringTo<uint32>(head[0]);
+            Optional<float> range = Trinity::StringTo<float>(head[1]);
+            Optional<uint32> mana = Trinity::StringTo<uint32>(head[2]);
+            Optional<uint32> rti = Trinity::StringTo<uint32>(head[3]);
+            if (form && *form <= uint32(Formation::Far))
+                settings.Form = Formation(*form);
+            if (range && *range > 0.0f && *range <= 100.0f)
+                settings.Range = *range;
+            if (mana)
+                settings.SaveMana = uint8(std::min<uint32>(*mana, 5));
+            if (rti)
+                settings.Rti = *rti & 0xFF;
+            if (parts.size() > 1)
+                for (std::string_view counter : Trinity::Tokenize(parts[1], ',', false))
+                    if (Optional<ObjectGuid::LowType> low = Trinity::StringTo<ObjectGuid::LowType>(counter); low && *low)
+                        settings.FocusHeal.push_back(ObjectGuid::Create<HighGuid::Player>(*low));
+            any = true;
+        }
+    }
+
+    if (Optional<std::string> index = sPlayerbotRepository->GetValue(bot, "spots"))
+        for (std::string_view name : Trinity::Tokenize(*index, ',', false))
+        {
+            Optional<std::string> text = sPlayerbotRepository->GetValue(bot, "spot:" + std::string(name));
+            if (!text)
+                continue;
+            std::vector<std::string_view> fields = Trinity::Tokenize(*text, ' ', false);
+            if (fields.size() != 5)
+                continue;
+            Optional<uint32> map = Trinity::StringTo<uint32>(fields[0]);
+            Optional<float> x = Trinity::StringTo<float>(fields[1]);
+            Optional<float> y = Trinity::StringTo<float>(fields[2]);
+            Optional<float> z = Trinity::StringTo<float>(fields[3]);
+            Optional<float> o = Trinity::StringTo<float>(fields[4]);
+            if (map && x && y && z && o)
+                settings.Spots[std::string(name)] = { *map, Position(*x, *y, *z, *o) };
+        }
+
+    if (!any && settings.Spots.empty())
+        return;
+    value->Set(std::move(settings));
+    sAnyOrder.store(true, std::memory_order_relaxed);
 }
 
 void Register(AiRegistry& registry)
