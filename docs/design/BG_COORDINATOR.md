@@ -822,7 +822,7 @@ Defenders (Hold tasks, `BgRules::Spread` over the hold values) at the seeded sha
       - the 11-09 leave and teleport caps (`Bg.LeavePerScan` 6, `FarTeleportsPerTick` 4; uncommitted).
       The caps and the damage hook are on #36's suspect list.
     - **Thread:** battleground bots' AI runs on the world thread (`PlayerbotMgr::TickOtherMapBots`, `PlayerbotsScripts.cpp:104`). So the map-thread crash in #36 is not `BgPlay`; bots that had just left for a continent map, or core map code, are likelier.
-  - **Crash cores:** on since 2026-11-11 08:12 (owner's approval). The host pipe handler writes them to `/home/brandon/trinity-cores` and keeps the newest 3 (`trinitycore-tracking/tools/coredump/README.md`).
+  - **Crash cores:** on since 2026-11-11 08:12 (owner's approval). The host pipe handler writes them to `~/trinity-cores` and keeps the newest 3 (`trinitycore-tracking/tools/coredump/README.md`).
   - **Trace (584eae6):** `Playerbots.Bg.Trace = <node row>` (runner: `--trace tower_point --line-seconds 15`). It writes one line per second for up to 4 bots attacking that node:
     - job and task, position and distance;
     - last action, movement generator and spline target;
