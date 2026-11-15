@@ -1,4 +1,5 @@
 #include "Taxi.h"
+#include "MoveToward.h"
 #include "Creature.h"
 #include "DB2Stores.h"
 #include "ObjectMgr.h"
@@ -42,6 +43,14 @@ bool TryTakeTaxi(Player* bot, Creature* flightMaster, uint32 destNode)
     if (!bot || !flightMaster || bot->IsInFlight() || bot->IsInCombat())
         return false;
 
+    // Playerbots.FarBotStayInLoadedGrids: a flight crosses many grids nobody loaded, and the core loads each as the bot flies into it
+    // (mod-playerbots#41); a far bot takes another goal
+    if (FarBotKeepsToLoadedGrids(bot))
+    {
+        NoteFarTaxiRefused();
+        return false;
+    }
+
     uint32 from = sObjectMgr->GetNearestTaxiNode(flightMaster->GetPositionX(), flightMaster->GetPositionY(),
         flightMaster->GetPositionZ(), flightMaster->GetMapId(), bot->GetTeam());
     if (!from)
@@ -66,6 +75,14 @@ bool TakeTaxi(Player* bot, uint32 fromNode, uint32 destNode)
 {
     if (!bot || bot->IsInFlight() || bot->IsInCombat() || !fromNode || !destNode)
         return false;
+
+    // Playerbots.FarBotStayInLoadedGrids: a flight crosses many grids nobody loaded, and the core loads each as the bot flies into it
+    // (mod-playerbots#41); a far bot takes another goal
+    if (FarBotKeepsToLoadedGrids(bot))
+    {
+        NoteFarTaxiRefused();
+        return false;
+    }
 
     TaxiNodesEntry const* from = sTaxiNodesStore.LookupEntry(fromNode);
     TaxiNodesEntry const* to = sTaxiNodesStore.LookupEntry(destNode);

@@ -248,6 +248,11 @@ struct Config
     std::string RemoteBindIp = "127.0.0.1";
     std::string RemoteToken;
 
+    // 64 GB stress test (mod-playerbots#41): appended at the end so objects built before this header change still read the old members right
+    uint32 LogoutBudgetMs = 50;            // ms of bot logouts (session delete + save) per manager update, the rest next update (0: no cap)
+    uint32 RandomizeIntervalMs = 1500;     // a new random bot's one-time set-up (level band, placement, save) at most this often (0: one per world tick)
+    bool FarBotStayInLoadedGrids = false;  // a far simulated bot walks and flies only where every grid on the way is already loaded
+
     void Load();
 
     static Config& Instance();

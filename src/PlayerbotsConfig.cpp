@@ -284,6 +284,10 @@ void Config::Load()
     RemotePort = uint16(std::clamp(sConfigMgr->GetIntDefault("Playerbots.Remote.Port", 0), 0, 65535));
     RemoteBindIp = sConfigMgr->GetStringDefault("Playerbots.Remote.BindIp", "127.0.0.1");
     RemoteToken = sConfigMgr->GetStringDefault("Playerbots.Remote.Token", "");
+
+    LogoutBudgetMs = uint32(std::max(0, sConfigMgr->GetIntDefault("Playerbots.LogoutBudgetMs", 50)));
+    RandomizeIntervalMs = uint32(std::max(0, sConfigMgr->GetIntDefault("Playerbots.Random.RandomizeIntervalMs", 1500)));
+    FarBotStayInLoadedGrids = sConfigMgr->GetBoolDefault("Playerbots.FarBotStayInLoadedGrids", false);
 }
 
 Config& Config::Instance()

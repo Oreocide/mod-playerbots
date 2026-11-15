@@ -42,6 +42,7 @@
 #include "World.h"
 #include "WorldPacket.h"
 #include "WorldSession.h"
+#include <chrono>
 #include <memory>
 #include <shared_mutex>
 
@@ -116,12 +117,13 @@ bool PlayerbotMgr::AddRandomBot(uint32 accountId, std::string const& accountName
 
     BotHolder& holder = _bots[character];
     holder.Session = session;
+    _randomBotCount.fetch_add(1, std::memory_order_relaxed);
     return true;
 }
 
 size_t PlayerbotMgr::GetRandomBotCount() const
 {
-    return std::ranges::count_if(_bots, [](auto const& pair) { return pair.second.Master.IsEmpty() && !pair.second.Removing; });
+    return _randomBotCount.load(std::memory_order_relaxed);
 }
 
 bool PlayerbotMgr::HasHumanWithin(Player const* bot, float distance) const
@@ -203,6 +205,8 @@ bool PlayerbotMgr::RemoveBot(ObjectGuid bot)
     if (holder.Removing)
         return true;
 
+    if (holder.Master.IsEmpty() && _randomBotCount.load(std::memory_order_relaxed))
+        _randomBotCount.fetch_sub(1, std::memory_order_relaxed);
     holder.Removing = true;
 
     if (Player* player = holder.Session->GetPlayer())
@@ -232,6 +236,8 @@ void PlayerbotMgr::LogoutAll()
     }
 
     _bots.clear();
+    _otherMapBots.clear();
+    _randomBotCount.store(0, std::memory_order_relaxed);
 }
 
 void PlayerbotMgr::NoteWorldTick(uint32 diff)
@@ -288,6 +294,12 @@ bool PlayerbotMgr::HasRealPlayerOnline() const
 void PlayerbotMgr::Update(uint32 diff)
 {
     uint32 const sliceMs = sPlayerbotsConfig.ManagerSliceMs;
+    // Playerbots.LogoutBudgetMs: a logout saves the character on this thread (~1.8 ms a bot). Logging out 5000 bots in one update held
+    // the world tick 9 s (2026-11-15 stress test, mod-playerbots#41). The rest leave on the next updates; GetRandomBotCount already
+    // leaves them out, and a removing bot's AI no longer runs (TickMapBots, TickOtherMapBots)
+    int64 const logoutBudgetUs = int64(sPlayerbotsConfig.LogoutBudgetMs) * 1000;
+    int64 logoutUs = 0;
+    _otherMapBots.clear();
     for (auto itr = _bots.begin(); itr != _bots.end();)
     {
         BotHolder& holder = itr->second;
@@ -295,12 +307,25 @@ void PlayerbotMgr::Update(uint32 diff)
 
         if (holder.Removing)
         {
+            if (logoutBudgetUs && logoutUs >= logoutBudgetUs)
+            {
+                ++itr;
+                continue;
+            }
+
+            auto started = std::chrono::steady_clock::now();
             // deleting the session logs the player out and saves it
             holder.AI.reset();
             delete session;
             itr = _bots.erase(itr);
+            logoutUs += std::chrono::duration_cast<std::chrono::microseconds>(std::chrono::steady_clock::now() - started).count();
             continue;
         }
+
+        if (holder.AI)
+            if (Player* bot = session->GetPlayer(); bot && bot->IsInWorld())
+                if (Map* map = bot->GetMap(); map && !map->GetEntry()->IsWorldMap())
+                    _otherMapBots.push_back(itr->first);
 
         // idle frozen bots are visited once per ManagerSliceMs with the time that passed (0 = every tick, as before)
         uint32 botDiff = diff;
@@ -376,6 +401,10 @@ void PlayerbotMgr::Update(uint32 diff)
 
         ++itr;
     }
+
+    // once per pass instead of on every GetRandomBotCount call; AddRandomBot and RemoveBot keep it right until the next pass
+    _randomBotCount.store(size_t(std::ranges::count_if(_bots, [](auto const& pair) { return pair.second.Master.IsEmpty() && !pair.second.Removing; })),
+        std::memory_order_relaxed);
 }
 
 // A client answers the far teleport handshake (suspend token, then world port ack), bots do it here
@@ -474,15 +503,30 @@ void PlayerbotMgr::TickMapBots(Map* map, uint32 diff)
             bots.push_back(player);
 
     for (Player* bot : bots)
-        if (bot->IsInWorld() && bot->GetMap() == map)
-            if (PlayerbotAI* ai = GetAI(bot))
-                RunBotAI(bot, ai, diff);
+    {
+        if (!bot->IsInWorld() || bot->GetMap() != map)
+            continue;
+
+        // a bot waiting for its paced logout (Playerbots.LogoutBudgetMs) keeps its AI until the session is deleted, but no longer runs it
+        auto itr = _bots.find(bot->GetGUID());
+        if (itr == _bots.end() || itr->second.Session != bot->GetSession() || itr->second.Removing || !itr->second.AI)
+            continue;
+
+        RunBotAI(bot, itr->second.AI.get(), diff);
+    }
 }
 
 void PlayerbotMgr::TickOtherMapBots(uint32 diff)
 {
-    for (auto const& [guid, holder] : _bots)
+    // only the bots the last Update pass found on a dungeon, battleground or arena map (it ran a tick ago); a bot that just entered
+    // one waits that tick. Each is looked up again: it may have left, logged out or changed maps since
+    for (ObjectGuid const& guid : _otherMapBots)
     {
+        auto found = _bots.find(guid);
+        if (found == _bots.end())
+            continue;
+
+        BotHolder const& holder = found->second;
         Player* bot = holder.Session->GetPlayer();
         if (!bot || !holder.AI || holder.Removing || !bot->IsInWorld())
             continue;

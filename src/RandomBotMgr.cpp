@@ -296,6 +296,8 @@ RandomBotMgr* RandomBotMgr::instance()
 
 void RandomBotMgr::Update(uint32 diff)
 {
+    _randomizeWait = _randomizeWait > diff ? _randomizeWait - diff : 0;
+
     bool enabled = sPlayerbotsConfig.Enabled && sPlayerbotsConfig.RandomEnabled && sPlayerbotsConfig.RandomCount > 0;
     if (!enabled)
     {
@@ -1515,6 +1517,12 @@ bool RandomBotMgr::LoadHome(ObjectGuid guid, uint32& mapId, Position& home)
 
 bool RandomBotMgr::AdvanceRandomize()
 {
+    // Playerbots.Random.RandomizeIntervalMs: one set-up per world tick ran hundreds of new bots in seconds, each a full save plus event
+    // rows, and the single characters worker took half an hour to drain (5844 / 9640 queued on 2026-11-14/15, mod-playerbots#41).
+    // While set-ups are pending this still answers "busy", so the logins wait too: new characters log in at the set-up pace
+    if (!_pendingRandomize.empty() && _randomizeWait)
+        return true;
+
     while (!_pendingRandomize.empty())
     {
         ObjectGuid guid = *_pendingRandomize.begin();
@@ -1545,6 +1553,7 @@ bool RandomBotMgr::AdvanceRandomize()
         _randomized.insert(bot->GetGUID());
         sPlayerbotRepository->SetEvent(0, bot->GetGUID(), "randomize", 1);
         TC_LOG_INFO("server.playerbots", "Playerbots: randomized {} to level {} (race {} class {})", bot->GetName(), bot->GetLevel(), uint32(bot->GetRace()), uint32(bot->GetClass()));
+        _randomizeWait = sPlayerbotsConfig.RandomizeIntervalMs;
         return true;
     }
 

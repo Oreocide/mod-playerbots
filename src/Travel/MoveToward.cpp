@@ -161,6 +161,33 @@ std::atomic<uint32> sPathsKneeOnly{ 0 };
 std::atomic<uint32> sPathsSteep{ 0 };
 std::atomic<uint32> sPathsRepaired{ 0 };
 std::atomic<uint32> sPathsRejected{ 0 };
+std::atomic<uint32> sFarGridRefused{ 0 };
+std::atomic<uint32> sFarTaxiRefused{ 0 };
+
+// every grid the walk passes through is loaded: the points, plus samples at most GridSample yards apart on long straight segments (a leg
+// along the straight path's corners can be hundreds of yards between two points)
+bool PathStaysInLoadedGrids(Map const* map, Movement::PointsArray const& points)
+{
+    constexpr float GridSample = 64.0f;
+    for (size_t i = 0; i < points.size(); ++i)
+    {
+        if (!map->IsGridLoaded(points[i].x, points[i].y))
+            return false;
+        if (i + 1 == points.size())
+            break;
+
+        float dx = points[i + 1].x - points[i].x;
+        float dy = points[i + 1].y - points[i].y;
+        uint32 steps = uint32(std::hypot(dx, dy) / GridSample);
+        for (uint32 s = 1; s <= steps; ++s)
+        {
+            float t = float(s) / float(steps + 1);
+            if (!map->IsGridLoaded(points[i].x + dx * t, points[i].y + dy * t))
+                return false;
+        }
+    }
+    return true;
+}
 std::atomic<uint32> sHops{ 0 };
 std::atomic<uint32> sLegs{ 0 };
 std::atomic<uint32> sLegsFailed{ 0 };
@@ -518,6 +545,15 @@ MoveResult MoveAlongMeshImpl(Player* bot, Position const& dest, float arriveYard
         launch = &standoffPath;
     }
 
+    // Playerbots.FarBotStayInLoadedGrids: a far bot does not walk into a grid nobody loaded (the core would load it inside this map's update,
+    // 0.5-4 s on Eastern Kingdoms, mod-playerbots#41). Refused like a target the mesh cannot reach, so the caller picks another target;
+    // the legs of a long route are checked the same way, each when it starts
+    if (FarBotKeepsToLoadedGrids(bot) && !PathStaysInLoadedGrids(bot->GetMap(), *launch))
+    {
+        ++sFarGridRefused;
+        return MoveResult::NoPath;
+    }
+
     // Playerbots.Move.AvoidBlockedPaths: a path with a cliff segment (a mesh link no walker can take) is refused, one that runs through
     // geometry the mesh does not know gets a detour through other mesh points where one is found
     Movement::PointsArray repaired;
@@ -644,6 +680,21 @@ bool MoveToward(Player* bot, Position const& dest, float arriveYards, float stan
 
 MeshMoveStats GetMeshMoveStats()
 {
-    return { sMeshLaunched.load(), sMeshNoPath.load(), sPathsChecked.load(), sPathsBlocked.load(), sPathsKneeOnly.load(), sPathsSteep.load(), sPathsRepaired.load(), sPathsRejected.load(), sHops.load(), sLegs.load(), sLegsFailed.load() };
+    return { sMeshLaunched.load(), sMeshNoPath.load(), sPathsChecked.load(), sPathsBlocked.load(), sPathsKneeOnly.load(), sPathsSteep.load(), sPathsRepaired.load(), sPathsRejected.load(), sHops.load(), sLegs.load(), sLegsFailed.load(),
+        sFarGridRefused.load(), sFarTaxiRefused.load() };
+}
+
+bool FarBotKeepsToLoadedGrids(Player const* bot)
+{
+    if (!sPlayerbotsConfig.FarBotStayInLoadedGrids || !bot || !bot->GetMap())
+        return false;
+
+    PlayerbotAI* ai = sPlayerbotMgr->GetAI(bot);
+    return ai && ai->IsFarBot();
+}
+
+void NoteFarTaxiRefused()
+{
+    ++sFarTaxiRefused;
 }
 }

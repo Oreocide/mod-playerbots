@@ -137,6 +137,11 @@ private:
     uint32 _diffBucketIndex = 0;
     uint32 _diffBucketTimer = 0;
     uint32 _nearbyTimer = 0;
+    // appended (mod-playerbots#41 stress test fixes): GetRandomBotCount used to count every holder on each call, several times
+    // per tick; Update recounts once per pass and AddRandomBot/RemoveBot adjust it in between (atomic: the remote-control thread reads it)
+    std::atomic<size_t> _randomBotCount{ 0 };
+    // bots on dungeon, battleground and arena maps, found by the last Update pass: TickOtherMapBots visits only these
+    std::vector<ObjectGuid> _otherMapBots;
 };
 }
 

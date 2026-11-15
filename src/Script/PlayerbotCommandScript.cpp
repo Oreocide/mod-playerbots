@@ -610,6 +610,8 @@ public:
             handler->PSendSysMessage("Move.LegYards: %u far targets walked to in legs, %u with no leg either.", mesh.Legs, mesh.LegsFailed);
         if (mesh.Repaired || mesh.Rejected)
             handler->PSendSysMessage("Move.AvoidBlockedPaths: %u paths got a detour, %u refused for a cliff segment.", mesh.Repaired, mesh.Rejected);
+        if (mesh.FarGridRefused || mesh.FarTaxiRefused)
+            handler->PSendSysMessage("FarBotStayInLoadedGrids: %u far-bot walks and %u flights refused for a grid nobody loaded.", mesh.FarGridRefused, mesh.FarTaxiRefused);
 
         if (!sTravelMgr->IsBuilt())
         {

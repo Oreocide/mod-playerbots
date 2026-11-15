@@ -706,6 +706,17 @@ Playerbots.SleepBattlefields = 0
 Playerbots.FarBotHeightNoGridLoad = 0
 
 #
+#    Playerbots.FarBotStayInLoadedGrids
+#        Description: A bot nobody is near that still runs its AI (the activity rotation, Debug.ForceActive) walks and flies only
+#                     where every grid on the way is already loaded. When a player walks into a grid nobody loaded, the core loads it
+#                     inside the map update (Map::PlayerRelocation): 0.5-4 s on Eastern Kingdoms, so 10 awake far bots gave 13 ticks
+#                     over a second in 15 minutes (mod-playerbots#41). A walk that would cross such a grid is refused like a target the
+#                     mesh cannot reach and the bot picks another; a flight is refused and the bot takes another goal. Bots near a
+#                     player, in a group, a dungeon or a battleground move as before. Counted in ".bot travel info". Default: 0
+
+Playerbots.FarBotStayInLoadedGrids = 0
+
+#
 #    Playerbots.FarBotNoVisibilityLoad
 #        Description: When a player moves, arrives or logs in, the core loads every grid within its visibility range (Map::LoadGridsInRange, from the
 #                     relocation notify) and tells it about everything there. For a bot that is the only player around, that is a grid load nobody
@@ -742,6 +753,17 @@ Playerbots.Travel.DeferHops = 0
 #                     only while a creation is already running). Default: 0
 
 Playerbots.Random.CreateUpTo = 0
+
+#
+#    Playerbots.Random.RandomizeIntervalMs
+#        Description: A new random bot's one-time set-up (level band, spec, placement, then a full save and its event rows) runs at most
+#                     this often. One per world tick set up hundreds of fresh characters in seconds, and the single characters worker
+#                     needed half an hour to drain the queue (5844 and 9640 queued on 2026-11-14/15, ticks up to 4 s, mod-playerbots#41).
+#                     While set-ups wait, logins wait too, so never-played characters log in at this pace; played ones are not slowed.
+#                     0 = one set-up per world tick (the old pace).
+#        Default:     1500
+
+Playerbots.Random.RandomizeIntervalMs = 1500
 
 #
 #    Playerbots.BotActiveAlone
@@ -1269,6 +1291,16 @@ Playerbots.Move.Fallbacks = 0
 #        Default:     0
 
 Playerbots.Move.LegYards = 0
+
+#
+#    Playerbots.LogoutBudgetMs
+#        Description: Milliseconds of bot logouts per manager update. A logout deletes the session and saves the character on the
+#                     world thread (~1.8 ms a bot), and a mass logout (no player left, Random.Count lowered) of 5000 bots held one
+#                     tick 9 s (2026-11-15, mod-playerbots#41). The rest log out on the next updates; a bot waiting for its logout
+#                     no longer runs its AI and is not counted as online. Shutdown still logs every bot out at once. 0 removes the cap.
+#        Default:     50
+
+Playerbots.LogoutBudgetMs = 50
 
 #
 #    Playerbots.Combat.RoleTargeting

@@ -254,6 +254,8 @@ private:
     std::unordered_set<uint32> _allowedMaps; // empty = every outdoor continent
     uint32 _humanTimer = 0;                  // ms with/without a real player, depending on _humansOnline
     bool _humansOnline = false;
+    // appended (mod-playerbots#41): ms until the next new bot's one-time set-up (Playerbots.Random.RandomizeIntervalMs)
+    uint32 _randomizeWait = 0;
 };
 }
 

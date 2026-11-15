@@ -57,8 +57,17 @@ struct MeshMoveStats
     uint32 Hops = 0;      // jumps over low obstacles (Move.HopLowObstacles)
     uint32 Legs = 0;      // far targets walked to in legs (Move.LegYards)
     uint32 LegsFailed = 0; // far targets with no leg either
+    uint32 FarGridRefused = 0; // walks of far bots refused because they cross a grid nobody loaded (FarBotStayInLoadedGrids)
+    uint32 FarTaxiRefused = 0; // flights of far bots refused for the same reason
 };
 MeshMoveStats GetMeshMoveStats();
+
+/// Playerbots.FarBotStayInLoadedGrids: true for a bot nobody is near (frozen, the activity rotation, Debug.ForceActive) while the key is on.
+/// Such a bot walks and flies only where every grid on the way is loaded: a player that enters a grid nobody loaded makes the core load it
+/// inside the map update (Map::PlayerRelocation), 0.5-4 s on Eastern Kingdoms (mod-playerbots#41)
+bool FarBotKeepsToLoadedGrids(Player const* bot);
+/// counts a flight refused by FarBotKeepsToLoadedGrids (Travel/Taxi.cpp)
+void NoteFarTaxiRefused();
 }
 
 #endif
