@@ -31,7 +31,7 @@ namespace Playerbots::Bg
 struct Config
 {
     bool Planner = false;                                   // Playerbots.Bg.Planner: the team planner plays the maps below
-    std::vector<uint32> PlannerMaps = { 2106, 726, 2107, 761, 566, 30, 628, 998 };
+    std::vector<uint32> PlannerMaps = { 2106, 726, 2107, 761, 566, 30, 628, 998, 727 };
     uint32 TickMs = 3000;                                   // how often each match is planned again
     uint32 DefendMinPct = 20;                               // each team rolls its defence share in this range per match
     uint32 DefendMaxPct = 40;

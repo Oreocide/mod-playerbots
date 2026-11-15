@@ -19,6 +19,7 @@
 #include "Battleground/BgConfig.h"
 #include "Battleground/BgCoordinator.h"
 #include "Battleground/BgMetrics.h"
+#include "Battleground/BgCarts.h"
 #include "Battleground/BgOrbs.h"
 #include "Battleground/BgReact.h"
 #include "ActivityMgr.h"
@@ -688,6 +689,9 @@ void Planner::Plan(BgPlan& plan, Battleground* bg, Map* map, uint32 now)
         // Temple of Kotmogu: an orb's owner and place come from its world states and its carrier, carried or not (BgOrbs.h)
         if (plan.Def->Kind == MapKind::Orbs)
             Orbs::ReadState(plan, map);
+        // Silvershard Mines: a cart's owner and place from its moving control zone (BgCarts.h)
+        else if (plan.Def->Kind == MapKind::Carts)
+            Carts::ReadState(plan, map);
     }
 
     std::vector<Player*> members[2];

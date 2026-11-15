@@ -18,6 +18,7 @@
 #include "Battleground/BgPlay.h"
 #include "Battleground/BgConfig.h"
 #include "Battleground/BgCoordinator.h"
+#include "Battleground/BgCarts.h"
 #include "Battleground/BgIsle.h"
 #include "Battleground/BgOrbs.h"
 #include "Battleground/BgMetrics.h"
@@ -132,6 +133,24 @@ bool Go(Player* bot, Position const& where, float arrive, int8 objective)
             case Isle::Step::Waypoint:
             {
                 bool moved = GoAlongMesh(bot, waypoint, 1.5f, NoObjective);
+                Metrics::NoteGo(bot, waypoint, !moved);
+                return moved;
+            }
+            default:
+                break;
+        }
+    }
+    // Silvershard Mines: out of a start room by a fixed drop at its exit (BgCarts.h)
+    if (bot->GetMapId() == Carts::MapId)
+    {
+        Position waypoint;
+        switch (Carts::Next(bot, where, waypoint))
+        {
+            case Carts::Step::Busy:
+                return true;
+            case Carts::Step::Waypoint:
+            {
+                bool moved = GoAlongMesh(bot, waypoint, 1.0f, NoObjective);
                 Metrics::NoteGo(bot, waypoint, !moved);
                 return moved;
             }
@@ -746,6 +765,39 @@ bool PlayOrbs(Player* bot, PlayerbotAI& ai, BgPlan const& plan, Assignment const
     return true;
 }
 
+constexpr float CartZone = 25.0f;          // the cart's control zone radius (its owner is who has more players in it)
+constexpr float CartStay = 12.0f;          // a bot keeps this close to its cart: well inside the zone while it rolls on
+
+/// Silvershard Mines (BgCarts.h): with the cart of the job, inside its 25 yd zone, fighting who comes into it; no job: the nearest cart
+/// we do not hold
+bool PlayCarts(Player* bot, PlayerbotAI& ai, BgPlan const& plan, Assignment const& job)
+{
+    int8 target = job.Objective;
+    if (target < 0 || size_t(target) >= plan.Objectives.size())
+    {
+        TeamId us = TeamOf(bot);
+        float best = 0.0f;
+        for (size_t i = 0; i < plan.Objectives.size(); ++i)
+            if (plan.Objectives[i].Known && plan.Objectives[i].Owner != us
+                && (target < 0 || bot->GetExactDist2d(plan.Objectives[i].Pos) < best))
+            {
+                target = int8(i);
+                best = bot->GetExactDist2d(plan.Objectives[i].Pos);
+            }
+        if (target < 0)
+            return false;
+    }
+    Position const& cart = plan.Objectives[target].Pos;
+    if (ai.GetRole() == BotRole::Healer)
+        return PlayHealer(bot, plan, job, cart);
+    if (EnemyNear(bot, cart, CartZone))
+        Engage(bot, ai, cart, CartZone);
+    // a cart moves: a path failure toward it is not a reason to block the objective
+    if (bot->GetExactDist2d(cart) > CartStay)
+        Go(bot, cart, CartStay - 2.0f, NoObjective);
+    return true;
+}
+
 /// While the gates are closed: to the team's gate row (a map without one: the bot waits where it stands)
 void WaitAtGate(Player* bot)
 {
@@ -1271,6 +1323,16 @@ bool CarrierGoal(Player* bot, BgPlan const& plan, Position& out, float& arrive, 
 
 bool CarrierTrigger(PlayerbotAI& ai)
 {
+    // Silvershard Mines: a bot that a fight pulled out of its cart's control zone walks back into it (BgCarts.h)
+    if (Player* bot = ai.GetBot(); bot->GetMapId() == Carts::MapId)
+    {
+        Position cart;
+        if (!bot->IsInCombat() || ai.GetMaster() || !Plays(bot))
+            return false;
+        BgPlan const* plan = sBgPlanner.Find(bot->GetMapId(), bot->GetInstanceId());
+        Assignment const* job = CombatJob(ai);
+        return plan && job && Carts::AwayFromCart(bot, *plan, *job, cart);
+    }
     // Temple of Kotmogu: an orb carrier pulled out of the pit by a fight walks back into it, and a bot sent for a free orb breaks off a
     // fight away from its pedestal (BgOrbs.h)
     if (Player* bot = ai.GetBot(); bot->GetMapId() == Orbs::MapId)
@@ -1306,6 +1368,17 @@ public:
     bool Execute(PlayerbotAI& ai) override
     {
         Player* bot = ai.GetBot();
+        if (bot->GetMapId() == Carts::MapId)
+        {
+            Position cart;
+            BgPlan const* plan = sBgPlanner.Find(bot->GetMapId(), bot->GetInstanceId());
+            Assignment const* job = CombatJob(ai);
+            if (!plan || !job || !Carts::AwayFromCart(bot, *plan, *job, cart))
+                return false;
+            ai.ClearForcedTarget();
+            bot->AttackStop();
+            return Go(bot, cart, CartStay - 2.0f, NoObjective);
+        }
         if (bot->GetMapId() == Orbs::MapId)
         {
             Position spot;
@@ -1515,6 +1588,7 @@ bool Play(Player* bot, PlayerbotAI& ai)
         case MapKind::Eye: return PlayEye(bot, ai, *plan, job);
         case MapKind::Valley: return PlayValley(bot, ai, *plan, job);
         case MapKind::Orbs: return PlayOrbs(bot, ai, *plan, job);
+        case MapKind::Carts: return PlayCarts(bot, ai, *plan, job);
     }
     return false;
 }

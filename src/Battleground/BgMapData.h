@@ -35,7 +35,8 @@ enum class MapKind : uint8
     Capture,    // Arathi Basin, Battle for Gilneas: type 42 capture points, 1500 points win
     Eye,        // Eye of the Storm: four control-zone towers and one flag in the middle
     Valley,     // Alterac Valley: graveyards, towers and bosses from playerbots_bg_node, state from world states
-    Orbs        // Temple of Kotmogu: four orbs held by carriers for points (BgOrbs.h); 1500 points win
+    Orbs,       // Temple of Kotmogu: four orbs held by carriers for points (BgOrbs.h); 1500 points win
+    Carts       // Silvershard Mines: three mine carts held by headcount in their moving control zones (BgCarts.h); 1500 points win
 };
 
 /// playerbots_bg_node.kind

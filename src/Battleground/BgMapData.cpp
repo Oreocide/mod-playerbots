@@ -64,6 +64,13 @@ std::vector<MapDef> Maps =
             { 212093, "Green Orb", 1.0f },
             { 212092, "Purple Orb", 1.0f },
         }, { 0, 0 }, 1500 },
+    // the carts' control zone objects (they move with the carts; BgCarts.cpp)
+    { 727, "Silvershard Mines", MapKind::Carts,
+        {
+            { 213766, "East cart", 1.0f },
+            { 213794, "North cart", 1.0f },
+            { 213796, "South cart", 1.0f },
+        }, { 0, 0 }, 1500 },
     { 30, "Alterac Valley", MapKind::Valley, {}, { 0, 0 }, 0, { 3127, 3128 }, 3136 },
     { 628, "Isle of Conquest", MapKind::Valley, {}, { 0, 0 }, 0, { 4226, 4227 }, 17377 },
 };
