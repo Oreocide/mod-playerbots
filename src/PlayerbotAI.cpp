@@ -47,6 +47,7 @@
 #include "World/WorldActionQueue.h"
 #include "Spawn/SpawnPolicy.h"
 #include "PlayerbotsConfig.h"
+#include "Item.h"
 #include "SocialMgr.h"
 #include "Talents/BotTalents.h"
 #include "Social/BotSocialMgr.h"
@@ -912,6 +913,19 @@ void PlayerbotAI::MaintainBagUpgrades(uint32 diff)
     sGearFactory->EquipBagUpgrade(_bot);
 }
 
+namespace
+{
+    // an equipped item worn down to 0: its stats are gone, and a broken weapon fails every weapon spell (cast result 34)
+    bool HasBrokenGear(Player* bot)
+    {
+        for (uint8 slot = EQUIPMENT_SLOT_START; slot < EQUIPMENT_SLOT_END; ++slot)
+            if (Item* item = bot->GetItemByPos(INVENTORY_SLOT_BAG_0, slot))
+                if (*item->m_itemData->MaxDurability && !*item->m_itemData->Durability)
+                    return true;
+        return false;
+    }
+}
+
 // Random (ownerless) bots dress themselves and re-gear while they level
 void PlayerbotAI::MaintainGear(uint32 diff)
 {
@@ -942,6 +956,16 @@ void PlayerbotAI::MaintainGear(uint32 diff)
             sPlayerbotRepository->SetValue(_botGuid, "gearv", std::to_string(rerollVersion));
             TC_LOG_DEBUG("server.playerbots", "Playerbots: {} rerolled its gear ({} slots, version {})", _bot->GetName(), changed, rerollVersion);
         }
+    }
+
+    // A player repairs once the gear turns red. Only the rpg walk to a repair NPC repaired a bot, and bots whose walks never
+    // got there fought on broken gear for good (Oreocide/mod-playerbots#19): repair here as if one had been found, at the
+    // normal price, and free when the bot cannot pay.
+    if (HasBrokenGear(_bot))
+    {
+        _bot->DurabilityRepairAll(true, 1.0f, false);
+        if (HasBrokenGear(_bot))
+            _bot->DurabilityRepairAll(false, 0.0f, false);
     }
 
     if (sGearFactory->NeedsGear(_bot))
