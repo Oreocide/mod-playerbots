@@ -60,6 +60,19 @@ void ReadState(BgPlan& plan, Map* map);
 /// The cart of the bot's job (or the nearest one its team does not hold) when a fight pulled the bot out of its control zone: the "bg
 /// carrier" leash walks it back, in combat too (only who stands in the zone counts)
 bool AwayFromCart(Player const* bot, BgPlan const& plan, Assignment const& job, Position& cart);
+
+/// A map whose carts this file reads: Silvershard Mines (727) and Deephaul Ravine (2656)
+bool HasCarts(uint32 mapId);
+}
+
+// Deephaul Ravine (map 2656, worktrees/bg-deephaul/DEEPHAUL_DATA.md): Silvershard's cart play on two carts, plus Eye of the Storm's crystal
+// play with the capture at the team's own point (areatrigger 30 Alliance, 31 Horde) instead of a tower
+namespace Ravine
+{
+constexpr uint32 MapId = 2656;
+
+/// Where our crystal carrier scores: the capture point of team 0 (Alliance) or 1 (Horde)
+Position const& CapturePoint(uint8 team);
 }
 }
 }

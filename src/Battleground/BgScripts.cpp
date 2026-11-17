@@ -659,7 +659,7 @@ public:
         for (uint32 i = 0; i < 2; ++i)
         {
             FlagInfo const& flag = plan->Flags[i];
-            if (!flag.Entry || (i == 1 && plan->Def && plan->Def->Kind == MapKind::Eye))
+            if (!flag.Entry || (i == 1 && plan->Def && (plan->Def->Kind == MapKind::Eye || plan->Def->Kind == MapKind::Ravine)))
                 continue;
             Player* carrier = nullptr;
             if (Map* map = sMapMgr->FindMap(plan->MapId, plan->InstanceId))

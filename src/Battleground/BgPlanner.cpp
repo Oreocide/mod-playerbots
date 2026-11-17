@@ -561,7 +561,8 @@ void Planner::Discover(BgPlan& plan, Map* map, uint32 now)
         {
             for (NodeDef const& node : plan.Def->Nodes)
                 plan.Objectives.push_back({ node.Entry, node.Name, node.Weight });
-            if (plan.Def->Kind == MapKind::Eye)
+            // Eye of the Storm and Deephaul Ravine: the one flag (Ravine: the crystal) in Flags[0]
+            if (plan.Def->Kind == MapKind::Eye || plan.Def->Kind == MapKind::Ravine)
                 plan.Flags[0].Entry = plan.Def->FlagEntries[0];
         }
     }
@@ -626,6 +627,7 @@ void Planner::ReadState(BgPlan& plan, Map* map)
                 break;
             }
             case MapKind::Eye:
+            case MapKind::Ravine:
                 objective.Owner = go->GetControllingTeam();
                 break;
             default:
@@ -691,7 +693,7 @@ void Planner::Plan(BgPlan& plan, Battleground* bg, Map* map, uint32 now)
         if (plan.Def->Kind == MapKind::Orbs)
             Orbs::ReadState(plan, map);
         // Silvershard Mines: a cart's owner and place from its moving control zone (BgCarts.h)
-        else if (plan.Def->Kind == MapKind::Carts)
+        else if (plan.Def->Kind == MapKind::Carts || plan.Def->Kind == MapKind::Ravine)
             Carts::ReadState(plan, map);
         // Seething Shore: which fissures have a node up (BgSeething.h)
         else if (plan.Def->Kind == MapKind::Azerite)
@@ -754,7 +756,8 @@ void Planner::Plan(BgPlan& plan, Battleground* bg, Map* map, uint32 now)
             continue;
         if (reason.empty() && plan.LastFlagStates[i])
         {
-            char const* name = plan.Def->Kind == MapKind::Eye ? "the flag" : i == TEAM_ALLIANCE ? "the Alliance flag" : "the Horde flag";
+            char const* name = plan.Def->Kind == MapKind::Eye ? "the flag" : plan.Def->Kind == MapKind::Ravine ? "the crystal"
+                : i == TEAM_ALLIANCE ? "the Alliance flag" : "the Horde flag";
             char const* state = flag.State == uint8(FlagState::Taken) ? "taken" : flag.State == uint8(FlagState::Dropped) ? "dropped"
                 : flag.State == uint8(FlagState::InBase) ? "back in base" : "respawning";
             reason = Trinity::StringFormat("{} {}", name, state);
@@ -958,11 +961,15 @@ void Planner::PlanTeam(BgPlan& plan, Map* map, uint32 team, std::vector<Player*>
     // Eye of the Storm: the free flag is worth two attackers while we hold a tower to bring it to
     Position flagPos;
     bool flagFree = false;
-    if (kind == MapKind::Eye && plan.Flags[0].Carrier.IsEmpty()
+    if ((kind == MapKind::Eye || kind == MapKind::Ravine) && plan.Flags[0].Carrier.IsEmpty()
         && (plan.Flags[0].State == uint8(FlagState::InBase) || plan.Flags[0].State == uint8(FlagState::Dropped))
         && ObjectivePosition(plan, FlagObjective, flagPos))
+    {
+        // Deephaul Ravine's crystal scores at our own capture point, which we always have
+        flagFree = kind == MapKind::Ravine;
         for (Objective const& objective : plan.Objectives)
             flagFree |= objective.Owner == us;
+    }
 
     for (Player* bot : attackers)
     {
@@ -1003,7 +1010,7 @@ void Planner::PlanTeam(BgPlan& plan, Map* map, uint32 team, std::vector<Player*>
         job.Now = job.Base;
         job.Follow.Clear();
     }
-    if (kind == MapKind::Flag || kind == MapKind::Eye)
+    if (kind == MapKind::Flag || kind == MapKind::Eye || kind == MapKind::Ravine)
     {
         ObjectGuid carrierGuid;
         if (kind == MapKind::Flag)

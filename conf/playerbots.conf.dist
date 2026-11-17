@@ -1008,9 +1008,9 @@ Playerbots.World.Reactions = 0
 # Alterac Valley 30, Isle of Conquest 628 (their objective graphs are the world table playerbots_bg_node; without rows a map is not
 # planned), Temple of Kotmogu 998 (its four orbs, Battleground/BgOrbs.cpp),
 # Silvershard Mines 727 (its three carts, Battleground/BgCarts.cpp), Seething Shore 1803 (its twelve azerite fissures,
-# Battleground/BgSeething.cpp).
+# Battleground/BgSeething.cpp), Deephaul Ravine 2656 (its two carts and the crystal, Battleground/BgCarts.cpp + BgPlay.cpp PlayRavine).
 Playerbots.Bg.Planner = 0
-Playerbots.Bg.Planner.Maps = 2106,726,2107,761,566,30,628,998,727,1803
+Playerbots.Bg.Planner.Maps = 2106,726,2107,761,566,30,628,998,727,1803,2656
 Playerbots.Bg.Planner.TickMs = 3000
 Playerbots.Bg.DefendMinPct = 20
 Playerbots.Bg.DefendMaxPct = 40
@@ -1063,8 +1063,7 @@ Playerbots.Bg.Rebuff = 0
 Playerbots.Bg.AcceptDelayMin = 3
 Playerbots.Bg.AcceptDelayMax = 40
 
-# A battleground the planner does not play (not in Playerbots.Bg.Planner.Maps:
-# Deephaul Ravine): a bot with no enemy in sight heads for the middle of the map between the two start positions, where the teams
+# A battleground the planner does not play (not in Playerbots.Bg.Planner.Maps): a bot with no enemy in sight heads for the middle of the map between the two start positions, where the teams
 # meet, and fights from there, instead of standing at its spawn. Isle of Conquest and Strand of the Ancients never do (a team starts
 # behind closed gates the navmesh does not know). 0 = stand (the old way).
 Playerbots.Bg.Advance.Unplanned = 1

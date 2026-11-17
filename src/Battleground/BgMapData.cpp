@@ -87,6 +87,13 @@ std::vector<MapDef> Maps =
             { 0, "fissure 11", 1.0f },
             { 0, "fissure 12", 1.0f },
         }, { 0, 0 }, 1500 },
+    // the carts' control zone objects (made by the carts' auras 430211 east / 430216 west, they move with the carts; BgCarts.cpp) and the
+    // crystal (a new-flag object in the middle; worktrees/bg-deephaul/DEEPHAUL_DATA.md)
+    { 2656, "Deephaul Ravine", MapKind::Ravine,
+        {
+            { 415326, "East cart", 1.0f },
+            { 415330, "West cart", 1.0f },
+        }, { 422413, 422413 }, 1500 },
     { 30, "Alterac Valley", MapKind::Valley, {}, { 0, 0 }, 0, { 3127, 3128 }, 3136 },
     { 628, "Isle of Conquest", MapKind::Valley, {}, { 0, 0 }, 0, { 4226, 4227 }, 17377 },
 };

@@ -141,8 +141,8 @@ bool Go(Player* bot, Position const& where, float arrive, int8 objective)
                 break;
         }
     }
-    // Silvershard Mines: out of a start room by a fixed drop at its exit (BgCarts.h)
-    if (bot->GetMapId() == Carts::MapId)
+    // Silvershard Mines and Deephaul Ravine: out of a start room or platform by a fixed drop at its exit (BgCarts.h)
+    if (Carts::HasCarts(bot->GetMapId()))
     {
         Position waypoint;
         switch (Carts::Next(bot, where, waypoint))
@@ -799,6 +799,70 @@ bool PlayCarts(Player* bot, PlayerbotAI& ai, BgPlan const& plan, Assignment cons
     return true;
 }
 
+/// Deephaul Ravine (map 2656, worktrees/bg-deephaul/DEEPHAUL_DATA.md): the crystal as in Eye of the Storm (runners take it, escorts guard
+/// our carrier, attackers near theirs hunt it), carried to our own capture point; everyone else plays the two carts as in Silvershard
+bool PlayRavine(Player* bot, PlayerbotAI& ai, BgPlan const& plan, Assignment const& job)
+{
+    Map* map = bot->GetMap();
+    TeamId us = TeamOf(bot);
+    if (us != TEAM_ALLIANCE && us != TEAM_HORDE)
+        return false;
+    FlagInfo const& crystal = plan.Flags[0];
+    bool healer = ai.GetRole() == BotRole::Healer;
+
+    if (job.Now == Job::Carrier)
+    {
+        ai.ClearForcedTarget();
+        Go(bot, Ravine::CapturePoint(uint8(us)), 2.0f, NoObjective);
+        return true;
+    }
+
+    if (job.Now == Job::Escort)
+        if (Player* carrier = PlayerOf(map, job.Follow))
+        {
+            if (healer)
+                return PlayHealer(bot, plan, job, carrier->GetPosition());
+            Engage(bot, ai, carrier->GetPosition(), 30.0f);
+            Go(bot, carrier->GetPosition(), 6.0f, NoObjective);
+            return true;
+        }
+
+    // the enemy carries the crystal: attackers near him go after him
+    Player* carrier = PlayerOf(map, crystal.Carrier);
+    if (job.Base == Job::Attack && carrier && carrier->IsAlive() && TeamOf(carrier) != us && bot->GetExactDist2d(carrier) < HuntRange)
+    {
+        ai.SetForcedTarget(carrier->GetGUID());
+        Go(bot, carrier->GetPosition(), 5.0f, NoObjective);
+        return true;
+    }
+
+    if (job.Objective == FlagObjective)
+    {
+        Position pos;
+        if (ObjectivePosition(plan, FlagObjective, pos))
+        {
+            if (!healer)
+            {
+                ObjectGuid guid = crystal.State == uint8(FlagState::Dropped) ? crystal.Drop : crystal.Guid;
+                if (GameObject* go = guid.IsEmpty() ? nullptr : map->GetGameObject(guid))
+                {
+                    if (EnemyNear(bot, pos, EnemyNearCap) && Engage(bot, ai, pos, EnemyNearCap))
+                    {
+                        Go(bot, pos, 5.0f, NoObjective);
+                        return true;
+                    }
+                    if (Interact(bot, ai, go))
+                        return true;
+                }
+            }
+            Go(bot, pos, 1.5f, NoObjective);
+            return true;
+        }
+    }
+
+    return PlayCarts(bot, ai, plan, job);
+}
+
 /// While the gates are closed: to the team's gate row (a map without one: the bot waits where it stands)
 void WaitAtGate(Player* bot)
 {
@@ -1035,7 +1099,7 @@ FocusView FocusViewOf(Player* bot, PlayerbotAI& ai, BgPlan const& plan)
         view.OurCarrier = PlayerOf(map, plan.Flags[them].Carrier);
         view.TheirCarrier = plan.Flags[view.Us].Carrier;
     }
-    else if (plan.Def->Kind == MapKind::Eye && !plan.Flags[0].Carrier.IsEmpty())
+    else if ((plan.Def->Kind == MapKind::Eye || plan.Def->Kind == MapKind::Ravine) && !plan.Flags[0].Carrier.IsEmpty())
     {
         Player* carrier = PlayerOf(map, plan.Flags[0].Carrier);
         if (carrier && TeamOf(carrier) == view.Us)
@@ -1297,6 +1361,16 @@ bool CarrierGoal(Player* bot, BgPlan const& plan, Position& out, float& arrive, 
         arrive = 3.0f;
         return true;
     }
+    // Deephaul Ravine: the crystal scores at our own capture point
+    if (plan.Def->Kind == MapKind::Ravine)
+    {
+        TeamId us = TeamOf(bot);
+        if (us != TEAM_ALLIANCE && us != TEAM_HORDE)
+            return false;
+        out = Ravine::CapturePoint(uint8(us));
+        arrive = 2.0f;
+        return true;
+    }
     if (plan.Def->Kind == MapKind::Eye)
     {
         int8 best = NoObjective;
@@ -1322,10 +1396,19 @@ bool CarrierGoal(Player* bot, BgPlan const& plan, Position& out, float& arrive, 
     return false;
 }
 
+/// Deephaul Ravine: the bot carries the crystal (the cart leash leaves it alone; it runs to our capture point)
+bool CarriesCrystal(Player const* bot)
+{
+    if (bot->GetMapId() != Ravine::MapId)
+        return false;
+    BgPlan const* plan = sBgPlanner.Find(bot->GetMapId(), bot->GetInstanceId());
+    return plan && !plan->Flags[0].Carrier.IsEmpty() && plan->Flags[0].Carrier == bot->GetGUID();
+}
+
 bool CarrierTrigger(PlayerbotAI& ai)
 {
     // Silvershard Mines: a bot that a fight pulled out of its cart's control zone walks back into it (BgCarts.h)
-    if (Player* bot = ai.GetBot(); bot->GetMapId() == Carts::MapId)
+    if (Player* bot = ai.GetBot(); Carts::HasCarts(bot->GetMapId()) && !(bot->GetMapId() == Ravine::MapId && CarriesCrystal(bot)))
     {
         Position cart;
         if (!bot->IsInCombat() || ai.GetMaster() || !Plays(bot))
@@ -1369,7 +1452,7 @@ public:
     bool Execute(PlayerbotAI& ai) override
     {
         Player* bot = ai.GetBot();
-        if (bot->GetMapId() == Carts::MapId)
+        if (Carts::HasCarts(bot->GetMapId()) && !(bot->GetMapId() == Ravine::MapId && CarriesCrystal(bot)))
         {
             Position cart;
             BgPlan const* plan = sBgPlanner.Find(bot->GetMapId(), bot->GetInstanceId());
@@ -1596,6 +1679,7 @@ bool Play(Player* bot, PlayerbotAI& ai)
         case MapKind::Valley: return PlayValley(bot, ai, *plan, job);
         case MapKind::Orbs: return PlayOrbs(bot, ai, *plan, job);
         case MapKind::Carts: return PlayCarts(bot, ai, *plan, job);
+        case MapKind::Ravine: return PlayRavine(bot, ai, *plan, job);
         case MapKind::Azerite: return PlayNode(bot, ai, *plan, job);
     }
     return false;

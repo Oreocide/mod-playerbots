@@ -49,6 +49,18 @@ struct Room
     Position Start;
     std::array<Position, 2> Edges;          // the last room mesh point at each exit
     std::array<Position, 2> Lands;          // the field mesh point below and beyond it
+    float FloorZ = 0.0f;                    // this room's own platform height and reach (0: the set's)
+    float Radius = 0.0f;
+};
+
+struct RoomSet
+{
+    uint32 MapId;
+    char const* Name;
+    float FloorZ;                           // a spot above this and near a room's start is on the room's platform
+    float Radius;
+    Room const* Rooms;
+    size_t Count;
 };
 
 std::array<Room, 2> const Rooms =
@@ -60,6 +72,40 @@ std::array<Room, 2> const Rooms =
     { { 630.17f, 230.174f, 328.838f }, { { { 634.4f, 196.3f, 329.0f }, { 660.3f, 229.9f, 329.0f } } },
         { { { 635.0f, 190.8f, 320.7f }, { 665.5f, 228.0f, 320.5f } } } },
 } };
+
+// Deephaul Ravine (2656): each team's start and spawn graveyard sit on a platform (z ~258-281) whose mesh ends at its edge ~12 yd above
+// the field (navcheck, worktrees/bg-deephaul/DEEPHAUL_DATA.md, user OK 2026-11-16). Start = the platform's middle (start location and
+// spawn graveyard); the Alliance platform has one edge, listed twice
+std::array<Room, 4> const RavineRooms =
+{ {
+    // Alliance: start 3963.8 -3391.0 280.7, spawn graveyard 3963.7 -3267.2 258.5
+    { { 3963.7f, -3329.1f, 270.0f }, { { { 3990.7f, -3241.9f, 258.2f }, { 3990.7f, -3241.9f, 258.2f } } },
+        { { { 3993.1f, -3232.2f, 245.9f }, { 3993.1f, -3232.2f, 245.9f } } } },
+    // Horde: start 4162.5 -2536.9 277.3, spawn graveyard 4162.6 -2626.3 257.4
+    { { 4162.5f, -2581.6f, 268.0f }, { { { 4178.1f, -2642.1f, 258.2f }, { 4145.9f, -2641.9f, 259.3f } } },
+        { { { 4176.0f, -2647.7f, 245.9f }, { 4146.1f, -2648.0f, 246.2f } } } },
+    // the center graveyards stand on ledges ~30 yd above the basin; each ledge's mesh leads off it on one side only (user 2026-11-16:
+    // "fix the Horde center graveyard stop"; navcheck from rings around each graveyard). Horde: 4027.3 -2785.9 239.7, east edge
+    { { 4027.3f, -2785.9f, 239.7f }, { { { 4043.5f, -2789.3f, 240.1f }, { 4043.5f, -2789.3f, 240.1f } } },
+        { { { 4057.7f, -2786.5f, 207.5f }, { 4057.7f, -2786.5f, 207.5f } } }, 234.0f, 20.0f },
+    // Alliance: 4103.6 -3113.1 239.7, west edge
+    { { 4103.6f, -3113.1f, 239.7f }, { { { 4094.1f, -3114.7f, 240.1f }, { 4094.1f, -3114.7f, 240.1f } } },
+        { { { 4078.1f, -3114.7f, 210.2f }, { 4078.1f, -3114.7f, 210.2f } } }, 234.0f, 20.0f },
+} };
+
+std::array<RoomSet, 2> const RoomSets =
+{ {
+    { MapId, "Silvershard Mines", RoomFloorZ, RoomRadius, Rooms.data(), Rooms.size() },
+    { Ravine::MapId, "Deephaul Ravine", 252.0f, 110.0f, RavineRooms.data(), RavineRooms.size() },
+} };
+
+RoomSet const* RoomsOf(uint32 mapId)
+{
+    for (RoomSet const& set : RoomSets)
+        if (set.MapId == mapId)
+            return &set;
+    return nullptr;
+}
 
 // the lines' spawn points, where the next cart appears 5 s after a delivery (S:138-142), by control zone object
 struct Line
@@ -88,14 +134,20 @@ std::unordered_map<ObjectGuid, Drop>& Drops()
     return drops;
 }
 
-/// The start room the spot is in (on the platform layer), or -1
-int RoomOf(Position const& pos)
+/// The start room the spot is in (on the platform layer) on that map, or -1
+int RoomOf(uint32 mapId, Position const& pos)
 {
-    if (pos.GetPositionZ() < RoomFloorZ)
+    RoomSet const* set = RoomsOf(mapId);
+    if (!set)
         return -1;
-    for (size_t i = 0; i < Rooms.size(); ++i)
-        if (pos.GetExactDist2d(Rooms[i].Start) <= RoomRadius)
+    for (size_t i = 0; i < set->Count; ++i)
+    {
+        Room const& room = set->Rooms[i];
+        float floor = room.FloorZ ? room.FloorZ : set->FloorZ;
+        float radius = room.Radius ? room.Radius : set->Radius;
+        if (pos.GetPositionZ() >= floor && pos.GetExactDist2d(room.Start) <= radius)
             return int(i);
+    }
     return -1;
 }
 }
@@ -109,14 +161,17 @@ Step Next(Player* bot, Position const& where, Position& waypoint)
             return Step::Busy;
         // the first matches check the drops: the bot must stand on the field near the landing point
         float off = bot->GetExactDist2d(drop->second.To);
-        if (bot->GetPositionZ() >= RoomFloorZ || off > 3.0f)
-            TC_LOG_WARN("server.playerbots", "Playerbots: {} after the Silvershard Mines drop by exit {} stands at {:.1f} {:.1f} {:.1f}, {:.1f} yd from the landing point",
-                bot->GetName(), drop->second.Exit, bot->GetPositionX(), bot->GetPositionY(), bot->GetPositionZ(), off);
+        RoomSet const* dropped = RoomsOf(bot->GetMapId());
+        if (RoomOf(bot->GetMapId(), bot->GetPosition()) >= 0 || off > 3.0f)
+            TC_LOG_WARN("server.playerbots", "Playerbots: {} after the {} drop by exit {} stands at {:.1f} {:.1f} {:.1f}, {:.1f} yd from the landing point",
+                bot->GetName(), dropped ? dropped->Name : "start room", drop->second.Exit, bot->GetPositionX(), bot->GetPositionY(),
+                bot->GetPositionZ(), off);
         Drops().erase(drop);
     }
 
-    int room = RoomOf(bot->GetPosition());
-    if (room < 0 || RoomOf(where) == room)
+    RoomSet const* set = RoomsOf(bot->GetMapId());
+    int room = RoomOf(bot->GetMapId(), bot->GetPosition());
+    if (!set || room < 0 || RoomOf(bot->GetMapId(), where) == room)
         return Step::Direct;
     // the gates are open only once the match runs (the doors go 3 s after the start)
     Battleground* bg = bot->GetBattleground();
@@ -124,7 +179,7 @@ Step Next(Player* bot, Position const& where, Position& waypoint)
         return Step::Busy;
 
     // the exit that makes edge + the rest of the way shortest
-    Room const& start = Rooms[room];
+    Room const& start = set->Rooms[room];
     size_t best = 0;
     float bestCost = 0.0f;
     for (size_t i = 0; i < start.Edges.size(); ++i)
@@ -146,11 +201,42 @@ Step Next(Player* bot, Position const& where, Position& waypoint)
         bot->RemoveAurasByType(SPELL_AURA_MOUNTED);
     bot->GetMotionMaster()->MoveJump(0, start.Lands[best], Milliseconds(900));
     Drops()[bot->GetGUID()] = { start.Lands[best], now + DropTimeoutMs, best };
-    TC_LOG_INFO("server.playerbots", "Playerbots: {} drops out of the Silvershard Mines start room {} by exit {}", bot->GetName(), room, best);
+    TC_LOG_INFO("server.playerbots", "Playerbots: {} drops out of the {} start room {} by exit {}", bot->GetName(), set->Name, room, best);
     return Step::Busy;
 }
 
+namespace
+{
+// Deephaul Ravine's carts (battleground_deephaul_ravine.cpp): each spawns at its team's end of the field (east: the Alliance's, west:
+// the Horde's) and rolls toward the other team's
+std::array<Line, 2> const RavineLines =
+{ {
+    { 415326, { 3875.0f, -3150.0f, 240.2913f } },
+    { 415330, { 4250.3647f, -2751.066f, 239.46973f } },
+} };
+}
+
+bool HasCarts(uint32 mapId)
+{
+    return mapId == MapId || mapId == Ravine::MapId;
+}
+
+namespace
+{
+void ReadStateFor(BgPlan& plan, Map* map, Line const* lines, size_t lineCount, uint32 scoreAlliance, uint32 scoreHorde);
+}
+
 void ReadState(BgPlan& plan, Map* map)
+{
+    if (plan.MapId == Ravine::MapId)
+        ReadStateFor(plan, map, RavineLines.data(), RavineLines.size(), 24958, 24959);
+    else
+        ReadStateFor(plan, map, Lines.data(), Lines.size(), 6437, 6438);
+}
+
+namespace
+{
+void ReadStateFor(BgPlan& plan, Map* map, Line const* lines, size_t lineCount, uint32 scoreAlliance, uint32 scoreHorde)
 {
     // diagnostics for the test matches: who owns each cart, and each team's players in its zone (only those count; a player that is not
     // PvP-flagged or is stealthed does not)
@@ -166,9 +252,9 @@ void ReadState(BgPlan& plan, Map* map)
     for (Objective& objective : plan.Objectives)
     {
         Line const* line = nullptr;
-        for (Line const& candidate : Lines)
-            if (candidate.Zone == objective.Entry)
-                line = &candidate;
+        for (size_t i = 0; i < lineCount; ++i)
+            if (lines[i].Zone == objective.Entry)
+                line = &lines[i];
         if (!line)
             continue;
         GameObject* zone = objective.Guid.IsEmpty() ? nullptr : map->GetGameObject(objective.Guid);
@@ -203,13 +289,14 @@ void ReadState(BgPlan& plan, Map* map)
         }
     }
     if (report)
-        TC_LOG_INFO("server.playerbots", "Playerbots: Silvershard Mines instance {}: score A {} H {}{}", plan.InstanceId, map->GetWorldStateValue(6437),
-            map->GetWorldStateValue(6438), text);
+        TC_LOG_INFO("server.playerbots", "Playerbots: {} instance {}: score A {} H {}{}", plan.Def ? plan.Def->Name : "carts", plan.InstanceId,
+            map->GetWorldStateValue(scoreAlliance), map->GetWorldStateValue(scoreHorde), text);
+}
 }
 
 bool AwayFromCart(Player const* bot, BgPlan const& plan, Assignment const& job, Position& cart)
 {
-    if (!bot->IsAlive() || !bot->IsInCombat() || RoomOf(bot->GetPosition()) >= 0)
+    if (!bot->IsAlive() || !bot->IsInCombat() || RoomOf(bot->GetMapId(), bot->GetPosition()) >= 0)
         return false;
     int8 target = job.Objective;
     if (target < 0 || size_t(target) >= plan.Objectives.size())
@@ -230,5 +317,15 @@ bool AwayFromCart(Player const* bot, BgPlan const& plan, Assignment const& job, 
         return false;
     Unit const* victim = bot->GetVictim();
     return !victim || victim->GetExactDist2d(cart) > CartZone;
+}
+}
+
+namespace Playerbots::Bg::Ravine
+{
+Position const& CapturePoint(uint8 team)
+{
+    // areatrigger spawns 115 (create properties 30, Alliance) and 116 (31, Horde) on map 2656
+    static Position const points[2] = { { 3919.47f, -3120.23f, 240.846f }, { 4207.9f, -2777.05f, 239.817f } };
+    return points[team ? 1 : 0];
 }
 }

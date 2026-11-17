@@ -38,6 +38,8 @@ enum class MapKind : uint8
     Orbs,       // Temple of Kotmogu: four orbs held by carriers for points (BgOrbs.h); 1500 points win
     Carts,      // Silvershard Mines: three mine carts held by headcount in their moving control zones (BgCarts.h); 1500 points win
     Azerite,    // Seething Shore: twelve fissures, up to three azerite nodes up at a time, each captured once for 100 (BgSeething.h); 1500 win
+    Ravine      // Deephaul Ravine: two mine carts held by headcount in their moving control zones (BgCarts.h) and one crystal in the middle,
+                // carried to our own capture point for 100; 1500 win
 };
 
 /// playerbots_bg_node.kind
