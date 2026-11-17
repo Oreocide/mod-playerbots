@@ -154,6 +154,14 @@ void CountQueued(BattlegroundQueue& queue, BattlegroundBracketId bracket, uint32
         }
 }
 
+/// When each invited bot enters (Playerbots.Bg.AcceptDelayMin/Max): a player takes a moment to click Enter Battle, so a match with
+/// a real player fills over its first minute instead of all at once. Kept only while the invite is open
+std::unordered_map<ObjectGuid, uint32>& AcceptAt()
+{
+    static std::unordered_map<ObjectGuid, uint32> acceptAt;
+    return acceptAt;
+}
+
 void AnswerBattlefieldPort(Player* bot, uint32 queueSlot, bool accept)
 {
     WorldPackets::Battleground::BattlefieldPort port{ WorldPacket(CMSG_BATTLEFIELD_PORT) };
@@ -415,6 +423,16 @@ void ActivityMgr::ServeBots(std::vector<BotRef> const& bots)
             if (bot->IsInWorld() && bot->IsInvitedForBattlegroundQueueType(queueId))
             {
                 bool accept = HumanPresent(InviteInstance(bot, queueId), queueId);
+                // a real player waits: the bot enters after its own few seconds, not with all the others (a test match: at once)
+                if (accept && sBgConfig.AcceptDelayMaxMs && !(_bgTest.Active() && queueId.GetPacked() == _bgTest.Queue))
+                {
+                    auto [at, fresh] = AcceptAt().try_emplace(guid, 0u);
+                    if (fresh)
+                        at->second = now + urand(sBgConfig.AcceptDelayMinMs, sBgConfig.AcceptDelayMaxMs);
+                    if (int32(at->second - now) > 0)
+                        break;
+                }
+                AcceptAt().erase(guid);
                 // the port has to start at once: Player::TeleportTo refuses while another teleport runs, and the bot would then hold
                 // a seat it never takes (its own teleport lands elsewhere and the core drops its battleground id there, #15). The
                 // invite stays open 90 s, the next scan accepts. A decline is safe at any time: the core frees the seat
@@ -446,7 +464,10 @@ void ActivityMgr::ServeBots(std::vector<BotRef> const& bots)
         }
 
         if (!queued)
+        {
             _queueSince.erase(guid);
+            AcceptAt().erase(guid);     // the invite ran out or the bot left the queue: a later invite rolls its own wait
+        }
     }
 }
 

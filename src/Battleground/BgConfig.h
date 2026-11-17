@@ -130,6 +130,8 @@ struct Config
     }
     /// Planner on, Playerbots.Bg.Objectives on, and the map in the list
     bool Plans(uint32 mapId) const;
+    uint32 AcceptDelayMinMs = 3000;                         // a bot invited to a match with a real player waits this long, at least,
+    uint32 AcceptDelayMaxMs = 40000;                        // and at most, before it enters (0: at once): the teams fill over a minute
 };
 
 Config& GetConfig();

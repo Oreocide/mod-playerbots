@@ -70,6 +70,9 @@ void Config::Load()
     if (LegYards)
         LegYards = std::clamp<uint32>(LegYards, 60, 240);
     Rebuff = sConfigMgr->GetBoolDefault("Playerbots.Bg.Rebuff", false);
+    // the invite stays open 90 s and the bots look every 5 s: keep the longest wait well inside it
+    AcceptDelayMaxMs = uint32(std::clamp<int32>(sConfigMgr->GetIntDefault("Playerbots.Bg.AcceptDelayMax", 40), 0, 60)) * 1000;
+    AcceptDelayMinMs = std::min(uint32(std::max<int32>(sConfigMgr->GetIntDefault("Playerbots.Bg.AcceptDelayMin", 3), 0)) * 1000, AcceptDelayMaxMs);
     MoveOn = sConfigMgr->GetBoolDefault("Playerbots.Bg.MoveOn", false);
     MoveOnGuards = uint32(std::clamp<int32>(sConfigMgr->GetIntDefault("Playerbots.Bg.MoveOn.Guards", 2), 1, 10));
     Metrics = sConfigMgr->GetBoolDefault("Playerbots.Bg.Metrics", false);
