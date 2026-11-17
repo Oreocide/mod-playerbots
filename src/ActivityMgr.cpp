@@ -93,11 +93,40 @@ bool HasHuman(Group const* group)
 }
 
 // Not busy with anything: can be sent into group content
+/// A group of bots only (every member slot an online bot): a bot in it may leave it to queue for a battleground, as a player would.
+/// A group with a human, online or not, is never broken up
+bool BotOnlyGroup(Group const* group)
+{
+    if (!group)
+        return false;
+    for (Group::MemberSlot const& slot : group->GetMemberSlots())
+    {
+        Player* member = ObjectAccessor::FindConnectedPlayer(slot.guid);
+        if (!member || !IsBot(member))
+            return false;
+    }
+    return true;
+}
+
 bool IsIdle(Player* bot)
 {
     return bot->IsAlive() && bot->IsInWorld() && !bot->IsInCombat() && !bot->IsBeingTeleported() && !bot->GetGroup()
         && !bot->InBattleground() && !bot->InBattlegroundQueue() && !bot->isUsingLfg() && !bot->IsDeserter()
         && !bot->GetMap()->IsDungeon() && sLFGMgr->GetState(bot->GetGUID()) == lfg::LFG_STATE_NONE;
+}
+
+/// IsIdle for the battleground fill: a bot in a bot-only group counts too (it leaves the group when it queues). The live
+/// Playerbots.Social.Invite groups bots with bots, and those were never queued: the 2026-11-15 Arathi Basin test stall
+bool IsIdleForBg(Player* bot)
+{
+    Group* group = bot->GetGroup();
+    if (!group)
+        return IsIdle(bot);
+    if (!BotOnlyGroup(group))
+        return false;
+    return bot->IsAlive() && bot->IsInWorld() && !bot->IsInCombat() && !bot->IsBeingTeleported() && !bot->InBattleground()
+        && !bot->InBattlegroundQueue() && !bot->isUsingLfg() && !bot->IsDeserter() && !bot->GetMap()->IsDungeon()
+        && sLFGMgr->GetState(bot->GetGUID()) == lfg::LFG_STATE_NONE;
 }
 
 bool QueueHasHuman(BattlegroundQueue& queue)
@@ -652,7 +681,7 @@ void ActivityMgr::FillBattlegrounds(std::vector<Player*> const& humans, std::vec
         for (BotRef const& ref : bots)
         {
             Player* bot = ref.Bot;
-            if (bot->GetTeamId() != team || !IsIdle(bot) || bot->GetLevel() < bgTemplate->GetMinLevel() || bot->GetLevel() > bgTemplate->GetMaxLevel())
+            if (bot->GetTeamId() != team || !IsIdleForBg(bot) || bot->GetLevel() < bgTemplate->GetMinLevel() || bot->GetLevel() > bgTemplate->GetMaxLevel())
                 continue;
             if (auto backoff = _backoff.find(bot->GetGUID()); backoff != _backoff.end() && backoff->second > now)
                 continue;
@@ -708,7 +737,7 @@ void ActivityMgr::FillBattlegrounds(std::vector<Player*> const& humans, std::vec
                         break;
 
                     Player* bot = ref.Bot;
-                    if (bot->GetTeamId() != team || !IsIdle(bot) || bot->GetLevel() < bgTemplate->GetMinLevel() || bot->GetLevel() > bgTemplate->GetMaxLevel())
+                    if (bot->GetTeamId() != team || !IsIdleForBg(bot) || bot->GetLevel() < bgTemplate->GetMinLevel() || bot->GetLevel() > bgTemplate->GetMaxLevel())
                         continue;
 
                     if (auto backoff = _backoff.find(bot->GetGUID()); backoff != _backoff.end() && backoff->second > now)
@@ -718,6 +747,9 @@ void ActivityMgr::FillBattlegrounds(std::vector<Player*> const& humans, std::vec
                     if (!botBracket || botBracket->GetBracketId() != bg->GetBracketId())
                         continue;
 
+                    // a bot in a bot-only group leaves it first (IsIdleForBg), as a player would to queue alone
+                    if (bot->GetGroup())
+                        bot->RemoveFromGroup();
                     JoinBattlegroundQueue(bot, queueId);
                     if (bot->InBattlegroundQueueForBattlegroundQueueType(queueId))
                     {
@@ -767,7 +799,7 @@ void ActivityMgr::FillBattlegrounds(std::vector<Player*> const& humans, std::vec
                     break;
 
                 Player* bot = ref.Bot;
-                if (bot->GetTeamId() != team || !IsIdle(bot) || bot->GetLevel() < bgTemplate->GetMinLevel() || bot->GetLevel() > bgTemplate->GetMaxLevel())
+                if (bot->GetTeamId() != team || !IsIdleForBg(bot) || bot->GetLevel() < bgTemplate->GetMinLevel() || bot->GetLevel() > bgTemplate->GetMaxLevel())
                     continue;
 
                 if (auto backoff = _backoff.find(bot->GetGUID()); backoff != _backoff.end() && backoff->second > now)
@@ -777,6 +809,9 @@ void ActivityMgr::FillBattlegrounds(std::vector<Player*> const& humans, std::vec
                 if (!botBracket || botBracket->GetBracketId() != bracketId)
                     continue;
 
+                // a bot in a bot-only group leaves it first (IsIdleForBg), as a player would to queue alone
+                if (bot->GetGroup())
+                    bot->RemoveFromGroup();
                 JoinBattlegroundQueue(bot, queueId);
                 if (bot->InBattlegroundQueueForBattlegroundQueueType(queueId))
                 {
@@ -853,7 +888,7 @@ void ActivityMgr::FillBattlegrounds(std::vector<Player*> const& humans, std::vec
                             reason = 4;
                         else if (bot->IsInCombat())
                             reason = 5;
-                        else if (bot->GetGroup())
+                        else if (bot->GetGroup() && !BotOnlyGroup(bot->GetGroup()))
                             reason = 6;
                         else if (bot->InBattleground())
                             reason = 7;
