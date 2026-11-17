@@ -73,6 +73,8 @@ public:
         uint32 UntilMs = 0;
         uint32 Joined = 0;          // bots sent into its queue
         bool Active() const { return Queue != 0; }
+        std::vector<uint32> Before; // instances of the queue and bracket that ran when the test started: never the test match (a stopped
+                                    // test's match plays on, and the next test pinned it and took its end for its own, 2026-11-15)
     };
     /// False when the queue is not a valid normal battleground queue
     bool StartBgTest(uint64 packedQueue, uint8 bracket, uint32 minutes);

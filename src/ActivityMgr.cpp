@@ -29,6 +29,7 @@
 #include "Group.h"
 #include "GroupMgr.h"
 #include "LFGMgr.h"
+#include "StringFormat.h"
 #include "LFGPackets.h"
 #include "LFGPacketsCommon.h"
 #include "Log.h"
@@ -817,7 +818,69 @@ void ActivityMgr::FillBattlegrounds(std::vector<Player*> const& humans, std::vec
         BattlegroundQueueTypeId queueId = BattlegroundQueueTypeId::FromPacked(_bgTest.Queue);
         BattlegroundTemplate const* bgTemplate = sBattlegroundMgr->GetBattlegroundTemplateByTypeId(BattlegroundTypeId(queueId.BattlemasterListId));
         if (bgTemplate && !bgTemplate->MapIDs.empty())
+        {
             _bgTest.Joined += queueBots(queueId, bgTemplate, BattlegroundBracketId(_bgTest.Bracket));
+            // why the test queue does not fill (the 2026-11-15 Arathi Basin stall: "6 bots sent, instance 0" for 12 minutes): once a
+            // minute while it waits, every bot of the bracket by the first reason it cannot be queued, per team
+            static uint32 lastWhyMs = 0;
+            if (now - lastWhyMs >= 60000 && now - _bgTest.StartedMs >= 30000)
+            {
+                lastWhyMs = now;
+                BattlegroundQueue& queue = sBattlegroundMgr->GetBattlegroundQueue(queueId);
+                uint32 queued[PVP_TEAMS_COUNT] = { };
+                uint32 groups = 0;
+                CountQueued(queue, BattlegroundBracketId(_bgTest.Bracket), queued[TEAM_ALLIANCE], queued[TEAM_HORDE], groups);
+                static char const* const names[] = { "ok", "level", "bracket", "dead", "teleport", "combat", "group", "in bg", "queued",
+                    "lfg", "deserter", "dungeon", "backoff" };
+                std::string text[PVP_TEAMS_COUNT];
+                for (TeamId team : { TEAM_ALLIANCE, TEAM_HORDE })
+                {
+                    uint32 why[std::size(names)] = { };
+                    for (BotRef const& ref : bots)
+                    {
+                        Player* bot = ref.Bot;
+                        if (bot->GetTeamId() != team)
+                            continue;
+                        PVPDifficultyEntry const* botBracket = DB2Manager::GetBattlegroundBracketByLevel(bgTemplate->MapIDs.front(), bot->GetLevel());
+                        size_t reason = 0;
+                        if (bot->GetLevel() < bgTemplate->GetMinLevel() || bot->GetLevel() > bgTemplate->GetMaxLevel())
+                            reason = 1;
+                        else if (!botBracket || uint8(botBracket->GetBracketId()) != _bgTest.Bracket)
+                            reason = 2;
+                        else if (!bot->IsAlive() || !bot->IsInWorld())
+                            reason = 3;
+                        else if (bot->IsBeingTeleported())
+                            reason = 4;
+                        else if (bot->IsInCombat())
+                            reason = 5;
+                        else if (bot->GetGroup())
+                            reason = 6;
+                        else if (bot->InBattleground())
+                            reason = 7;
+                        else if (bot->InBattlegroundQueue())
+                            reason = 8;
+                        else if (bot->isUsingLfg() || sLFGMgr->GetState(bot->GetGUID()) != lfg::LFG_STATE_NONE)
+                            reason = 9;
+                        else if (bot->IsDeserter())
+                            reason = 10;
+                        else if (bot->GetMap()->IsDungeon())
+                            reason = 11;
+                        else if (auto backoff = _backoff.find(bot->GetGUID()); backoff != _backoff.end() && backoff->second > now)
+                            reason = 12;
+                        if (reason > 2)
+                            ++why[reason];
+                        else if (reason == 0)
+                            ++why[0];
+                    }
+                    for (size_t i = 0; i < std::size(names); ++i)
+                        if (i == 0 || (i > 2 && why[i]))
+                            text[team] += Trinity::StringFormat("{}{} {}", text[team].empty() ? "" : ", ", names[i], why[i]);
+                }
+                TC_LOG_INFO("server.playerbots", "Playerbots: bg test waits: queue {} bracket {}, {} per team to start; queued A {} H {}; "
+                    "in the bracket, Alliance: {}; Horde: {}", queueId.BattlemasterListId, _bgTest.Bracket, bgTemplate->GetMinPlayersPerTeam(),
+                    queued[TEAM_ALLIANCE], queued[TEAM_HORDE], text[TEAM_ALLIANCE], text[TEAM_HORDE]);
+            }
+        }
     }
 }
 
@@ -831,8 +894,11 @@ bool ActivityMgr::StartBgTest(uint64 packedQueue, uint8 bracket, uint32 minutes)
     _bgTest.Bracket = bracket;
     _bgTest.StartedMs = GameTime::GetGameTimeMS();
     _bgTest.UntilMs = _bgTest.StartedMs + minutes * MINUTE * IN_MILLISECONDS;
-    TC_LOG_INFO("server.playerbots", "Playerbots: battleground test started: queue {} bracket {} for {} minutes", queueId.BattlemasterListId,
-        uint32(bracket), minutes);
+    for (Battleground* bg : sBattlegroundMgr->GetBGFreeSlotQueueStore(queueId))
+        if (bg && uint8(bg->GetBracketId()) == bracket)
+            _bgTest.Before.push_back(bg->GetInstanceID());
+    TC_LOG_INFO("server.playerbots", "Playerbots: battleground test started: queue {} bracket {} for {} minutes ({} older matches of it ignored)",
+        queueId.BattlemasterListId, uint32(bracket), minutes, _bgTest.Before.size());
     return true;
 }
 
@@ -852,6 +918,8 @@ bool ActivityMgr::IsBgTest(uint32 instanceId) const
     if (_bgTest.InstanceId)
         return instanceId == _bgTest.InstanceId;
     // the first invites come before the match is pinned: any instance of the test queue and bracket
+    if (std::ranges::find(_bgTest.Before, instanceId) != _bgTest.Before.end())
+        return false;
     Battleground* bg = sBattlegroundMgr->GetBattleground(instanceId, BattlegroundQueueTypeId::FromPacked(_bgTest.Queue));
     return bg && uint8(bg->GetBracketId()) == _bgTest.Bracket;
 }
@@ -870,7 +938,8 @@ void ActivityMgr::UpdateBgTest()
     if (!_bgTest.InstanceId)
     {
         for (Battleground* bg : sBattlegroundMgr->GetBGFreeSlotQueueStore(queueId))
-            if (bg && uint8(bg->GetBracketId()) == _bgTest.Bracket && bg->GetStatus() < STATUS_WAIT_LEAVE)
+            if (bg && uint8(bg->GetBracketId()) == _bgTest.Bracket && bg->GetStatus() < STATUS_WAIT_LEAVE
+                && std::ranges::find(_bgTest.Before, bg->GetInstanceID()) == _bgTest.Before.end())
             {
                 _bgTest.InstanceId = bg->GetInstanceID();
                 TC_LOG_INFO("server.playerbots", "Playerbots: battleground test match is instance {} ({})", _bgTest.InstanceId, bg->GetName());
