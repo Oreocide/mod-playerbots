@@ -21,6 +21,7 @@
 #include "Battleground/BgCarts.h"
 #include "Battleground/BgIsle.h"
 #include "Battleground/BgOrbs.h"
+#include "Battleground/BgSeething.h"
 #include "Battleground/BgMetrics.h"
 #include "Battleground/BgPlanner.h"
 #include "Battleground/BgReact.h"
@@ -1444,6 +1445,9 @@ bool Play(Player* bot, PlayerbotAI& ai)
     // a vehicle test drives this bot: nothing else moves it
     if (VehicleTestHolds(bot))
         return true;
+    // Seething Shore: the airship holds its passengers until the start (the script sends one that steps off back to the deck)
+    if (bot->GetMapId() == Seething::MapId && bot->GetTransport() && bg->GetStatus() != STATUS_IN_PROGRESS)
+        return true;
     // the gates are still closed: wait at our gate on a map that has a gate row, else where the bot stands like the pilot does
     if (bg->GetStatus() != STATUS_IN_PROGRESS)
     {
@@ -1456,6 +1460,9 @@ bool Play(Player* bot, PlayerbotAI& ai)
     BgPlan const* plan = sBgPlanner.Find(bot->GetMapId(), bot->GetInstanceId());
     if (!plan || !plan->Def)
         return false;
+    // Seething Shore: off the airship when the ground below leads to our node, and nothing else while it falls (BgSeething.h)
+    if (bot->GetMapId() == Seething::MapId && Seething::Airship(bot, plan, &job))
+        return true;
     // not planned yet (the first plan comes within a second)
     if (job.Base == Job::None)
         return true;
@@ -1589,6 +1596,7 @@ bool Play(Player* bot, PlayerbotAI& ai)
         case MapKind::Valley: return PlayValley(bot, ai, *plan, job);
         case MapKind::Orbs: return PlayOrbs(bot, ai, *plan, job);
         case MapKind::Carts: return PlayCarts(bot, ai, *plan, job);
+        case MapKind::Azerite: return PlayNode(bot, ai, *plan, job);
     }
     return false;
 }

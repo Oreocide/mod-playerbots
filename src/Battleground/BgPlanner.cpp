@@ -21,6 +21,7 @@
 #include "Battleground/BgMetrics.h"
 #include "Battleground/BgCarts.h"
 #include "Battleground/BgOrbs.h"
+#include "Battleground/BgSeething.h"
 #include "Battleground/BgReact.h"
 #include "ActivityMgr.h"
 #include "Battleground/BgTalk.h"
@@ -692,6 +693,9 @@ void Planner::Plan(BgPlan& plan, Battleground* bg, Map* map, uint32 now)
         // Silvershard Mines: a cart's owner and place from its moving control zone (BgCarts.h)
         else if (plan.Def->Kind == MapKind::Carts)
             Carts::ReadState(plan, map);
+        // Seething Shore: which fissures have a node up (BgSeething.h)
+        else if (plan.Def->Kind == MapKind::Azerite)
+            Seething::ReadState(plan, map);
     }
 
     std::vector<Player*> members[2];

@@ -36,7 +36,7 @@ void Config::Load()
     Planner = sConfigMgr->GetBoolDefault("Playerbots.Bg.Planner", false);
 
     PlannerMaps.clear();
-    std::string maps = sConfigMgr->GetStringDefault("Playerbots.Bg.Planner.Maps", "2106,726,2107,761,566,30,628,998,727");
+    std::string maps = sConfigMgr->GetStringDefault("Playerbots.Bg.Planner.Maps", "2106,726,2107,761,566,30,628,998,727,1803");
     for (std::string_view token : Trinity::Tokenize(maps, ',', false))
         if (Optional<uint32> map = Trinity::StringTo<uint32>(token))
             PlannerMaps.push_back(*map);

@@ -71,6 +71,22 @@ std::vector<MapDef> Maps =
             { 213794, "North cart", 1.0f },
             { 213796, "South cart", 1.0f },
         }, { 0, 0 }, 1500 },
+    // the twelve fissures, in BgSeething.cpp's order: entry 0 (nothing to discover), Seething::ReadState finds the node standing on each
+    { 1803, "Seething Shore", MapKind::Azerite,
+        {
+            { 0, "fissure 1", 1.0f },
+            { 0, "fissure 2", 1.0f },
+            { 0, "fissure 3", 1.0f },
+            { 0, "fissure 4", 1.0f },
+            { 0, "fissure 5", 1.0f },
+            { 0, "fissure 6", 1.0f },
+            { 0, "fissure 7", 1.0f },
+            { 0, "fissure 8", 1.0f },
+            { 0, "fissure 9", 1.0f },
+            { 0, "fissure 10", 1.0f },
+            { 0, "fissure 11", 1.0f },
+            { 0, "fissure 12", 1.0f },
+        }, { 0, 0 }, 1500 },
     { 30, "Alterac Valley", MapKind::Valley, {}, { 0, 0 }, 0, { 3127, 3128 }, 3136 },
     { 628, "Isle of Conquest", MapKind::Valley, {}, { 0, 0 }, 0, { 4226, 4227 }, 17377 },
 };
@@ -260,6 +276,7 @@ uint32 OpenSpellForLock(uint32 lockId)
     {
         case 2178: return 156098;   // "Capturing", 6 s: type 42 capture points, the Eye of the Storm flag
         case 1479: return 21651;    // "Opening", 8 s: Alterac Valley banners (phase 3)
+        case 2825: return 261857;   // "Gathering", 6 s: Seething Shore azerite nodes
         default: return 0;
     }
 }

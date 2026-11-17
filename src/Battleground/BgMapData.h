@@ -36,7 +36,8 @@ enum class MapKind : uint8
     Eye,        // Eye of the Storm: four control-zone towers and one flag in the middle
     Valley,     // Alterac Valley: graveyards, towers and bosses from playerbots_bg_node, state from world states
     Orbs,       // Temple of Kotmogu: four orbs held by carriers for points (BgOrbs.h); 1500 points win
-    Carts       // Silvershard Mines: three mine carts held by headcount in their moving control zones (BgCarts.h); 1500 points win
+    Carts,      // Silvershard Mines: three mine carts held by headcount in their moving control zones (BgCarts.h); 1500 points win
+    Azerite,    // Seething Shore: twelve fissures, up to three azerite nodes up at a time, each captured once for 100 (BgSeething.h); 1500 win
 };
 
 /// playerbots_bg_node.kind
