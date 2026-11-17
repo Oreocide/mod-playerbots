@@ -17,6 +17,8 @@
 
 #include "PlayerbotAI.h"
 #include "Cmd/PartyOrders.h"
+#include "Battleground/BgCarts.h"
+#include "Battleground/BgSeething.h"
 #include "Loot/BotLoot.h"
 #include "Travel/BotTransports.h"
 #include "Battleground/BgCoordinator.h"
@@ -834,6 +836,10 @@ void PlayerbotAI::RememberStand()
 {
     // an air leg is not a fall: its own recovery (RouteFollower::RecoverAir) puts a bot back on the ground
     if (!_bot->IsInWorld() || _bot->IsBeingTeleported() || _bot->IsInFlight() || IsPlayerJumping(_bot) || InAir())
+        return;
+    // a battleground drop (Seething Shore airship, Silvershard start rooms) is a deliberate fall: rescuing it puts the bot back where it
+    // jumped from (2026-11-16: every Seething drop was undone)
+    if (_bot->InBattleground() && (Bg::Seething::Dropping(_bot) || Bg::Carts::Dropping(_bot)))
         return;
 
     float stand = 0.0f;

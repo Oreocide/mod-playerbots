@@ -63,6 +63,9 @@ bool AwayFromCart(Player const* bot, BgPlan const& plan, Assignment const& job, 
 
 /// A map whose carts this file reads: Silvershard Mines (727) and Deephaul Ravine (2656)
 bool HasCarts(uint32 mapId);
+
+/// The bot is dropping out of a start room (the fall rescue leaves it alone until the drop's timeout)
+bool Dropping(Player const* bot);
 }
 
 // Deephaul Ravine (map 2656, worktrees/bg-deephaul/DEEPHAUL_DATA.md): Silvershard's cart play on two carts, plus Eye of the Storm's crystal

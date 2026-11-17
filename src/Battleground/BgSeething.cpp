@@ -209,4 +209,10 @@ bool Airship(Player* bot, BgPlan const* plan, Assignment const* job)
     init.Launch();
     return true;
 }
+
+bool Dropping(Player const* bot)
+{
+    auto it = Drops().find(bot->GetGUID());
+    return it != Drops().end() && it->second.Falling;
+}
 }

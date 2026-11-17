@@ -216,6 +216,12 @@ std::array<Line, 2> const RavineLines =
 } };
 }
 
+bool Dropping(Player const* bot)
+{
+    auto it = Drops().find(bot->GetGUID());
+    return it != Drops().end() && int32(it->second.UntilMs - GameTime::GetGameTimeMS()) > 0;
+}
+
 bool HasCarts(uint32 mapId)
 {
     return mapId == MapId || mapId == Ravine::MapId;

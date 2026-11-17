@@ -51,6 +51,10 @@ void ReadState(BgPlan& plan, Map* map);
 /// short mesh route to the node of its job (any route after a whole lap). True while the airship or the fall holds the bot (Bg::Play
 /// asks before the match status check)
 bool Airship(Player* bot, BgPlan const* plan, Assignment const* job);
+
+/// The bot is in its deliberate fall from the airship: the fall rescue (PlayerbotAI::RememberStand) leaves it alone, or it puts the bot
+/// straight back on the deck (2026-11-16 Seething retry: every drop was undone that way)
+bool Dropping(Player const* bot);
 }
 }
 }
