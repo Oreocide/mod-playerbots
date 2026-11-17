@@ -662,9 +662,6 @@ void RandomBotMgr::BuildRaceClasses()
             if (!(classMask & playableClasses) || (classMask & disabledClasses))
                 continue;
 
-            if (playerClass == CLASS_DEMON_HUNTER || playerClass == CLASS_EVOKER)
-                continue;
-
             if (!sObjectMgr->GetPlayerInfo(race->ID, playerClass))
                 continue;
 
@@ -1098,6 +1095,18 @@ bool RandomBotMgr::SubmitCreate()
     if (options.empty() || !_creation || !_creation->Session)
         return false;
 
+    // the core refuses an Evoker past CharacterCreating.EvokersPerRealm on the account: leave Evoker out once the account is full
+    if (QueryResult result = CharacterDatabase.PQuery("SELECT COUNT(*) FROM characters WHERE account = {} AND class = {} AND deleteDate IS NULL",
+        _creation->AccountId, uint32(CLASS_EVOKER)))
+    {
+        if ((*result)[0].GetUInt64() >= uint64(sWorld->getIntConfig(CONFIG_CHARACTER_CREATING_EVOKERS_PER_REALM)))
+        {
+            std::erase_if(options, [](RaceClass const* combination) { return combination->Class == CLASS_EVOKER; });
+            if (options.empty())
+                return false;
+        }
+    }
+
     for (uint32 attempt = 0; attempt < 8; ++attempt)
     {
         RaceClass const* combination = options[urand(0, uint32(options.size() - 1))];
@@ -1219,26 +1228,9 @@ bool RandomBotMgr::NeedsRandomizeFirst(Player const* bot) const
 
 uint32 RandomBotMgr::StartLevel(Player const* bot) const
 {
-    uint32 start = sWorld->getIntConfig(CONFIG_START_PLAYER_LEVEL);
-    switch (bot->GetClass())
-    {
-        case CLASS_DEATH_KNIGHT:
-            start = sWorld->getIntConfig(CONFIG_START_DEATH_KNIGHT_PLAYER_LEVEL);
-            break;
-        case CLASS_DEMON_HUNTER:
-            start = sWorld->getIntConfig(CONFIG_START_DEMON_HUNTER_PLAYER_LEVEL);
-            break;
-        case CLASS_EVOKER:
-            start = sWorld->getIntConfig(CONFIG_START_ALLIED_RACE_LEVEL);
-            break;
-        default:
-            if (ChrRacesEntry const* race = sChrRacesStore.LookupEntry(bot->GetRace()))
-                if (race->GetFlags().HasFlag(ChrRacesFlag::IsAlliedRace))
-                    start = sWorld->getIntConfig(CONFIG_START_ALLIED_RACE_LEVEL);
-            break;
-    }
-
-    return std::max<uint32>(start, 1);
+    // the core's own rule (allied races and Dracthyr at StartAlliedRacePlayerLevel, Death Knights and Demon Hunters at their own level,
+    // never below their race's): a bot is never banded below the level a new character of its race and class starts at
+    return std::max<uint32>(bot->GetStartLevel(bot->GetRace(), bot->GetClass(), {}), 1);
 }
 
 uint64 RandomBotMgr::GridKeyOf(uint32 mapId, float x, float y)
